@@ -691,6 +691,12 @@ class RewardResearch(ResearchSelector, ResearchQueue, StorageHandler):
                     or page_main
         """
         self.ui_ensure(page_research)
+        try:
+            from module.alas_bridge.actions import bridge_enabled, research_receive
+            if bridge_enabled(self.config):
+                research_receive(self.config)
+        except Exception as e:
+            logger.info(f'Sweeney research_receive miss: {e}')
 
         # 检查队列
         self.queue_enter()

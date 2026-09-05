@@ -894,6 +894,18 @@
       "goto_main": "回主界面喵",
       "close_game": "关闭游戏喵",
       "close_emulator": "关闭模拟器喵"
+    },
+    "SweeneyBridge": {
+      "name": "Sweeney Mod Bridge",
+      "help": "从共享文件夹读场景喵，心跳挂了就回退截图。"
+    },
+    "SweeneyBridgeRoot": {
+      "name": "Sweeney Bridge 根目录",
+      "help": "SweeneyMod 共享文件夹路径，留空自动检测。"
+    },
+    "SweeneyBridgeAccount": {
+      "name": "Sweeney Bridge 账号目录",
+      "help": "可选 {{playerId}}_{{commander}}，留空按 Serial 匹配。"
     }
   },
   "DropRecord": {

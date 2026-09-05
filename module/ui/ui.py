@@ -31,7 +31,7 @@ from module.exception import (GameNotRunningError, GamePageUnknownError,
                               RequestHumanTakeover)
 from module.exercise.assets import EXERCISE_PREPARATION
 from module.handler.assets import (AUTO_SEARCH_MENU_EXIT, BATTLE_PASS_NEW_SEASON, BATTLE_PASS_NOTICE, GAME_TIPS,
-                                   LOGIN_ANNOUNCE, LOGIN_ANNOUNCE_2, LOGIN_CHECK, LOGIN_RETURN_SIGN,
+                                   IN_MAP, LOGIN_ANNOUNCE, LOGIN_ANNOUNCE_2, LOGIN_CHECK, LOGIN_RETURN_SIGN,
                                    MAINTENANCE_ANNOUNCE, MONTHLY_PASS_NOTICE)
 from module.handler.info_handler import InfoHandler
 from module.logger import logger
@@ -42,7 +42,8 @@ from module.ocr.ocr import Ocr
 from module.os_handler.assets import (AUTO_SEARCH_REWARD, EXCHANGE_CHECK, RESET_FLEET_PREPARATION, RESET_TICKET_POPUP)
 from module.raid.assets import *
 from module.ui.assets import *
-from module.ui.page import Page, page_academy, page_campaign, page_event, page_main, page_main_white, page_sp
+from module.ui.page import (Page, page_academy, page_campaign, page_campaign_menu,
+                            page_event, page_in_map, page_main, page_main_white, page_sp)
 from module.ui_white.assets import *
 
 
@@ -73,6 +74,52 @@ class UI(InfoHandler):
             if self.appear(ACADEMY_GOTO_MUNITIONS, offset=offset, interval=interval):
                 return True
         return self.appear(page.check_button, offset=offset, interval=interval)
+
+    def _sweeney_bridge_enabled(self):
+        return bool(getattr(self.config, 'Optimization_SweeneyBridge', False))
+
+    def _try_sweeney_current_page(self, verbose=True):
+        """Return an AzurPilot Page from the mod heartbeat, or None to screenshot-fallback."""
+        try:
+            from module.alas_bridge.game_state import GameState
+        except Exception as e:
+            logger.info(f'Sweeney bridge import failed: {e}')
+            return None
+        gs = getattr(self, '_sweeney_game_state', None)
+        if gs is None:
+            gs = GameState.from_config(self.config)
+            self._sweeney_game_state = gs
+        page = gs.get_page()
+        if page is None:
+            return None
+        if verbose:
+            logger.attr("UI", page.name)
+            logger.info("UI page from Sweeney bridge")
+        self.ui_current = page
+        return page
+
+    def _reject_stale_bridge_in_map(self, bridged):
+        if bridged is None or bridged.name != 'page_in_map':
+            return bridged
+        if self.appear(IN_MAP, offset=(30, 30), interval=0):
+            return bridged
+        if self.appear(MAIN_GOTO_CAMPAIGN_WHITE, offset=(30, 30), interval=0):
+            logger.info('Reject stale bridge page_in_map (main white chrome)')
+            return page_main_white
+        if self.appear(MAIN_GOTO_CAMPAIGN, offset=(30, 30), interval=0):
+            logger.info('Reject stale bridge page_in_map (main chrome)')
+            return page_main
+        if self.appear(CAMPAIGN_MENU_CHECK, offset=(30, 30), interval=0):
+            logger.info('Reject stale bridge page_in_map (campaign menu)')
+            return page_campaign_menu
+        if self.appear(EVENT_CHECK, offset=(30, 30), interval=0):
+            logger.info('Reject stale bridge page_in_map (event list)')
+            return page_event
+        if self.appear(SP_CHECK, offset=(30, 30), interval=0):
+            logger.info('Reject stale bridge page_in_map (sp list)')
+            return page_sp
+        logger.info('Reject stale bridge page_in_map (no map chrome)')
+        return page_main
 
     def is_in_main(self, offset=(30, 30), interval=0):
         return (self.ui_page_appear(page_main, offset=offset, interval=interval)
@@ -198,6 +245,18 @@ class UI(InfoHandler):
             Page: 当前页面对象。
         """
         logger.info("UI 获取当前页面")
+        if self._sweeney_bridge_enabled():
+            page = self._try_sweeney_current_page()
+            if page is not None:
+                if skip_first_screenshot:
+                    if not self.device.has_cached_image:
+                        self.device.screenshot()
+                else:
+                    self.device.screenshot()
+                if page.name == 'page_in_map':
+                    page = self._reject_stale_bridge_in_map(page)
+                return page
+            logger.info("Sweeney bridge miss, screenshot fallback")
 
         @run_once
         def app_check():
@@ -313,6 +372,14 @@ class UI(InfoHandler):
             if self.ui_page_appear(page=destination, offset=offset):
                 logger.info(f'[UI] 到达页面: {destination}')
                 break
+            if self._sweeney_bridge_enabled():
+                bridged = self._try_sweeney_current_page(verbose=False)
+                if bridged is not None:
+                    bridged = self._reject_stale_bridge_in_map(bridged)
+                if bridged is not None and bridged == destination:
+                    logger.info(f'[UI] 到达页面: {destination} (Sweeney bridge)')
+                    self.ui_current = bridged
+                    break
             # 主界面新旧主题互为等价：目标为任一主界面时，
             # 检测到另一主题也视为到达
             if destination in (page_main, page_main_white) and self.is_in_main():

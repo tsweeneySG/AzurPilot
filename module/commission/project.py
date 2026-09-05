@@ -695,6 +695,52 @@ class Commission:
         self.valid = False
         return ''
 
+    @classmethod
+    def from_bridge_row(cls, row, config):
+        """Build a Commission from EventProxy snapshot (no OCR)."""
+        self = cls.__new__(cls)
+        self.config = config
+        self.y = 0
+        self.area = (0, 0, 0, 0)
+        self.image = None
+        self.valid = True
+        self.button = None
+        self.name = str(row.get('title') or '')
+        self.suffix_image = None
+        self.suffix_hash = ''
+        self.event_id = int(row.get('id') or 0)
+        self.activity_id = 1 if row.get('activity') else 0
+        self.status = str(row.get('status') or 'pending')
+        if self.status not in ('pending', 'running', 'finished', 'expired'):
+            self.status = 'pending'
+        seconds = int(row.get('collect_time') or 0)
+        self.duration = timedelta(seconds=max(seconds, 0))
+        over = int(row.get('over_unix') or 0)
+        now = int(row.get('server_now') or 0)
+        remain = max(over - now, 0) if over > 0 and not row.get('activity') else 0
+        self.available_time = timedelta(seconds=remain)
+        self.finish_unix = int(row.get('finish_unix') or 0)
+        self.create_time = current_time()
+        if self.finish_unix > 0 and self.status == 'running':
+            self.create_time = datetime.fromtimestamp(self.finish_unix - seconds)
+        self.deadline_time = (
+            (self.create_time + self.available_time).replace(microsecond=0)
+            if self.available_time else None
+        )
+        self.repeat_count = 1
+        self.genre = self.commission_name_parse(self.name.upper())
+        self.category_str = 'unknown'
+        self.genre_str = 'unknown'
+        self.duration_hour = 'unknown'
+        self.duration_hm = 'unknown'
+        if self.valid and '_' in (self.genre or ''):
+            self.category_str, self.genre_str = self.genre.split('_', 1)
+            self.duration_hour = str(int(self.duration.total_seconds() / 36) / 100).strip('.0')
+            self.duration_hm = str(self.duration).rsplit(':', 1)[0]
+        if int(row.get('type') or 0) == 5:
+            self.convert_to_night()
+        return self
+
     def is_event_commission(self):
         """判断是否为活动委托。
 
@@ -704,6 +750,10 @@ class Commission:
         Returns:
             是否为活动委托。
         """
+        if int(getattr(self, 'activity_id', 0) or 0) > 0:
+            return True
+        if getattr(self, 'image', None) is None:
+            return False
         # 当前活动委托：粉黄色渐变（度假村复刻 / Idol Master 活动风格）
         area = area_offset((5, 5, 30, 30), self.area[0:2])
         if color_similar(color1=get_color(self.image, area), color2=(235, 173, 161), threshold=30):
@@ -732,6 +782,8 @@ class Commission:
         Returns:
             运行中委托的完成时间，非运行状态返回 None。
         """
+        if int(getattr(self, 'finish_unix', 0) or 0) > 0 and self.status == 'running':
+            return datetime.fromtimestamp(self.finish_unix).replace(microsecond=0)
         if self.valid and self.status == 'running':
             return (self.create_time + self.duration).replace(microsecond=0)
         else:

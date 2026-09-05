@@ -894,6 +894,18 @@
       "goto_main": "前往主介面",
       "close_game": "關閉遊戲",
       "close_emulator": "關閉模擬器"
+    },
+    "SweeneyBridge": {
+      "name": "Sweeney Mod Bridge",
+      "help": "從共享資料夾讀取場景/石油/委託等，心跳失效時回退截圖。"
+    },
+    "SweeneyBridgeRoot": {
+      "name": "Sweeney Bridge 根目錄",
+      "help": "SweeneyMod 共享資料夾路徑，留空自動偵測。"
+    },
+    "SweeneyBridgeAccount": {
+      "name": "Sweeney Bridge 帳號目錄",
+      "help": "可選 {{playerId}}_{{commander}}，留空依模擬器 Serial 匹配。"
     }
   },
   "DropRecord": {

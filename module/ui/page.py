@@ -135,6 +135,11 @@ page_main_white.link(button=MAIN_GOTO_FLEET_WHITE, destination=page_fleet)
 page_unknown = Page(None)
 page_unknown.link(button=GOTO_MAIN, destination=page_main)
 
+# In-map identity for SweeneyBridge heartbeat (no check_button; not used by screenshot nav)
+page_in_map = Page(None)
+page_in_map.link(button=BACK_ARROW, destination=page_campaign)
+page_in_map.link(button=GOTO_MAIN, destination=page_main)
+
 # 演习
 # 不要从 page_campaign 进入 page_exercise
 page_exercise = Page(EXERCISE_CHECK)

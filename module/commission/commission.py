@@ -1077,6 +1077,15 @@ class RewardCommission(UI, InfoHandler):
             in: page_reward
             out: page_commission
         """
+        try:
+            from module.alas_bridge.actions import bridge_enabled, finish_commission
+            if bridge_enabled(self.config):
+                result = finish_commission(self.config, all_done=True)
+                if result is not None:
+                    logger.info('Sweeney finish_commission')
+                    return True
+        except Exception as e:
+            logger.info(f'Sweeney commission receive miss: {e}')
         for _ in range(3):
             try:
                 return self._commission_receive()
@@ -1094,6 +1103,20 @@ class RewardCommission(UI, InfoHandler):
             in: Any
             out: page_commission
         """
+        try:
+            from module.alas_bridge.commission_overlay import commission_from_bridge
+            if commission_from_bridge(self):
+                total = self.daily.add_by_eq(self.urgent)
+                future_finish = sorted([f for f in total.get('finish_time') if f is not None])
+                logger.info(f'[委托-完成] 委托完成时间: {[str(f) for f in future_finish]}')
+                if len(future_finish):
+                    self.config.task_delay(target=future_finish)
+                else:
+                    logger.info('[委托-完成] 没有正在运行的委托')
+                    self.config.task_delay(success=False)
+                return
+        except Exception as e:
+            logger.info(f'Sweeney commission overlay miss: {e}')
         # 修复：如果卡在 TACTICAL_CLASS_START（技能书选择界面），点击取消退出
         # TACTICAL_CHECK 在 TACTICAL_CLASS_START 中被误检测，导致 A* 导航
         # 选择 BACK_ARROW，但从该页面无法导航到 page_reward

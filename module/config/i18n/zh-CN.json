@@ -894,6 +894,18 @@
       "goto_main": "前往主界面",
       "close_game": "关闭游戏",
       "close_emulator": "关闭模拟器"
+    },
+    "SweeneyBridge": {
+      "name": "Sweeney Mod Bridge",
+      "help": "从共享文件夹读取场景/石油/委托等，心跳失效时回退截图。"
+    },
+    "SweeneyBridgeRoot": {
+      "name": "Sweeney Bridge 根目录",
+      "help": "SweeneyMod 共享文件夹路径，留空自动检测。"
+    },
+    "SweeneyBridgeAccount": {
+      "name": "Sweeney Bridge 账号目录",
+      "help": "可选 {{playerId}}_{{commander}}，留空按模拟器 Serial 匹配。"
     }
   },
   "DropRecord": {

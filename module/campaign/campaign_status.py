@@ -69,7 +69,20 @@ class CampaignStatus(UI):
         Returns:
             int: PT 数量，解析失败返回 0。
         """
-        pt = OCR_PT.ocr(self.device.image)
+        pt = None
+        try:
+            from module.alas_bridge.actions import event_pt_from_bridge
+            pt = event_pt_from_bridge(self.config)
+        except Exception as e:
+            logger.info(f'Sweeney event PT miss: {e}')
+        if pt is None:
+            pt = OCR_PT.ocr(self.device.image)
+        elif isinstance(pt, (int, float)):
+            logger.attr('活动PT', int(pt))
+            LogRes(self.config).Pt = int(pt)
+            if update:
+                self.config.update()
+            return int(pt)
 
         # 首选匹配带前缀 X 的格式（历史上部分活动使用 ‘X1234’）
         res = re.search(r'X(\d+)', pt)
@@ -100,6 +113,17 @@ class CampaignStatus(UI):
         Returns:
             int: 金币数量。
         """
+        try:
+            from module.alas_bridge.actions import coin_from_bridge
+            amount = coin_from_bridge(self.config)
+            if amount is not None:
+                logger.attr('Coin', amount)
+                LogRes(self.config).Coin = {'Value': amount, 'Limit': 0}
+                if update:
+                    self.config.update()
+                return amount
+        except Exception as e:
+            logger.info(f'Sweeney coin miss: {e}')
         _coin = {}
         timeout = Timer(1, count=2).start()
         while 1:
@@ -154,6 +178,17 @@ class CampaignStatus(UI):
         Returns:
             int: 石油数量。
         """
+        try:
+            from module.alas_bridge.actions import oil_from_bridge
+            amount = oil_from_bridge(self.config)
+            if amount is not None:
+                logger.attr('Oil', amount)
+                LogRes(self.config).Oil = {'Value': amount, 'Limit': 0}
+                if update:
+                    self.config.update()
+                return amount
+        except Exception as e:
+            logger.info(f'Sweeney oil miss: {e}')
         _oil = {}
         timeout = Timer(1, count=2).start()
         while 1:

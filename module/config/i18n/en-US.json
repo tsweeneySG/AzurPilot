@@ -894,6 +894,18 @@
       "goto_main": "Go to Main Menu",
       "close_game": "Close Game",
       "close_emulator": "Close Emulator"
+    },
+    "SweeneyBridge": {
+      "name": "Sweeney Mod Bridge (skip screenshots for page detect)",
+      "help": "Read live scene, oil, commissions, and island actions from the Sweeney mod shared-folder files. Falls back to screenshots if the heartbeat is missing or stale."
+    },
+    "SweeneyBridgeRoot": {
+      "name": "Sweeney Bridge Root",
+      "help": "Host path to SweeneyMod shared folder. Leave empty to auto-detect E:\\Azur\\MuMuSharedFolder\\SweeneyMod."
+    },
+    "SweeneyBridgeAccount": {
+      "name": "Sweeney Bridge Account Folder",
+      "help": "Optional override of {{playerId}}_{{commander}}. Leave empty to match Alas.Emulator.Serial."
     }
   },
   "DropRecord": {

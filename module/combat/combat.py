@@ -20,6 +20,8 @@
 6. 处理战斗结果（经验、掉落等）
 """
 
+import time
+
 import numpy as np
 
 from module.base.timer import Timer
@@ -429,6 +431,67 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
 
         return False
 
+    COMBAT_IDLE_PEEK_EVERY = 8.0
+
+    def _bridge_combat_idle_reset(self):
+        self._bridge_fight_idle_t0 = None
+        self._bridge_fight_latched = False
+        self._bridge_fight_peek_t0 = None
+        self._bridge_fight_skip_log_t0 = None
+
+    def _bridge_in_fight_for_skip(self, auto='combat_auto', submarine='do_not_use', drop=None):
+        try:
+            from module.alas_bridge.actions import (
+                battle_is_fighting,
+                combat_idle_should_skip,
+                combat_idle_skip_allowed,
+            )
+        except Exception:
+            return False
+        if not combat_idle_skip_allowed(
+            self.config, auto=auto, submarine=submarine, drop=drop
+        ):
+            self._bridge_fight_latched = False
+            return False
+        fighting = battle_is_fighting(self.config, max_age=15.0)
+        skip, latched = combat_idle_should_skip(
+            fighting, getattr(self, '_bridge_fight_latched', False)
+        )
+        self._bridge_fight_latched = latched
+        return skip
+
+    def _bridge_combat_idle_tick(self, auto='combat_auto', submarine='do_not_use', drop=None):
+        try:
+            from module.alas_bridge.actions import refresh_stuck_if_battle_fighting
+        except Exception:
+            self._bridge_combat_idle_reset()
+            return False
+        if not self._bridge_in_fight_for_skip(auto=auto, submarine=submarine, drop=drop):
+            if not getattr(self, '_bridge_fight_latched', False):
+                self._bridge_fight_idle_t0 = None
+                self._bridge_fight_peek_t0 = None
+            return False
+        now = time.time()
+        started = getattr(self, '_bridge_fight_idle_t0', None)
+        if started is None:
+            self._bridge_fight_idle_t0 = now
+            self._bridge_fight_peek_t0 = now
+            self._bridge_fight_skip_log_t0 = now
+            logger.info('Combat idle skip (Sweeney BATTLE_FIGHT, no ADB screencap)')
+            started = now
+        peek_at = getattr(self, '_bridge_fight_peek_t0', None) or started
+        if now - peek_at >= self.COMBAT_IDLE_PEEK_EVERY:
+            self._bridge_fight_peek_t0 = now
+            logger.info('Combat idle skip peek (report watchdog)')
+            return False
+        log_at = getattr(self, '_bridge_fight_skip_log_t0', None) or started
+        if now - log_at >= 20.0:
+            self._bridge_fight_skip_log_t0 = now
+            logger.attr('CombatIdleSkip', f'{int(now - started)}s')
+        refresh_stuck_if_battle_fighting(self, max_age=15.0)
+        self.device.sleep(0.4)
+        return True
+
     def combat_execute(self, auto='combat_auto', submarine='do_not_use', drop=None):
         """
         战斗执行阶段：处理自动/手动战斗、潜艇呼叫、弹窗，等待战斗结算。
@@ -450,8 +513,17 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         self.device.click_record_clear()
         confirm_timer = Timer(10)
         confirm_timer.start()
+        skip_first = True
+        self._bridge_fight_idle_t0 = None
+        self._bridge_fight_peek_t0 = None
 
-        for _ in self.loop():
+        while 1:
+            if self._bridge_combat_idle_tick(auto=auto, submarine=submarine, drop=drop):
+                continue
+            if skip_first:
+                skip_first = False
+            else:
+                self.device.screenshot()
 
             if not confirm_timer.reached():
                 if self.handle_combat_automation_confirm():

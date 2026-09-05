@@ -894,6 +894,18 @@
       "goto_main": "メイン画面に移動",
       "close_game": "ゲームを閉じる",
       "close_emulator": "エミュレーターを閉じる"
+    },
+    "SweeneyBridge": {
+      "name": "Sweeney Mod Bridge",
+      "help": "共有フォルダからシーン/燃料/委託を読む。心拍が古い場合はスクショに戻る。"
+    },
+    "SweeneyBridgeRoot": {
+      "name": "Sweeney Bridge Root",
+      "help": "SweeneyMod 共有フォルダ。空なら自動検出。"
+    },
+    "SweeneyBridgeAccount": {
+      "name": "Sweeney Bridge Account Folder",
+      "help": "任意の {{playerId}}_{{commander}}。空なら Serial で照合。"
     }
   },
   "DropRecord": {

@@ -665,6 +665,20 @@
           "close_game",
           "close_emulator"
         ]
+      },
+      "SweeneyBridge": {
+        "type": "checkbox",
+        "value": false
+      },
+      "SweeneyBridgeRoot": {
+        "type": "input",
+        "value": "",
+        "valuetype": "str"
+      },
+      "SweeneyBridgeAccount": {
+        "type": "input",
+        "value": "",
+        "valuetype": "str"
       }
     },
     "DropRecord": {

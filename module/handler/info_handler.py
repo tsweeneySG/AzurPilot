@@ -124,6 +124,17 @@ class InfoHandler(ModuleBase):
     _popup_offset = (3, 30)
 
     def handle_popup_confirm(self, name='', offset=None, interval=2):
+        try:
+            from module.alas_bridge.actions import bridge_enabled
+            if bridge_enabled(self.config):
+                from module.alas_bridge.actions import msgbox_from_heartbeat, msgbox_yes
+                snap = msgbox_from_heartbeat(self.config)
+                if isinstance(snap, dict) and snap.get('showing') and snap.get('has_yes') is not False:
+                    if msgbox_yes(self.config):
+                        logger.info(f'Sweeney msgbox yes ({name})')
+                        return True
+        except Exception:
+            pass
         if offset is None:
             offset = self._popup_offset
         if self.appear(POPUP_CANCEL, offset=offset) \
@@ -140,6 +151,17 @@ class InfoHandler(ModuleBase):
         return False
 
     def handle_popup_cancel(self, name='', offset=None, interval=2):
+        try:
+            from module.alas_bridge.actions import bridge_enabled
+            if bridge_enabled(self.config):
+                from module.alas_bridge.actions import msgbox_from_heartbeat, msgbox_no
+                snap = msgbox_from_heartbeat(self.config)
+                if isinstance(snap, dict) and snap.get('showing') and snap.get('has_no') is not False:
+                    if msgbox_no(self.config):
+                        logger.info(f'Sweeney msgbox no ({name})')
+                        return True
+        except Exception:
+            pass
         if offset is None:
             offset = self._popup_offset
         if self.appear(POPUP_CONFIRM, offset=offset) \

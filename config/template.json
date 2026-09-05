@@ -128,7 +128,10 @@
       "TaskHoardingDuration": 0,
       "CloseEmulatorDuringLongWait": true,
       "WhenTaskQueueEmpty": "goto_main",
-      "WhenSchedulerStopped": "stay_there"
+      "WhenSchedulerStopped": "stay_there",
+      "SweeneyBridge": false,
+      "SweeneyBridgeRoot": null,
+      "SweeneyBridgeAccount": null
     },
     "DropRecord": {
       "SaveFolder": "./screenshots",
