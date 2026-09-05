@@ -703,6 +703,16 @@ class UI(InfoHandler):
                 or self.appear(RAID_FLEET_PREPARATION, offset=(30, 30), interval=3):
             self.device.click(MAP_PREPARATION_CANCEL)
             return True
+        try:
+            from module.alas_bridge.actions import map_prep_showing_from_heartbeat
+            if map_prep_showing_from_heartbeat(self.config):
+                timer = self.get_interval_timer('BRIDGE_MAP_PREP_CANCEL', interval=3)
+                if timer.reached():
+                    timer.reset()
+                    self.device.click(MAP_PREPARATION_CANCEL)
+                    return True
+        except Exception:
+            pass
         if self.appear_then_click(AUTO_SEARCH_MENU_EXIT, offset=(200, 30), interval=3):
             return True
         if self.appear_then_click(AUTO_SEARCH_REWARD, offset=(50, 50), interval=3):

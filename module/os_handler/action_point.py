@@ -202,7 +202,17 @@ class ActionPointHandler(UI, MapEventHandler):
         oil = OIL_ITEM.predict(self.device.image, name=False, amount=True)
         items = ACTION_POINT_ITEMS.predict(self.device.image, name=False, amount=True)
         box = [item.amount for item in oil] + [item.amount for item in items]
-        current = OCR_ACTION_POINT_REMAIN.ocr(self.device.image)
+        current = None
+        try:
+            from module.alas_bridge.actions import bridge_enabled, os_from_heartbeat
+            if bridge_enabled(self.config):
+                os_state = os_from_heartbeat(self.config)
+                if isinstance(os_state, dict) and os_state.get('action_points') is not None:
+                    current = int(os_state.get('action_points') or 0)
+        except Exception as e:
+            logger.info(f'Sweeney OS AP miss: {e}')
+        if current is None:
+            current = OCR_ACTION_POINT_REMAIN.ocr(self.device.image)
         total = current
         if self.config.OS_ACTION_POINT_BOX_USE:
             total += np.sum(np.array(box) * tuple(ACTION_POINT_BOX.values()))

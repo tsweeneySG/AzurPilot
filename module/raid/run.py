@@ -44,6 +44,14 @@ class RaidRun(Raid, CampaignEvent):
         """
         confirm_timer = Timer(0.3, count=0)
         prev = 30
+        try:
+            from module.alas_bridge.actions import raid_remain_from_bridge
+            bridged = raid_remain_from_bridge(self.config, mode=mode)
+            if bridged is not None:
+                logger.attr(f'{mode.capitalize()} 剩余次数', bridged)
+                return bridged
+        except Exception as e:
+            logger.info(f'Sweeney raid remain miss: {e}')
         while 1:
             if skip_first_screenshot:
                 skip_first_screenshot = False

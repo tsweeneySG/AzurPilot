@@ -329,7 +329,17 @@ class Exercise(ExerciseCombat):
             run = True
 
         while run:
-            self.remain = OCR_EXERCISE_REMAIN.ocr(self.device.image)
+            self.remain = None
+            try:
+                from module.alas_bridge.actions import bridge_enabled, get_task_remains
+                if bridge_enabled(self.config):
+                    remains = get_task_remains(self.config)
+                    if remains is not None and remains.get('exercise') is not None:
+                        self.remain = int(remains.get('exercise') or 0)
+            except Exception as e:
+                logger.info(f'Sweeney exercise remain miss: {e}')
+            if self.remain is None:
+                self.remain = OCR_EXERCISE_REMAIN.ocr(self.device.image)
             if self.remain <= self.preserve:
                 break
 

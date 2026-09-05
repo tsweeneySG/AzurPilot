@@ -601,7 +601,16 @@ class RewardDorm(UI):
 
         if collect:
             logger.hr('后宅收取', level=1)
-            self.dorm_collect()
+            collected = False
+            try:
+                from module.alas_bridge.actions import bridge_enabled, dorm_one_key
+                if bridge_enabled(self.config) and dorm_one_key(self.config):
+                    logger.info('[后宅-收取] 通过 Sweeney BACKYARD_ONE_KEY')
+                    collected = True
+            except Exception as e:
+                logger.info(f'Sweeney dorm one-key failed: {e}')
+            if not collected:
+                self.dorm_collect()
 
         if buy_furniture:
             logger.hr('后宅购买家具', level=1)

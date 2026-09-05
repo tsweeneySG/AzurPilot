@@ -8,6 +8,9 @@ from module.guild.assets import BATTLE_STATUS_CF, EXP_INFO_CF
 
 
 class RaidCombat(Combat):
+    def _battle_status_report_click_button(self):
+        return BATTLE_STATUS_CF
+
     def handle_battle_status(self, drop=None):
         """
         处理突袭战斗的状态结算画面，识别大世界风格的战斗结算按钮。

@@ -557,6 +557,35 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
                     or self.handle_get_items(drop=drop):
                 break
 
+
+    def _battle_status_report_click_button(self):
+        """Sweeney 心跳为 BATTLE_REPORT 时使用的确认按钮。"""
+        return BATTLE_STATUS_S
+
+    def _bridge_battle_is_report(self):
+        try:
+            from module.alas_bridge.actions import battle_report_overlay_active
+            return battle_report_overlay_active(self.config)
+        except Exception:
+            return False
+
+    def _click_bridge_battle_report(self, drop=None):
+        """心跳显示结算层已打开，但评价模板尚未匹配时点击确认。"""
+        button = self._battle_status_report_click_button()
+        interval = max(float(self.battle_status_click_interval or 0), 0.5)
+        name = getattr(button, 'name', None) or str(button)
+        timer = self.get_interval_timer(f'{name}_BRIDGE_REPORT', interval=interval)
+        if not timer.reached():
+            return False
+        timer.reset()
+        if drop:
+            drop.handle_add(self)
+        else:
+            self.device.sleep((0.25, 0.5))
+        self.device.click(button)
+        logger.info(f'[战斗-结算] Sweeney BATTLE_REPORT 点击 ({name})')
+        return True
+
     def handle_battle_status(self, drop=None):
         """
         处理战斗结算画面（S/A/B/C/D 评价）。
@@ -610,6 +639,8 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
                 self.device.sleep((0.25, 0.5))
             self.device.click(BATTLE_STATUS_D)
             return True
+        if self._bridge_battle_is_report():
+            return self._click_bridge_battle_report(drop=drop)
 
         return False
 
@@ -835,7 +866,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             submarine_mode = 'do_not_use'
             if self.config.Submarine_Fleet:
                 submarine_mode = self.config.Submarine_Mode
-        self.battle_status_click_interval = 7 if save_get_items else 0
+        self._apply_battle_status_click_interval(save_get_items)
 
         with self.stat.new(
                 genre=self.config.campaign_name, method=self.config.DropRecord_CombatRecord
@@ -852,3 +883,11 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
                 drop=drop, expected_end=expected_end)
 
         logger.info('[战斗-结束] 战斗结束')
+
+    def _apply_battle_status_click_interval(self, save_get_items):
+        """掉落记录需要更慢的确认点击以便截图。
+
+        否则保留子类间隔（META 为 2 秒，避免心跳 Confirm 在结算 UI 加载前连点触发 GameTooManyClickError）。
+        """
+        if save_get_items:
+            self.battle_status_click_interval = 7

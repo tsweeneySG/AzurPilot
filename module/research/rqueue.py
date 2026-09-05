@@ -15,6 +15,7 @@
     槽位(Slot): 队列中的位置，从下到上编号 0-4
 """
 from module.base.button import ButtonGrid
+from module.base.timer import Timer
 from module.base.decorator import cached_property, Config
 from module.base.utils import get_color
 from module.config.time_source import now as current_time
@@ -38,6 +39,111 @@ class ResearchQueue(ResearchUI):
         queue_status_grids (ButtonGrid): 队列状态图标的按钮网格，
             因各服务器 UI 布局差异，通过 @Config.when 按服务器分别定义。
     """
+
+    def _research_queue_join_via_bridge(self):
+        """
+        对当前运行槽发送 JOIN_QUEUE_TECHNOLOGY。
+
+        Returns:
+            True: 已入队（或队列已满 / 已在队列）且 UI 已处理
+            False: 条件未满足（已取消详情）
+            None: 桥接关闭 / 未命中，走截图路径
+        """
+        try:
+            from module.alas_bridge.actions import bridge_enabled, research_queue_join
+            if not bridge_enabled(self.config):
+                return None
+            active_before = self._bridge_research_active_id()
+            result = research_queue_join(self.config)
+            if not isinstance(result, dict):
+                return None
+            reason = result.get('reason')
+            if result.get('sent'):
+                logger.info(f'[科研-队列] 通过桥接入队 (id={result.get("id")})')
+            elif reason in ('none', 'already_queued'):
+                logger.info(f'[科研-队列] 桥接入队跳过 ({reason})')
+            elif reason == 'mission_incomplete':
+                logger.info('[科研-队列] 项目条件未满足（桥接），取消')
+                self.research_detail_cancel()
+                return False
+            elif reason == 'queue_full':
+                logger.info('[科研-队列] 队列已满（桥接）')
+            elif reason == 'completed':
+                logger.info(f'Sweeney research_queue_join not applicable: {result}')
+                return None
+            else:
+                logger.info(f'Sweeney research_queue_join miss: {result}')
+                return None
+
+            skip_first = True
+            wait = Timer(15, count=1).start()
+            while 1:
+                if skip_first:
+                    skip_first = False
+                else:
+                    self.device.screenshot()
+                if self.is_research_stabled():
+                    break
+                if self._bridge_research_queue_joined(active_before):
+                    self._research_queue_leave_detail()
+                    if self.is_research_stabled():
+                        break
+                if wait.reached():
+                    logger.warning('[科研-队列] 桥接入队已发送但列表未稳定')
+                    self._research_queue_leave_detail()
+                    break
+            self.ensure_research_center_stable()
+            return True
+        except Exception as e:
+            logger.info(f'Sweeney research_queue_join miss: {e}')
+            return None
+
+    def _bridge_research_active_id(self):
+        try:
+            from module.alas_bridge.actions import bridge_enabled, get_research
+            if not bridge_enabled(self.config):
+                return None
+            data = get_research(self.config)
+            active = (data or {}).get('active') if isinstance(data, dict) else None
+            if isinstance(active, dict) and active.get('id'):
+                return active.get('id')
+        except Exception as e:
+            logger.info(f'Sweeney research active id miss: {e}')
+        return None
+
+    def _bridge_research_queue_joined(self, active_before):
+        if not active_before:
+            return False
+        try:
+            from module.alas_bridge.actions import bridge_enabled, get_research
+            if not bridge_enabled(self.config):
+                return False
+            data = get_research(self.config)
+            if not isinstance(data, dict):
+                return False
+            active = data.get('active')
+            if isinstance(active, dict) and active.get('id') == active_before:
+                return False
+            for key in ('queued', 'queue'):
+                items = data.get(key)
+                if not isinstance(items, list):
+                    continue
+                for item in items:
+                    if isinstance(item, dict) and item.get('id') == active_before:
+                        return True
+            if active is None or not (isinstance(active, dict) and active.get('id')):
+                return True
+        except Exception as e:
+            logger.info(f'Sweeney research queue-join detect miss: {e}')
+        return False
+
+    def _research_queue_leave_detail(self):
+        if self.appear(RESEARCH_UNAVAILABLE, offset=(20, 20)) \
+                or self.appear(RESEARCH_START, offset=(20, 20)) \
+                or self.appear(RESEARCH_STOP, offset=(20, 20)) \
+                or self.appear(RESEARCH_QUEUE_ADD, offset=(20, 20)):
+            self.research_detail_quit()
+
     def research_queue_add(self, skip_first_screenshot=True):
         """
         Returns:
@@ -49,6 +155,12 @@ class ResearchQueue(ResearchUI):
             out: is_in_research and stabled
         """
         logger.hr('加入科研队列')
+        bridge_join = self._research_queue_join_via_bridge()
+        if bridge_join is True:
+            return True
+        if bridge_join is False:
+            return False
+
         # POPUP_CONFIRM has just been clicked in research_project_start()
         self.popup_interval_clear()
         self.interval_clear([RESEARCH_QUEUE_ADD])

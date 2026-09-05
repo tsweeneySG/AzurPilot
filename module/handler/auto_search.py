@@ -223,6 +223,12 @@ class AutoSearchHandler(EnemySearchingHandler):
         Returns:
             bool: 是否进行了点击操作。
         """
+        try:
+            from module.alas_bridge.actions import bridge_enabled, dock_full_from_heartbeat
+            if bridge_enabled(self.config) and dock_full_from_heartbeat(self.config):
+                return False
+        except Exception:
+            pass
         if self.appear(AUTO_SEARCH_MAP_OPTION_OFF, offset=self._auto_search_offset) \
                 and self.appear_then_click(AUTO_SEARCH_MAP_OPTION_OFF, interval=2):
             return True

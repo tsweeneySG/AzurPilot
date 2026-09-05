@@ -133,6 +133,13 @@ class GemsCampaignOverride(CampaignBase):
                         or self.appear(MAP_PREPARATION_HARD, offset=(20, 20), interval=2):
                     self.enter_map_cancel()
                     break
+                try:
+                    from module.alas_bridge.actions import map_prep_showing_from_heartbeat
+                    if map_prep_showing_from_heartbeat(self.config):
+                        self.enter_map_cancel()
+                        break
+                except Exception:
+                    pass
             raise CampaignEnd('Emotion withdraw')
 
     def handle_exp_info(self):
@@ -439,9 +446,21 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
         while 1:
             self.device.screenshot()
 
-            if self.appear_then_click(MAP_PREPARATION, interval=1):
-                continue
-            if self.appear_then_click(MAP_PREPARATION_HARD, interval=1):
+            if self.appear(MAP_PREPARATION, interval=1) or self.appear(MAP_PREPARATION_HARD, interval=1):
+                tracked = False
+                try:
+                    from module.alas_bridge.actions import bridge_enabled, chapter_track
+                    if bridge_enabled(self.config):
+                        result = chapter_track(
+                            self.config, auto_fight=False, loop=True, open_fleet=True)
+                        tracked = isinstance(result, dict)
+                except Exception:
+                    tracked = False
+                if not tracked:
+                    if self.appear_then_click(MAP_PREPARATION, interval=1):
+                        continue
+                    if self.appear_then_click(MAP_PREPARATION_HARD, interval=1):
+                        continue
                 continue
 
             if self.handle_retirement():

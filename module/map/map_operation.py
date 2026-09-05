@@ -204,6 +204,14 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                         self.enter_map_cancel()
                         self.handle_map_stop()
                         raise ScriptEnd(f'Reach condition: {self.config.StopCondition_MapAchievement}')
+                    if self._bridge_try_chapter_track():
+                        map_click += 1
+                        map_timer.reset()
+                        campaign_timer.reset()
+                        continue
+                    if self._level_prep_from_bridge() == 'fleet':
+                        map_timer.reset()
+                        continue
                     self.device.click(prep_button)
                     map_click += 1
                     map_timer.reset()
@@ -406,6 +414,46 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         total = r.shape[0] * r.shape[1]
         return sum_ / total > 0.5
 
+
+    def _level_prep_from_bridge(self):
+        """心跳中的 'info' / 'fleet'，否则 None。"""
+        try:
+            from module.alas_bridge.actions import map_prep_showing_from_heartbeat
+            return map_prep_showing_from_heartbeat(self.config)
+        except Exception:
+            return None
+
+    def _bridge_try_chapter_track(self):
+        """
+        通过 Sweeney 桥发送 GAME.TRACKING，替代点击出击。
+        未开自动搜索时打开舰队选择，以便仍可处理 2x 教材 / 职责。
+        """
+        try:
+            from module.alas_bridge.actions import bridge_enabled, chapter_track
+        except Exception:
+            return False
+        if not bridge_enabled(self.config):
+            return False
+        auto_fight = bool(getattr(self, 'map_is_auto_search', False)
+                          or self.config.Campaign_UseAutoSearch)
+        loop = bool(getattr(self, 'map_is_clear_mode', False)
+                    or self.config.Campaign_UseClearMode)
+        open_fleet = not auto_fight
+        if open_fleet and self._level_prep_from_bridge() == 'fleet':
+            return False
+        result = chapter_track(
+            self.config,
+            auto_fight=auto_fight,
+            loop=loop,
+            open_fleet=open_fleet,
+        )
+        if not isinstance(result, dict):
+            return False
+        logger.info(f'Sweeney chapter_track: {result}')
+        if auto_fight:
+            self.map_is_auto_search = True
+        return True
+
     def handle_map_preparation(self):
         """
         处理地图准备阶段，等待地图信息动画完成。
@@ -414,10 +462,14 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
             Button | None: 地图准备页出现且信息动画结束时，返回普通或困难模式
                 对应的准备按钮；否则返回 None。
         """
+        bridge_prep = self._level_prep_from_bridge()
         if self.appear(MAP_PREPARATION, offset=(20, 20)):
             prep_button = MAP_PREPARATION
         elif self.appear(MAP_PREPARATION_HARD, offset=(20, 20)):
             prep_button = MAP_PREPARATION_HARD
+        elif bridge_prep:
+            logger.attr('地图准备', f'bridge_{bridge_prep}')
+            return MAP_PREPARATION
         else:
             self.map_clear_percentage_prev = -1
             self.map_clear_percentage_timer.reset()

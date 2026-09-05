@@ -103,6 +103,28 @@ class Page:
     def __str__(self):
         return self.name
 
+    def hops_to(self, destination, limit=30):
+        """沿 `.parent` 走向目标页面的跳数。`init_connection` 之后有效，不可达返回 None。"""
+        if destination is None:
+            return None
+        if self == destination:
+            return 0
+        hops = 0
+        seen = set()
+        cur = self
+        while cur is not None:
+            ident = id(cur)
+            if ident in seen:
+                return None
+            seen.add(ident)
+            if cur == destination:
+                return hops
+            cur = cur.parent
+            hops += 1
+            if hops > limit:
+                return None
+        return None
+
     def link(self, button, destination):
         self.links[destination] = button
 

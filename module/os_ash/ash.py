@@ -49,6 +49,10 @@ class AshCombat(Combat):
 
     当信标已完成或为空时，抛出 AshBeaconFinished 异常通知上层停止战斗循环。
     """
+    battle_status_click_interval = 2
+
+    def _battle_status_report_click_button(self):
+        return BATTLE_STATUS
 
     def handle_battle_status(self, drop=None):
         """
@@ -72,6 +76,8 @@ class AshCombat(Combat):
         if self.appear(BATTLE_PREPARATION, offset=(30, 30), interval=2):
             self.device.click(BACK_ARROW)
             return True
+        if self._bridge_battle_is_report():
+            return self._click_bridge_battle_report(drop=drop)
         if super().handle_battle_status(drop=drop):
             return True
 

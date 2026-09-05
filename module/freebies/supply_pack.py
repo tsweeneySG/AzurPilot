@@ -104,6 +104,14 @@ class SupplyPack_250814(SupplyPack):
         Returns:
             int: Oil amount
         """
+        try:
+            from module.alas_bridge.actions import oil_from_bridge
+            amount = oil_from_bridge(self.config)
+            if amount is not None:
+                logger.attr('Oil', amount)
+                return amount
+        except Exception as e:
+            logger.info(f'Sweeney oil miss: {e}')
         amount = 0
         timeout = Timer(1, count=2).start()
         while 1:

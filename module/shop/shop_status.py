@@ -44,6 +44,19 @@ class ShopStatus(UI):
     Attributes:
         _currency (int): 当前货币余额缓存。
     """
+
+    def _shop_player_from_bridge(self):
+        try:
+            from module.alas_bridge.actions import bridge_enabled, player_from_heartbeat, get_resources
+            if not bridge_enabled(self.config):
+                return None
+            player = player_from_heartbeat(self.config)
+            if isinstance(player, dict):
+                return player
+            return get_resources(self.config)
+        except Exception:
+            return None
+
     def status_get_gold_coins(self):
         """
         Returns:
@@ -52,6 +65,12 @@ class ShopStatus(UI):
         Pages:
             in:
         """
+        player = self._shop_player_from_bridge()
+        if isinstance(player, dict) and 'gold' in player:
+            amount = int(player.get('gold') or 0)
+            LogRes(self.config).Coin = amount
+            self.config.update()
+            return amount
         amount = OCR_SHOP_GOLD_COINS.ocr(self.device.image)
         LogRes(self.config).Coin = amount
         self.config.update()
@@ -65,6 +84,12 @@ class ShopStatus(UI):
         Pages:
             in: page_shop, medal shop
         """
+        player = self._shop_player_from_bridge()
+        if isinstance(player, dict) and 'gem' in player:
+            amount = int(player.get('gem') or 0)
+            LogRes(self.config).Gem = amount
+            self.config.update()
+            return amount
         amount = OCR_SHOP_GEMS.ocr(self.device.image)
         LogRes(self.config).Gem = amount
         self.config.update()
@@ -78,6 +103,12 @@ class ShopStatus(UI):
         Pages:
             in: page_shop, medal shop
         """
+        player = self._shop_player_from_bridge()
+        if isinstance(player, dict) and player.get('medal') is not None:
+            amount = int(player.get('medal') or 0)
+            LogRes(self.config).Medal = amount
+            self.config.update()
+            return amount
         amount = OCR_SHOP_MEDAL.ocr(self.device.image)
         LogRes(self.config).Medal = amount
         self.config.update()
@@ -91,6 +122,12 @@ class ShopStatus(UI):
         Pages:
             in: page_shop, merit shop
         """
+        player = self._shop_player_from_bridge()
+        if isinstance(player, dict) and player.get('merit') is not None:
+            amount = int(player.get('merit') or 0)
+            LogRes(self.config).Merit = amount
+            self.config.update()
+            return amount
         amount = OCR_SHOP_MERIT.ocr(self.device.image)
         LogRes(self.config).Merit = amount
         self.config.update()
@@ -104,6 +141,12 @@ class ShopStatus(UI):
         Pages:
             in: page_shop, guild shop
         """
+        player = self._shop_player_from_bridge()
+        if isinstance(player, dict) and player.get('guild_coin') is not None:
+            amount = int(player.get('guild_coin') or 0)
+            LogRes(self.config).GuildCoin = amount
+            self.config.update()
+            return amount
         amount = OCR_SHOP_GUILD_COINS.ocr(self.device.image)
         LogRes(self.config).GuildCoin = amount
         self.config.update()
@@ -117,6 +160,12 @@ class ShopStatus(UI):
         Pages:
             in: page_shop, core shop
         """
+        player = self._shop_player_from_bridge()
+        if isinstance(player, dict) and player.get('core') is not None:
+            amount = int(player.get('core') or 0)
+            LogRes(self.config).Core = amount
+            self.config.update()
+            return amount
         amount = OCR_SHOP_CORE.ocr(self.device.image)
         LogRes(self.config).Core = amount
         self.config.update()

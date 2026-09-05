@@ -15,6 +15,8 @@
          AddNewStudent.Enable (自动添加学员)
 """
 
+import time
+
 import module.config.server as server
 from module.base.button import Button, ButtonGrid
 from module.base.filter import Filter
@@ -208,6 +210,83 @@ class Book:
         if self.exp:
             text += '_Exp'
         return text
+
+
+
+class BridgeBook:
+    """Sweeney `get_tactical` 背包教材行（无需截图）。"""
+    genre_name = {
+        1: 'Red',
+        2: 'Blue',
+        3: 'Yellow',
+    }
+    exp_tier = {
+        0: 0,
+        1: 100,
+        2: 300,
+        3: 800,
+        4: 1500,
+    }
+
+    def __init__(self, row, skill_type=0):
+        row = row or {}
+        self.id = int(row.get('id') or 0)
+        self.count = int(row.get('count') or 0)
+        self.genre = int(row.get('skill_type') or 0)
+        self.tier = int(row.get('tier') or 0)
+        self.genre_str = self.genre_name.get(self.genre, 'unknown')
+        self.tier_str = f'T{self.tier}' if self.tier else 'Tn'
+        same = self.genre != 0 and self.genre == int(skill_type or 0)
+        self.same_str = 'same' if same else 'unknown'
+        base = int(row.get('exp') or self.exp_tier.get(self.tier, 0) or 0)
+        bonus = int(row.get('bonus') or 0)
+        if same and bonus:
+            self.exp_value = int(base * (100 + bonus) / 100)
+        else:
+            self.exp_value = base
+
+    def __str__(self):
+        text = f'{self.genre_str}_{self.tier_str}'
+        if self.same_str == 'same':
+            text += '_Exp'
+        return text
+
+
+def pick_tactical_book(books, skill_type, filter_str, skill_exp=0, skill_next=0, overflow_by_tier=None):
+    """用与截图路径相同的过滤器字符串挑选背包教材。"""
+    objs = []
+    for row in books or []:
+        if not isinstance(row, dict):
+            continue
+        book = BridgeBook(row, skill_type=skill_type)
+        if book.id and book.count > 0 and book.tier:
+            objs.append(book)
+    if not objs:
+        return None
+    BOOK_FILTER.load(filter_str)
+
+    def overflow_ok(book):
+        if overflow_by_tier is None:
+            return True
+        try:
+            nxt = int(skill_next or 0)
+            cur = int(skill_exp or 0)
+        except (TypeError, ValueError):
+            return True
+        if nxt != 5800:
+            return True
+        allow = int(overflow_by_tier.get(book.tier, 0) or 0)
+        if (cur + book.exp_value) > (nxt + allow):
+            return False
+        return True
+
+    picked = BOOK_FILTER.apply(objs, func=overflow_ok)
+    for item in picked:
+        if item == 'first':
+            return objs[0]
+        if isinstance(item, BridgeBook):
+            return item
+    return None
 
 
 class RewardTacticalClass(Dock):
@@ -900,6 +979,289 @@ class RewardTacticalClass(Dock):
 
         return None
 
+
+    def _tactical_overflow_by_tier(self):
+        if not self.config.ControlExpOverflow_Enable:
+            return None
+        out = {}
+        for tier in (1, 2, 3, 4):
+            try:
+                out[tier] = int(getattr(self.config, f'ControlExpOverflow_T{tier}Allow', 0) or 0)
+            except (TypeError, ValueError):
+                out[tier] = 0
+        return out
+
+    def _tactical_bridge_dismiss_msgbox(self):
+        try:
+            from module.alas_bridge.actions import msgbox_from_heartbeat, msgbox_no
+            snap = msgbox_from_heartbeat(self.config)
+            if isinstance(snap, dict) and snap.get('showing') and snap.get('has_no') is not False:
+                if msgbox_no(self.config):
+                    logger.info('[战术-学院] 继续学习弹窗已通过桥接关闭')
+                    return True
+        except Exception as e:
+            logger.info(f'Sweeney tactical msgbox miss: {e}')
+        return False
+
+    def _tactical_bridge_get(self):
+        from module.alas_bridge.actions import get_tactical
+        data = get_tactical(self.config)
+        if not isinstance(data, dict):
+            return None
+        if 'students' not in data and 'slot_max' not in data:
+            return None
+        if not isinstance(data.get('students'), list):
+            data['students'] = []
+        return data
+
+    def _tactical_bridge_poll(self, pred, timeout=8.0):
+        deadline = time.time() + timeout
+        last = None
+        while time.time() < deadline:
+            last = self._tactical_bridge_get()
+            if isinstance(last, dict) and pred(last):
+                return last
+            time.sleep(0.35)
+        return last
+
+    def _tactical_room_student(self, data, room_id):
+        room_id = int(room_id)
+        for row in (data or {}).get('students') or []:
+            if isinstance(row, dict) and int(row.get('room_id') or 0) == room_id:
+                return row
+        return None
+
+    def _tactical_bridge_pick_book(self, data, skill_type, skill_exp=0, skill_next=0):
+        book = pick_tactical_book(
+            data.get('books') if isinstance(data, dict) else None,
+            skill_type=skill_type,
+            filter_str=self.config.Tactical_TacticalFilter,
+            skill_exp=skill_exp,
+            skill_next=skill_next,
+            overflow_by_tier=self._tactical_overflow_by_tier(),
+        )
+        if book:
+            logger.info(f'[战术-学院] 教材选择 {book} id={book.id}')
+        else:
+            logger.info('[战术-学院] 教材选择为空')
+        return book
+
+    def _tactical_bridge_start(self, ship_id, skill_id, lesson_id, room_id):
+        from module.alas_bridge.actions import tactical_start
+        result = tactical_start(
+            self.config,
+            ship_id=ship_id,
+            skill_id=skill_id,
+            lesson_id=lesson_id,
+            room_id=room_id,
+        )
+        if not isinstance(result, dict) or not result.get('sent'):
+            logger.warning(f'[战术-学院] 启动失败 room={room_id} result={result}')
+            return False
+        logger.info(
+            f'Sweeney tactical_start room={room_id} ship={ship_id} '
+            f'skill={skill_id} book={lesson_id}'
+        )
+        data = self._tactical_bridge_poll(
+            lambda d: self._tactical_room_student(d, room_id) is not None
+            and not self._tactical_room_student(d, room_id).get('finished'),
+            timeout=8.0,
+        )
+        self._tactical_bridge_dismiss_msgbox()
+        return self._tactical_room_student(data, room_id) is not None
+
+    def _tactical_bridge_receive_room(self, room_id):
+        from module.alas_bridge.actions import tactical_receive
+        result = tactical_receive(self.config, room_id=room_id)
+        if not isinstance(result, dict) or not result.get('sent'):
+            logger.warning(f'[战术-学院] 领取失败 room={room_id} result={result}')
+            return False
+        logger.info(f'Sweeney tactical_receive room={room_id}')
+        self._tactical_bridge_poll(
+            lambda d: self._tactical_room_student(d, room_id) is None,
+            timeout=8.0,
+        )
+        self._tactical_bridge_dismiss_msgbox()
+        return True
+
+    def _tactical_bridge_apply_delay(self, data, book_empty=False):
+        from datetime import timedelta
+        if book_empty:
+            logger.warning('[战术-学院] 教材耗尽，延迟到次日')
+            self.tactical_finish = get_server_next_update(self.config.Scheduler_ServerUpdate)
+            logger.info(f'[战术-学院] 完成时间: {self.tactical_finish}')
+            return
+        remains = []
+        for row in (data or {}).get('students') or []:
+            if not isinstance(row, dict) or row.get('finished'):
+                continue
+            try:
+                remain = int(row.get('remain_s') or 0)
+            except (TypeError, ValueError):
+                remain = 0
+            if remain > 0:
+                remains.append(remain)
+        now = current_time()
+        self.tactical_finish = [
+            (now + timedelta(seconds=remain)).replace(microsecond=0)
+            for remain in remains
+        ]
+        logger.info(f'[战术-学院] 完成时间: {[str(f) for f in self.tactical_finish]}')
+
+    def _tactical_bridge_fill_empty(self, data, used_ships):
+        if not self.config.AddNewStudent_Enable:
+            return data, False
+        try:
+            min_level = int(self.config.AddNewStudent_MinLevel)
+            if min_level < 1:
+                min_level = 1
+        except (TypeError, ValueError):
+            min_level = 1
+        want_fav = bool(self.config.AddNewStudent_Favorite)
+        book_empty = False
+        empty_rooms = list((data or {}).get('empty_rooms') or [])
+        for room_id in empty_rooms:
+            data = self._tactical_bridge_get() or data
+            if self._tactical_room_student(data, room_id) is not None:
+                continue
+            candidates = data.get('candidates') or []
+            chosen = None
+            skill = None
+            for cand in candidates:
+                if not isinstance(cand, dict):
+                    continue
+                sid = int(cand.get('id') or 0)
+                if sid <= 0 or sid in used_ships:
+                    continue
+                if int(cand.get('level') or 0) < min_level:
+                    continue
+                if want_fav and not cand.get('favorite'):
+                    continue
+                for sk in cand.get('skills') or []:
+                    if isinstance(sk, dict) and not sk.get('skill_max', False):
+                        skill = sk
+                        chosen = cand
+                        break
+                if chosen:
+                    break
+            if chosen is None or skill is None:
+                logger.info(f'[战术-学院] 教室 {room_id} 无可用新学员')
+                break
+            book = self._tactical_bridge_pick_book(
+                data,
+                skill_type=skill.get('type') or 0,
+                skill_exp=skill.get('exp') or 0,
+                skill_next=skill.get('next_exp') or 0,
+            )
+            if book is None:
+                book_empty = True
+                break
+            used_ships.add(int(chosen['id']))
+            if not self._tactical_bridge_start(
+                ship_id=chosen['id'],
+                skill_id=skill.get('id'),
+                lesson_id=book.id,
+                room_id=room_id,
+            ):
+                break
+        return self._tactical_bridge_get() or data, book_empty
+
+    def _tactical_bridge_run(self):
+        """
+        通过学院代理 RPC 领取 / 续学 / 添加学员，跳过奖励页点击。
+
+        Returns:
+            bool: True 表示桥接已处理本任务（不再走截图路径）。
+        """
+        try:
+            from module.alas_bridge.actions import bridge_enabled, tactical_quick_finish
+        except Exception:
+            return False
+        if not bridge_enabled(self.config):
+            return False
+        data = self._tactical_bridge_get()
+        if data is None:
+            logger.info('Sweeney get_tactical miss, screenshot tactical')
+            return False
+
+        logger.hr('战术学院领取（桥接）', level=1)
+        used_ships = set()
+        for row in data.get('students') or []:
+            if isinstance(row, dict) and int(row.get('ship_id') or 0):
+                used_ships.add(int(row['ship_id']))
+
+        slot = self.config.Tactical_RapidTrainingSlot
+        slot_map = {'slot_1': 1, 'slot_2': 2, 'slot_3': 3, 'slot_4': 4}
+        rapid_room = slot_map.get(slot)
+        refill = []
+        received_rooms = set()
+        if rapid_room and int(data.get('daily_finish') or 0) > 0:
+            student = self._tactical_room_student(data, rapid_room)
+            if student and not student.get('finished'):
+                result = tactical_quick_finish(self.config, rapid_room)
+                if isinstance(result, dict) and result.get('sent'):
+                    logger.info(f'Sweeney tactical_quick_finish room={rapid_room}')
+                    self._tactical_bridge_poll(
+                        lambda d: self._tactical_room_student(d, rapid_room) is None,
+                        timeout=8.0,
+                    )
+                    self._tactical_bridge_dismiss_msgbox()
+                    refill.append(student)
+                    received_rooms.add(int(student.get('room_id') or rapid_room))
+                    data = self._tactical_bridge_get() or data
+
+        for _ in range(8):
+            data = self._tactical_bridge_get() or data
+            finished = [
+                row for row in (data.get('students') or [])
+                if isinstance(row, dict) and row.get('finished')
+                and int(row.get('room_id') or 0) not in received_rooms
+            ]
+            if not finished:
+                break
+            row = finished[0]
+            room_id = int(row.get('room_id') or 0)
+            if room_id <= 0:
+                break
+            received_rooms.add(room_id)
+            if not self._tactical_bridge_receive_room(room_id):
+                continue
+            refill.append(row)
+
+        book_empty = False
+        data = self._tactical_bridge_get() or data
+        for row in refill:
+            if row.get('skill_max'):
+                continue
+            room_id = int(row.get('room_id') or 0)
+            if self._tactical_room_student(data, room_id) is not None:
+                continue
+            book = self._tactical_bridge_pick_book(
+                data,
+                skill_type=row.get('skill_type') or 0,
+                skill_exp=row.get('skill_exp') or 0,
+                skill_next=row.get('skill_next') or 0,
+            )
+            if book is None:
+                book_empty = True
+                continue
+            ship_id = int(row.get('ship_id') or 0)
+            if ship_id:
+                used_ships.add(ship_id)
+            self._tactical_bridge_start(
+                ship_id=ship_id,
+                skill_id=row.get('skill_id'),
+                lesson_id=book.id,
+                room_id=room_id,
+            )
+            data = self._tactical_bridge_get() or data
+
+        data, added_empty = self._tactical_bridge_fill_empty(data, used_ships)
+        book_empty = book_empty or added_empty
+        data = self._tactical_bridge_get() or data
+        self._tactical_bridge_apply_delay(data, book_empty=book_empty)
+        return True
+
     def run(self):
         """
         运行战术学院任务。
@@ -908,6 +1270,14 @@ class RewardTacticalClass(Dock):
             in: Any
             out: page_tactical
         """
+        if self._tactical_bridge_run():
+            if self.tactical_finish:
+                self.config.task_delay(target=self.tactical_finish)
+            else:
+                logger.info('[战术-学院] 没有战术课程在运行')
+                self.config.task_delay(success=False)
+            return
+
         self.ui_ensure(page_reward)
 
         self.tactical_class_receive()

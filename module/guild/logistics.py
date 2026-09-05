@@ -373,6 +373,18 @@ class GuildLogistics(GuildBase):
         # Restart the game can't fix the problem.
         # To fix this, you have to enter guild logistics once, then restart.
         # If exchange for 5 times, this bug is considered to be triggered.
+        try:
+            from module.alas_bridge.actions import bridge_enabled, guild_from_heartbeat
+            if bridge_enabled(self.config):
+                import time
+                guild = guild_from_heartbeat(self.config)
+                next_t = guild.get('shop_next_time') if isinstance(guild, dict) else None
+                if next_t and int(next_t) > int(time.time()) + 60:
+                    logger.warning(
+                        '[大舰队-后勤] 兑换卡住但桥接 shop_next_time 仍在未来，本轮跳过 GameBugError')
+                    return
+        except Exception as e:
+            logger.info(f'Sweeney guild logistics check miss: {e}')
         logger.warning(
             'Unable to do guild exchange, probably because the timer in game was bugged')
         raise GameBugError('Triggered guild logistics refresh bug')

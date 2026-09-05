@@ -7,6 +7,9 @@ from module.guild.assets import BATTLE_STATUS_CF, EXP_INFO_CF
 
 
 class GuildCombat(Combat):
+    def _battle_status_report_click_button(self):
+        return BATTLE_STATUS_CF
+
     def handle_battle_status(self, drop=None):
         """
         Args:

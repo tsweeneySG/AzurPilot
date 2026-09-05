@@ -458,6 +458,24 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
                 self.device.screenshot()
 
             self.handle_info_bar()
+            try:
+                from module.alas_bridge.actions import bridge_enabled, get_dock_ships
+                if bridge_enabled(self.config) and keep_one:
+                    dock = get_dock_ships(self.config, limit=800)
+                    rows = (dock or {}).get('ships') if isinstance(dock, dict) else None
+                    if isinstance(rows, list):
+                        fodder = [
+                            s for s in rows
+                            if isinstance(s, dict)
+                            and int(s.get('rarity') or 0) <= 2
+                            and 2 <= int(s.get('level') or 0) <= 100
+                            and not s.get('locked')
+                        ]
+                        if len(fodder) < 2:
+                            logger.info('[退役] Sweeney 船坞：普通粮不足，停止强化退役')
+                            break
+            except Exception as e:
+                logger.info(f'Sweeney dock ships miss: {e}')
             ships = scanner.scan(self.device.image)
             if not ships:
                 # 无可退役舰船，退出

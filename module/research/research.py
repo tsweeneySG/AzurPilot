@@ -82,6 +82,20 @@ class RewardResearch(ResearchSelector, ResearchQueue, StorageHandler):
         Returns:
             bool: 是否有已完成的科研项目
         """
+        try:
+            from module.alas_bridge.actions import bridge_enabled, get_research
+            if bridge_enabled(self.config):
+                data = get_research(self.config)
+                slots = (data or {}).get('slots') if isinstance(data, dict) else None
+                if isinstance(slots, list):
+                    for idx, slot in enumerate(slots):
+                        if isinstance(slot, dict) and slot.get('finished'):
+                            self._research_finished_index = min(idx, 4)
+                            logger.attr('科研已完成', self._research_finished_index)
+                            return True
+                    return False
+        except Exception as e:
+            logger.info(f'Sweeney research miss: {e}')
         index = get_research_finished(self.device.image)
         if index is not None:
             logger.attr('科研已完成', index)
@@ -89,6 +103,77 @@ class RewardResearch(ResearchSelector, ResearchQueue, StorageHandler):
             return True
         else:
             return False
+
+
+    def _research_bridge_active_slot(self):
+        """TechnologyProxy 当前运行槽；桥接关闭或无项目时返回 None。"""
+        try:
+            from module.alas_bridge.actions import bridge_enabled, get_research
+            if not bridge_enabled(self.config):
+                return None
+            timer = self.get_interval_timer('BRIDGE_RESEARCH_ACTIVE', interval=1.0)
+            if not timer.reached():
+                return getattr(self, '_research_bridge_active_cache', None)
+            data = get_research(self.config)
+            active = (data or {}).get('active') if isinstance(data, dict) else None
+            if isinstance(active, dict) and active.get('id'):
+                self._research_bridge_active_cache = active
+                timer.reset()
+                return active
+            self._research_bridge_active_cache = None
+            timer.reset()
+        except Exception as e:
+            logger.info(f'Sweeney research active miss: {e}')
+        return None
+
+    def _research_start_detected(self, popup_confirmed=False):
+        if self.appear(RESEARCH_STOP, offset=(20, 20)):
+            return True
+        if not popup_confirmed:
+            return False
+        active = self._research_bridge_active_slot()
+        if isinstance(active, dict) and active.get('id') and not active.get('finished'):
+            logger.info(f'[科研-启动] 桥接显示已在运行 (id={active.get("id")})')
+            return True
+        return False
+
+    def _research_start_via_bridge(self):
+        """
+        通过 GAME.START_TECHNOLOGY 启动当前打开的项目详情。
+
+        Returns:
+            True: 已启动（或已在运行）
+            False: 资源不足
+            None: 桥接关闭 / 未命中，走点击路径
+        """
+        try:
+            from module.alas_bridge.actions import bridge_enabled, research_start
+            if not bridge_enabled(self.config):
+                return None
+            timer = self.get_interval_timer('BRIDGE_RESEARCH_START', interval=2.0)
+            if not timer.reached():
+                return None
+            result = research_start(self.config)
+            timer.reset()
+            if not isinstance(result, dict):
+                return None
+            reason = result.get('reason')
+            if result.get('sent'):
+                logger.info(f'[科研-启动] 通过桥接启动 (id={result.get("id")})')
+                return True
+            if reason == 'already_active':
+                logger.info(f'[科研-启动] 桥接显示已在运行 (id={result.get("id")})')
+                return True
+            if reason == 'no_resources':
+                logger.info('[科研-启动] 资源不足（桥接）')
+                return False
+            if reason == 'no_selection':
+                return None
+            logger.info(f'Sweeney research_start miss: {result}')
+            return None
+        except Exception as e:
+            logger.info(f'Sweeney research_start miss: {e}')
+            return None
 
     def research_reset(self, drop=None, skip_first_screenshot=True):
         """
@@ -279,6 +364,16 @@ class RewardResearch(ResearchSelector, ResearchQueue, StorageHandler):
             if max_rgb > 235 and self.appear_then_click(RESEARCH_START, offset=(5, 20), interval=10):
                 available = True
                 continue
+            via = self._research_start_via_bridge()
+            if via is True:
+                available = True
+                continue
+            if via is False:
+                logger.info('[科研-启动] 资源不足，无法启动此项目')
+                self.research_detail_quit()
+                self.research_project_started = None
+                self._research_project_offset = (index - 2) % 5
+                return False
             if self.handle_popup_confirm('RESEARCH_START'):
                 continue
 
@@ -288,7 +383,7 @@ class RewardResearch(ResearchSelector, ResearchQueue, StorageHandler):
                              '可能是因为已有科研在运行但条件未满足，'
                              '或科研已完成')
                 raise GameTooManyClickError
-            if self.appear(RESEARCH_STOP, offset=(20, 20)):
+            if self._research_start_detected(popup_confirmed=available):
                 # RESEARCH_STOP 是半透明按钮，颜色会随背景变化
                 if add_queue:
                     if not self.research_queue_add():

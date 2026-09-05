@@ -96,6 +96,13 @@ class EnemySearchingHandler(InfoHandler):
                     or self.appear(MAP_PREPARATION_HARD, offset=(20, 20)) \
                     or self.appear(FLEET_PREPARATION, offset=(20, 50)):
                 self.device.click(MAP_PREPARATION_CANCEL)
+            else:
+                try:
+                    from module.alas_bridge.actions import map_prep_showing_from_heartbeat
+                    if map_prep_showing_from_heartbeat(self.config):
+                        self.device.click(MAP_PREPARATION_CANCEL)
+                except Exception:
+                    pass
             self.in_stage_timer.reset()
             return False
 

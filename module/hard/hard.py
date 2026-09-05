@@ -60,8 +60,19 @@ class CampaignHard(CampaignRun):
         )
 
         # 执行
-        remain = OCR_HARD_REMAIN.ocr(self.device.image)
-        logger.attr('剩余次数', remain)
+        remain = None
+        try:
+            from module.alas_bridge.actions import bridge_enabled, get_task_remains
+            if bridge_enabled(self.config):
+                remains = get_task_remains(self.config)
+                if remains is not None and remains.get('hard') is not None:
+                    remain = int(remains.get('hard') or 0)
+                    logger.attr('剩余次数', remain)
+        except Exception as e:
+            logger.info(f'Sweeney hard remain miss: {e}')
+        if remain is None:
+            remain = OCR_HARD_REMAIN.ocr(self.device.image)
+            logger.attr('剩余次数', remain)
         for n in range(remain):
             self.campaign.run()
 

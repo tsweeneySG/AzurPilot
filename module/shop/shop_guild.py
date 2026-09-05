@@ -16,6 +16,7 @@ class GuildShop_250814(ShopClerk, ShopUI, ShopStatus):
 
     Pages: in: page_shop (guild shop tab)
     """
+    bridge_shop_kind = 'guild'
 
     shop_template_folder = './assets/shop/guild'
 

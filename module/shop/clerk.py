@@ -346,6 +346,25 @@ class ShopClerk(ShopBase, Retirement):
         Returns:
             bool: 是否成功（True 表示购买完成或余额不足，False 表示余额为 0）
         """
+        kind = getattr(self, 'bridge_shop_kind', None)
+        if kind:
+            try:
+                from module.alas_bridge.actions import bridge_enabled, get_shop_items
+                if bridge_enabled(self.config):
+                    snap = get_shop_items(self.config, kind=kind)
+                    items = (snap or {}).get('items') if isinstance(snap, dict) else None
+                    if isinstance(items, list):
+                        purchasable = [
+                            row for row in items
+                            if isinstance(row, dict)
+                            and row.get('can_purchase') is not False
+                            and int(row.get('stock') or 0) != 0
+                        ]
+                        if not purchasable:
+                            logger.info(f'[商店-购买] 跳过（Sweeney get_shop_items {kind} 空/售罄）')
+                            return True
+            except Exception as e:
+                logger.info(f'Sweeney shop items miss: {e}')
         for _ in range(12):
             logger.hr('商店购买', level=2)
             # 先获取商品列表，利用固有延迟等待 OCR 货币识别更准确

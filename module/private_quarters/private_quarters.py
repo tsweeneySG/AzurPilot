@@ -215,6 +215,46 @@ class PrivateQuarters(PQInteract, PQShop):
                     f'舰娘互动={target_interact}, '
                     f'目标舰娘={target_title}')
 
+
+        try:
+            from module.alas_bridge.actions import (
+                bridge_enabled,
+                get_pq_status,
+                pq_from_heartbeat,
+                pq_shop_buy,
+                pq_spend_stamina,
+            )
+            if bridge_enabled(self.config):
+                status = pq_from_heartbeat(self.config) or get_pq_status(self.config)
+                shop_needed = bool(self.shop_filter)
+                interact_needed = bool(target_interact)
+                shop_done = not shop_needed
+                interact_done = not interact_needed
+                if isinstance(status, dict) and 'stamina' in status:
+                    stamina = int(status.get('stamina') or 0)
+                    logger.info(f'[私人休息室] 桥接体力={stamina}/{status.get("stamina_max")}')
+                    if interact_needed and stamina <= 0:
+                        logger.info('[私人休息室] 桥接：每日体力已用完')
+                        interact_done = True
+                if shop_needed and not shop_done:
+                    result = pq_shop_buy(
+                        self.config,
+                        roses=bool(buy_roses),
+                        cake=bool(buy_cake),
+                    )
+                    if isinstance(result, dict) and result.get('sent'):
+                        logger.info('[私人休息室] 商店购买通过桥接完成')
+                        shop_done = True
+                if interact_needed and not interact_done:
+                    result = pq_spend_stamina(self.config)
+                    if isinstance(result, dict) and result.get('sent'):
+                        logger.info('[私人休息室] 互动通过桥接完成')
+                        interact_done = True
+                if shop_done and interact_done:
+                    return
+        except Exception as e:
+            logger.info(f'Sweeney PQ bridge miss: {e}')
+
         # 进入商店购买每周物品
         if self.shop_filter:
             if server.server not in ['tw']:

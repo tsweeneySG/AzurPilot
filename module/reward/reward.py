@@ -36,6 +36,22 @@ class Reward(UI):
 
         logger.hr('领取奖励')
         logger.info(f'[奖励-领取] 石油={oil}, 金币={coin}, 经验={exp}')
+        try:
+            from module.alas_bridge.actions import bridge_enabled, harvest_res
+            if bridge_enabled(self.config):
+                ok = True
+                if oil:
+                    ok = harvest_res(self.config, 'oil') and ok
+                if coin:
+                    ok = harvest_res(self.config, 'coin') and ok
+                if exp:
+                    ok = harvest_res(self.config, 'exp') and ok
+                if ok:
+                    logger.info('[奖励-领取] 通过 Sweeney 桥接领取')
+                    return True
+                logger.info('Sweeney harvest miss, screenshot fallback')
+        except Exception as e:
+            logger.info(f'Sweeney harvest failed: {e}')
         confirm_timer = Timer(1, count=3).start()
         # 设置点击间隔为 0.3 秒，因为游戏无法响应过快的点击。
         click_timer = Timer(0.3)

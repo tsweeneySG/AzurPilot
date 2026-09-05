@@ -336,6 +336,20 @@ class Daily(Combat):
                 continue
             remain = OCR_REMAIN.ocr(self.device.image)
             if remain == 0:
+                try:
+                    from module.alas_bridge.actions import bridge_enabled, get_task_remains
+                    if bridge_enabled(self.config):
+                        remains = get_task_remains(self.config)
+                        daily = (remains or {}).get('daily') if isinstance(remains, dict) else None
+                        if isinstance(daily, list):
+                            for row in daily:
+                                if isinstance(row, dict) and int(row.get('remain') or 0) > 0:
+                                    remain = int(row.get('remain') or 0)
+                                    logger.attr('剩余次数', remain)
+                                    break
+                except Exception as e:
+                    logger.info(f'Sweeney daily remain miss: {e}')
+            if remain == 0:
                 self.daily_check()
                 self.next()
                 continue

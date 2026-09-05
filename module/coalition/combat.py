@@ -17,6 +17,9 @@ from module.os_ash.assets import BATTLE_STATUS
 class CoalitionCombat(CoalitionUI, CampaignBase):
     battle_status_click_interval = 2
 
+    def _battle_status_report_click_button(self):
+        return BATTLE_STATUS
+
     def coalition_combat_re_enter(self, skip_first_screenshot=True):
         """
         Pages:

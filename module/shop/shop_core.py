@@ -15,6 +15,7 @@ class CoreShop_250814(ShopClerk, ShopStatus):
 
     Pages: in: page_shop (core shop tab)
     """
+    bridge_shop_kind = 'core'
 
     shop_template_folder = './assets/shop/core'
 

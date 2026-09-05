@@ -134,7 +134,7 @@ class FleetEmotion:
         Returns:
             bool: 是否所有舰船在温泉中。
         """
-        return getattr(self.config, f'{self._key_prefix}Onsen')
+        return getattr(self.config, f'{self._key_prefix}Onsen', False)
 
     @property
     def speed(self):
@@ -238,7 +238,7 @@ class Emotion:
         self.using_public = self._handle_public()
     
     def _handle_public(self):
-        if not getattr(self.config, 'PublicEmotion_Enable'):
+        if not getattr(self.config, 'PublicEmotion_Enable', False):
             return False
         
         tasks = getattr(self.config, 'PublicEmotion_Tasks')
@@ -336,6 +336,43 @@ class Emotion:
     def reduce_shipwreck(self):
         return 10
 
+
+    def _bridge_enabled(self):
+        return bool(getattr(self.config, 'Optimization_SweeneyBridge', False))
+
+    def _fetch_sortie(self):
+        try:
+            from module.alas_bridge.sortie_status import fetch_sortie_status
+        except Exception as e:
+            logger.info(f'Sweeney sortie import failed: {e}')
+            return None
+        return fetch_sortie_status(self.config)
+
+    def _merge_live_energy(self, status, replace=False):
+        from module.alas_bridge.sortie_status import min_energy, ships_in_group
+        applied = 0
+        for fleet in self.fleets:
+            ships = ships_in_group(status, fleet.fleet)
+            energy = min_energy(ships)
+            if energy is None:
+                continue
+            logger.attr(f'Live emotion fleet_{fleet.fleet}', energy)
+            energy = int(energy)
+            if replace:
+                fleet.current = energy
+            else:
+                fleet.current = min(int(fleet.current), energy)
+            applied += 1
+        return applied
+
+    def _apply_sortie_energy(self, replace_if_matched):
+        status = self._fetch_sortie()
+        if status is None:
+            return
+        from module.alas_bridge.sortie_status import roster_matches_request
+        replace = bool(replace_if_matched) and roster_matches_request(status, config=self.config)
+        self._merge_live_energy(status, replace=replace)
+
     def _check_reduce(self, battle):
         """检查战斗带来的情绪减少。
 
@@ -348,6 +385,8 @@ class Emotion:
             logger.info(f'[情绪-检查] 预期情绪扣减: {reduce}')
 
             self.update()
+            if self._bridge_enabled():
+                self._apply_sortie_energy(replace_if_matched=True)
             self.record()
             self.show()
             recovered = self.public_fleet.get_recovered(reduce)
@@ -371,6 +410,8 @@ class Emotion:
         logger.info(f'[情绪-检查] 预期情绪扣减: {battle}')
 
         self.update()
+        if self._bridge_enabled():
+            self._apply_sortie_energy(replace_if_matched=True)
         self.record()
         self.show()
         recovered = max([f.get_recovered(b) for f, b in zip(self.fleets, battle)])
@@ -402,6 +443,8 @@ class Emotion:
             fleet_index (int): 舰队编号，1 或 2。
         """
         self.update()
+        if self._bridge_enabled():
+            self._apply_sortie_energy(replace_if_matched=True)
         self.record()
         self.show()
         if self.using_public:
@@ -434,6 +477,8 @@ class Emotion:
         """
         logger.hr('情绪扣减')
         self.update()
+        if self._bridge_enabled():
+            self._apply_sortie_energy(replace_if_matched=False)
 
         if self.using_public:
             fleet = self.public_fleet

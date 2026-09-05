@@ -18,6 +18,7 @@ class GeneralShop_250814(ShopClerk, ShopUI, ShopStatus):
 
     支持金币和钻石两种货币购买，可配置是否允许使用钻石。
     """
+    bridge_shop_kind = 'street'
 
     gems = 0
     shop_template_folder = './assets/shop/general'

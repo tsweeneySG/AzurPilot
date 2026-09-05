@@ -82,6 +82,7 @@ class MedalShop2_250814(ShopClerk, ShopStatus):
 
     Pages: in: page_shop (medal shop tab)
     """
+    bridge_shop_kind = 'medal'
 
     @cached_property
     def shop_filter(self):

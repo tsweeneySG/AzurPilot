@@ -415,11 +415,13 @@ class _EmotionCfg:
     Emotion_Fleet1Control = 'prevent_green_face'
     Emotion_Fleet1Recover = 'not_in_dormitory'
     Emotion_Fleet1Oath = False
+    Emotion_Fleet1Onsen = False
     Emotion_Fleet2Value = 119
     Emotion_Fleet2Record = None
     Emotion_Fleet2Control = 'prevent_green_face'
     Emotion_Fleet2Recover = 'not_in_dormitory'
     Emotion_Fleet2Oath = False
+    Emotion_Fleet2Onsen = False
     Optimization_SweeneyBridge = True
     Fleet_FleetOrder = 'fleet1_all_fleet2_standby'
     Campaign_Use2xBook = False
@@ -442,6 +444,10 @@ class _EmotionCfg:
 
     def task_delay(self, **kwargs):
         self.delayed = kwargs
+
+    def multi_set(self):
+        from contextlib import nullcontext
+        return nullcontext()
 
 
 def _status(energy, **extra):

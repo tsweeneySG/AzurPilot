@@ -232,6 +232,18 @@ class OSMapOperation(MapOrderHandler, MissionHandler, PortHandler, StorageHandle
             MapDetectionError: 解析海域名称失败时抛出。
             ScriptError: 脚本错误时抛出。
         """
+        try:
+            from module.alas_bridge.actions import bridge_enabled, os_from_heartbeat
+            if bridge_enabled(self.config):
+                os_state = os_from_heartbeat(self.config)
+                zone_id = os_state.get('zone_id') if isinstance(os_state, dict) else None
+                if zone_id is not None:
+                    self.zone = self.name_to_zone(int(zone_id))
+                    logger.attr('海域', self.zone)
+                    self.zone_config_set()
+                    return self.zone
+        except Exception as e:
+            logger.info(f'Sweeney OS zone miss: {e}')
         name = self.get_zone_name()
         logger.info(f'[大世界-地图操作] 地图名称已处理: {name}')
         try:

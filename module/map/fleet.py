@@ -424,7 +424,15 @@ class Fleet(Camera, AmbushHandler):
                 arrive_predict = ''
                 arrive_checker = False
                 if self.is_in_map():
-                    if not may_submarine_icon and grid.predict_fleet():
+                    try:
+                        from module.alas_bridge.actions import fleet_location_from_heartbeat
+                        floc = fleet_location_from_heartbeat(self.config)
+                        if floc == location:
+                            arrive_predict = '(sweeney chapter fleet)'
+                            arrive_checker = True
+                    except Exception:
+                        pass
+                    if not arrive_checker and not may_submarine_icon and grid.predict_fleet():
                         arrive_predict = '(is_fleet)'
                         arrive_checker = True
                     elif may_submarine_icon and grid.predict_current_fleet():
@@ -758,6 +766,41 @@ class Fleet(Camera, AmbushHandler):
 
     def find_current_fleet(self):
         logger.hr('查找当前舰队')
+        try:
+            from module.alas_bridge.actions import bridge_enabled, get_chapter_map
+            if bridge_enabled(self.config):
+                cmap = get_chapter_map(self.config)
+                if isinstance(cmap, dict) and cmap.get('active'):
+                    try:
+                        from module.alas_bridge.chapter_map import apply_chapter_map_cells
+                        n = apply_chapter_map_cells(self.map, cmap.get('cells') or [], config=self.config)
+                        if n:
+                            logger.info(f'Sweeney chapter map applied cells={n}')
+                    except Exception as e:
+                        logger.info(f'Sweeney chapter map apply miss: {e}')
+                    row = cmap.get('fleet_row')
+                    col = cmap.get('fleet_col')
+                    if row is not None and col is not None:
+                        loc = (int(col), int(row))
+                        if loc in self.map:
+                            self.fleet_1 = loc
+                            logger.info(f'[地图-舰队] 舰队1 来自 Sweeney 桥接: {loc}')
+                            fleets = cmap.get('fleets') or []
+                            if isinstance(fleets, list) and len(fleets) >= 2:
+                                for f in fleets:
+                                    if not isinstance(f, dict):
+                                        continue
+                                    fr, fc = f.get('row'), f.get('col')
+                                    if fr is None or fc is None:
+                                        continue
+                                    loc2 = (int(fc), int(fr))
+                                    if loc2 != loc and loc2 in self.map:
+                                        self.fleet_2 = loc2
+                                        logger.info(f'[地图-舰队] 舰队2 来自 Sweeney 桥接: {loc2}')
+                                        break
+                            return
+        except Exception as e:
+            logger.info(f'Sweeney chapter map miss: {e}')
         if not self.config.POOR_MAP_DATA:
             fleets = self.map.select(is_fleet=True, is_spawn_point=True)
         else:

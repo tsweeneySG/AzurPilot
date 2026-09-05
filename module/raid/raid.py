@@ -523,6 +523,14 @@ class Raid(MapOperation, RaidCombat, CampaignEvent):
         """
         skip_first_screenshot = True
         timeout = Timer(1.5, count=5).start()
+        try:
+            from module.alas_bridge.actions import event_pt_from_bridge
+            amount = event_pt_from_bridge(self.config)
+            if amount is not None:
+                logger.attr('Event_PT', amount)
+                return amount
+        except Exception as e:
+            logger.info(f'Sweeney raid PT miss: {e}')
         ocr = pt_ocr(self.config.Campaign_Event)
         if ocr is not None:
             # 70000 可能是默认初始值，等待 OCR 读取到真实值
