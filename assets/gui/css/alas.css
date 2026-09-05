@@ -1001,6 +1001,23 @@ pre.rich-traceback-code {
     overflow-wrap: break-word;
 }
 
+*[style*="--arg-mixed--"] {
+    outline: 1px dashed #888;
+    outline-offset: 2px;
+}
+
+*[style*="--arg-mixed--"] input,
+*[style*="--arg-mixed--"] select,
+*[style*="--arg-mixed--"] textarea {
+    background-image: repeating-linear-gradient(
+        -45deg,
+        transparent,
+        transparent 4px,
+        rgba(128, 128, 128, 0.12) 4px,
+        rgba(128, 128, 128, 0.12) 8px
+    );
+}
+
 *[style*="--overview-notask-text--"] {
     text-align: center;
     font-size: 0.875rem;

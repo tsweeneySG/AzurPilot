@@ -24,12 +24,14 @@ from module.webui.app_dependencies import (
     time_source_status,
     timedelta,
     timezone,
+    updater,
     use_scope,
     webconfig,
 )
 
 
 from module.webui.app_types import WebUIMixinBase
+from module.webui.common_editor import ALL_ASIDE
 
 
 VALID_WEBUI_THEMES = {
@@ -277,6 +279,42 @@ class AppShellMixin(WebUIMixinBase):
                 ],
                 onclick=[self.ui_develop],
             )
+            put_icon_buttons(
+                Icon.RUN,
+                "false",
+                buttons=[
+                    {
+                        "label": t("Gui.Aside.StartAll"),
+                        "value": "StartAll",
+                        "color": "aside",
+                    }
+                ],
+                onclick=[self.alas_start_all_configs],
+            )
+            put_icon_buttons(
+                Icon.STOP,
+                "false",
+                buttons=[
+                    {
+                        "label": t("Gui.Aside.StopAll"),
+                        "value": "StopAll",
+                        "color": "aside",
+                    }
+                ],
+                onclick=[self.alas_stop_all_configs],
+            )
+            put_icon_buttons(
+                Icon.ALAS,
+                "false",
+                buttons=[
+                    {
+                        "label": t("Gui.Aside.All"),
+                        "value": "All",
+                        "color": "aside",
+                    }
+                ],
+                onclick=self.ui_alas,
+            )
         with use_scope("aside_manage", clear=True):
             put_icon_buttons(
                 Icon.SETTING,
@@ -347,6 +385,22 @@ class AppShellMixin(WebUIMixinBase):
 
     def set_aside_status(self) -> None:
         self.refresh_aside_instances()
+
+    def alas_start_all_configs(self, *_args) -> None:
+        """一键启动全部实例调度器。"""
+        for name in alas_instance():
+            if name == ALL_ASIDE:
+                continue
+            manager = ProcessManager.get_manager(name)
+            if not manager.alive:
+                manager.start(None, updater.event)
+
+    def alas_stop_all_configs(self, *_args) -> None:
+        """一键停止全部实例（走用户停止收尾）。"""
+        for name in alas_instance():
+            if name == ALL_ASIDE:
+                continue
+            ProcessManager.get_manager(name).stop_by_user()
 
     @use_scope("header_status")
     def set_status(self, state: int) -> None:

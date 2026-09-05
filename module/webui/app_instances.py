@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING, cast
 
+from module.webui.common_editor import is_all_mode
 from module.webui.app_dependencies import (
     ProcessManager,
     State,
@@ -45,6 +46,19 @@ class InstanceMixin(WebUIMixinBase):
         self.init_aside(name=config_name)
         clear("content")
         self.alas_name = config_name
+        if is_all_mode(config_name):
+            self.alas_mod = "alas"
+            if hasattr(self, "alas"):
+                del self.alas
+            self.alas_config = State.config_updater
+            if hasattr(self, "state_switch"):
+                try:
+                    self.state_switch.switch()
+                except Exception:
+                    pass
+            self.initial()
+            self.alas_set_menu()
+            return
         self.alas_mod = get_config_mod(config_name)
         self.alas = ProcessManager.get_manager(config_name)
         self.alas_config = load_config(config_name)

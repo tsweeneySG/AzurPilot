@@ -6136,6 +6136,9 @@
     "Aside": {
       "Install": "Install",
       "Home": "Home",
+      "StartAll": "Start all",
+      "StopAll": "Stop all",
+      "All": "All",
       "Develop": "Develop",
       "Performance": "Performance",
       "Setting": "Settings",
@@ -6159,6 +6162,8 @@
     "Toast": {
       "DisableTranslateMode": "Click here to turn off translation mode",
       "ConfigSaved": "Settings saved",
+      "ConfigSavedAll": "Config saved ({0} profiles)",
+      "CommonEditorNoTool": "Tool pages need a single profile. Select one of the account buttons.",
       "AlasIsRunning": "Scheduler is already running",
       "ClickToUpdate": "Updates available nanoda!"
     },
@@ -6204,6 +6209,8 @@
     },
     "Overview": {
       "Scheduler": "Scheduler",
+      "CommonEditor": "Editing {0} profiles: {1}",
+      "CommonEditorHelp": "Scheduler, logs, and Start/Stop stay on each profile button. Changes here apply to every listed profile.",
       "Dashboard": "Dashboard",
       "SecondsAgo": "seconds ago",
       "MinutesAgo": "minutes ago",
@@ -6468,6 +6475,7 @@
     "Text": {
       "InvalidFeedBack": "Format error. Example: {0}",
       "Clear": "Clear",
+      "Mixed": "(mixed)",
       "RunNow": "Run Now",
       "EnterPassword": "Enter password",
       "ChooseFile": "Select file"

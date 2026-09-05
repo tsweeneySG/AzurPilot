@@ -6136,6 +6136,9 @@
     "Aside": {
       "Install": "安装喵",
       "Home": "猫窝喵",
+      "StartAll": "全部启动喵",
+      "StopAll": "全部停止喵",
+      "All": "全部喵",
       "Develop": "开发喵",
       "Performance": "性能喵",
       "Setting": "设定喵",
@@ -6159,6 +6162,8 @@
     "Toast": {
       "DisableTranslateMode": "点这里关翻译模式喵",
       "ConfigSaved": "设定已保存喵~",
+      "ConfigSavedAll": "已保存到 {0} 个配置喵",
+      "CommonEditorNoTool": "工具页面需要单个配置，请先点一个配置按钮喵",
       "AlasIsRunning": "雪风已经在跑啦，别急喵~",
       "ClickToUpdate": "有新鱼干可以更新啦喵！"
     },
@@ -6204,6 +6209,8 @@
     },
     "Overview": {
       "Scheduler": "调度器喵",
+      "CommonEditor": "正在编辑 {0} 个配置喵：{1}",
+      "CommonEditorHelp": "调度器、日志和启动/停止仍在各配置按钮上喵。此处的修改会写入列出的每个配置喵。",
       "Dashboard": "仪表盘喵",
       "SecondsAgo": "秒前喵",
       "MinutesAgo": "分钟前喵",
@@ -6468,6 +6475,7 @@
     "Text": {
       "InvalidFeedBack": "格式错误喵。示例：{0}",
       "Clear": "清除喵",
+      "Mixed": "（混合喵）",
       "RunNow": "立即运行喵",
       "EnterPassword": "输入密码喵",
       "ChooseFile": "选择文件喵"

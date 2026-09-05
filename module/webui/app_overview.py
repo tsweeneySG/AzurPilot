@@ -14,9 +14,11 @@ from module.webui.app_dependencies import (
     put_text,
     run_js,
     t,
+    toast,
     updater,
     use_scope,
 )
+from module.webui.common_editor import common_editor_instances, is_all_mode
 
 from module.webui.app_helpers import (
     DEMO_DEVICE_ID_TEXT,
@@ -30,9 +32,27 @@ from module.webui.app_types import WebUIMixinBase
 class OverviewMixin(WebUIMixinBase):
     """WebUI实例概览和守护模式"""
 
+    def _alas_overview_all(self) -> None:
+        """共用编辑器总览：列出将一并写入的实例，不提供启停/日志。"""
+        self.set_title(t("Gui.Aside.All"))
+        names = common_editor_instances()
+        listed = ", ".join(names) if names else "—"
+        put_scope(
+            "group__info",
+            [
+                put_text(t("Gui.Overview.CommonEditor", len(names), listed)).style(
+                    "font-size: 1.25rem; margin: auto .5rem auto;"
+                ),
+                put_text(t("Gui.Overview.CommonEditorHelp")).style("--arg-help--"),
+            ],
+        )
+
     @use_scope("content", clear=True)
     def alas_overview(self) -> None:
         self.init_menu(name="Overview")
+        if is_all_mode(self.alas_name):
+            self._alas_overview_all()
+            return
         self.set_title(t(f"Gui.MenuAlas.Overview"))
         self._overview_snapshot = None
 
@@ -255,6 +275,17 @@ class OverviewMixin(WebUIMixinBase):
 
     @use_scope("content", clear=True)
     def alas_daemon_overview(self, task: str) -> None:
+        if is_all_mode(self.alas_name):
+            toast(
+                t("Gui.Toast.CommonEditorNoTool"),
+                duration=3,
+                position="right",
+                color="warning",
+            )
+            self.page = "Overview"
+            self.active_button("menu", "Overview")
+            self._alas_overview_all()
+            return
         self.init_menu(name=task)
         self.set_title(t(f"Task.{task}.name"))
 

@@ -271,6 +271,10 @@ pre.rich-traceback-code {
     color: #adb5bd;
 }
 
+*[style*="--arg-mixed--"] {
+    outline-color: #8b949e;
+}
+
 *[style*="--dashboard-help--"] {
     color: #adb5bd;
 }

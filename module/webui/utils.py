@@ -538,6 +538,7 @@ class Icon:
     )
     SETTING = _read(filepath_icon("setting"))
     RUN = _read(filepath_icon("run"))
+    STOP = _read(filepath_icon("stop"))
     DEVELOP = _read(filepath_icon("develop"))
     ADD = _read(filepath_icon("add"))
     RUNNING = _read(filepath_icon("status_running"))

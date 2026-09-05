@@ -4,6 +4,9 @@
 Aside:
   Install:
   Home:
+  StartAll:
+  StopAll:
+  All:
   Develop:
   Performance:
   Setting:
@@ -27,6 +30,8 @@ Button:
 Toast:
   DisableTranslateMode:
   ConfigSaved:
+  ConfigSavedAll:
+  CommonEditorNoTool:
   AlasIsRunning:
   ClickToUpdate:
 
@@ -72,6 +77,8 @@ MenuDevelop:
 
 Overview:
   Scheduler:
+  CommonEditor:
+  CommonEditorHelp:
   Dashboard:
   SecondsAgo:
   MinutesAgo:
@@ -336,6 +343,7 @@ StartupRun:
 Text:
   InvalidFeedBack:
   Clear:
+  Mixed:
   RunNow:
   EnterPassword:
   ChooseFile:

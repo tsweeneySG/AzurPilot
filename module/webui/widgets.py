@@ -27,6 +27,7 @@ from module.config.task_priority import (
 )
 from module.logger import HTMLConsole, Highlighter, WEB_THEME
 from module.webui.lang import t
+from module.webui.common_editor import MIXED_SENTINEL, common_editor_instances, is_all_mode
 from module.webui.pin import put_checkbox, put_input, put_select, put_textarea
 from module.webui.process_manager import ProcessManager
 from module.webui.setting import State
@@ -379,9 +380,13 @@ def get_title_help(kwargs: T_Output_Kwargs) -> Output:
 def put_arg_input(kwargs: T_Output_Kwargs) -> Output:
     name: str = kwargs["name"]
     after: Optional[Output] = kwargs.pop("after", None)
+    mixed = bool(kwargs.pop("mixed", False))
     options: List = kwargs.get("options")
     if options is not None:
         kwargs.setdefault("datalist", options)
+    if mixed:
+        kwargs["value"] = ""
+        kwargs.setdefault("placeholder", t("Gui.Text.Mixed"))
     input_output = put_input(**kwargs).style("--input--")
     if after is not None:
         input_output = put_column([input_output, after], size="auto auto")
@@ -405,6 +410,7 @@ def product_stored_row(kwargs: T_Output_Kwargs, key, value):
 def put_arg_stored(kwargs: T_Output_Kwargs) -> Output:
     name: str = kwargs["name"]
     kwargs["disabled"] = True
+    kwargs.pop("mixed", None)
 
     values = kwargs.pop("value", {})
     if not isinstance(values, dict):
@@ -432,20 +438,32 @@ def put_arg_select(kwargs: T_Output_Kwargs) -> Output:
     options: List[str] = kwargs["options"]
     options_label: List[str] = kwargs.pop("options_label", [])
     disabled: bool = kwargs.pop("disabled", False)
+    mixed = bool(kwargs.pop("mixed", False))
     _: str = kwargs.pop("invalid_feedback", None)
+    mixed_label = t("Gui.Text.Mixed")
 
+    if mixed:
+        value = MIXED_SENTINEL
+    kwargs["value"] = value
     if disabled:
         option = [{
-            "label": next((opt_label for opt, opt_label in zip(options, options_label) if opt == value), value),
+            "label": mixed_label if mixed else next((opt_label for opt, opt_label in zip(options, options_label) if opt == value), value),
             "value": value,
             "selected": True,
         }]
     else:
-        option = [{
+        option = []
+        if mixed:
+            option.append({
+                "label": mixed_label,
+                "value": MIXED_SENTINEL,
+                "select": True,
+            })
+        option.extend([{
             "label": opt_label,
             "value": opt,
-            "select": opt == value,
-        } for opt, opt_label in zip(options, options_label)]
+            "select": (not mixed) and opt == value,
+        } for opt, opt_label in zip(options, options_label)])
     kwargs["options"] = option
 
     return put_scope(
@@ -462,7 +480,12 @@ def put_arg_state(kwargs: T_Output_Kwargs) -> Output:
     value: str = kwargs["value"]
     options: List[str] = kwargs["options"]
     options_label: List[str] = kwargs.pop("options_label", [])
+    mixed = bool(kwargs.pop("mixed", False))
     _: str = kwargs.pop("invalid_feedback", None)
+    if mixed:
+        value = t("Gui.Text.Mixed")
+        options = [value]
+        options_label = [value]
     bold: bool = value in kwargs.pop("option_bold", [])
     light: bool = value in kwargs.pop("option_light", [])
 
@@ -491,9 +514,13 @@ def put_arg_state(kwargs: T_Output_Kwargs) -> Output:
 def put_arg_textarea(kwargs: T_Output_Kwargs) -> Output:
     name: str = kwargs["name"]
     mode: str = kwargs.pop("mode", None)
+    mixed = bool(kwargs.pop("mixed", False))
     kwargs.setdefault(
         "code", {"lineWrapping": True, "lineNumbers": False, "mode": mode}
     )
+    if mixed:
+        kwargs["value"] = ""
+        kwargs.setdefault("placeholder", t("Gui.Text.Mixed"))
 
     return put_scope(
         f"arg_contianer-textarea-{name}",
@@ -506,6 +533,7 @@ def put_arg_textarea(kwargs: T_Output_Kwargs) -> Output:
 
 def put_arg_task_priority(kwargs: T_Output_Kwargs) -> Output:
     name: str = kwargs["name"]
+    kwargs.pop("mixed", None)
     value: str = kwargs.get("value", "")
     alasgui: "AlasGUI" = local.gui
     path = ".".join(name.split("_"))
@@ -844,7 +872,10 @@ def put_arg_checkbox(kwargs: T_Output_Kwargs) -> Output:
     # 非真正复选框，用作开关（开/关）
     name: str = kwargs["name"]
     value: str = kwargs["value"]
+    mixed = bool(kwargs.pop("mixed", False))
     _: str = kwargs.pop("invalid_feedback", None)
+    if mixed:
+        value = []
 
     kwargs["options"] = [{"label": "", "value": True, "selected": value}]
     return put_scope(
@@ -858,6 +889,10 @@ def put_arg_checkbox(kwargs: T_Output_Kwargs) -> Output:
 
 def put_arg_datetime(kwargs: T_Output_Kwargs) -> Output:
     name: str = kwargs["name"]
+    mixed = bool(kwargs.pop("mixed", False))
+    if mixed:
+        kwargs["value"] = ""
+        kwargs.setdefault("placeholder", t("Gui.Text.Mixed"))
     return put_scope(
         f"arg_container-datetime-{name}",
         [
@@ -869,32 +904,47 @@ def put_arg_datetime(kwargs: T_Output_Kwargs) -> Output:
 
 def put_arg_storage(kwargs: T_Output_Kwargs) -> Optional[Output]:
     name: str = kwargs["name"]
-    if kwargs["value"] == {}:
+    mixed = bool(kwargs.pop("mixed", False))
+    disabled = bool(kwargs.pop("disabled", False))
+    if kwargs["value"] == {} and not mixed:
         return None
 
-    kwargs["value"] = json.dumps(
-        kwargs["value"], indent=2, ensure_ascii=False, sort_keys=False, default=str
-    )
+    if mixed:
+        kwargs["value"] = ""
+        kwargs.setdefault("placeholder", t("Gui.Text.Mixed"))
+        kwargs["readonly"] = True
+    else:
+        kwargs["value"] = json.dumps(
+            kwargs["value"], indent=2, ensure_ascii=False, sort_keys=False, default=str
+        )
+        if disabled:
+            kwargs["readonly"] = True
     kwargs.setdefault(
         "code", {"lineWrapping": True, "lineNumbers": False, "mode": "json"}
     )
 
     def clear_callback():
         alasgui: "AlasGUI" = local.gui
+        all_mode = is_all_mode(alasgui.alas_name)
         alasgui.modified_config_queue.put(
-            {"name": ".".join(name.split("_")), "value": {}}
+            {
+                "name": ".".join(name.split("_")),
+                "value": {},
+                "targets": common_editor_instances() if all_mode else [alasgui.alas_name],
+                "all_mode": all_mode,
+            }
         )
-        # https://github.com/pywebio/PyWebIO/issues/459
-        # pin[name] = "{}"
 
-    return put_scope(
-        f"arg_container-storage-{name}",
-        [
-            put_textarea(**kwargs),
+    contents = [put_textarea(**kwargs)]
+    if not mixed and not disabled:
+        contents.append(
             put_html(
                 f'<button class="btn btn-outline-warning btn-block">{t("Gui.Text.Clear")}</button>'
-            ).onclick(clear_callback),
-        ],
+            ).onclick(clear_callback)
+        )
+    return put_scope(
+        f"arg_container-storage-{name}",
+        contents,
     )
 
 
@@ -910,7 +960,10 @@ def put_arg_multiselect(kwargs: T_Output_Kwargs) -> Output:
         value = [value] if value else []
     options: List[str] = kwargs.get("options", [])
     options_label: List[str] = kwargs.pop("options_label", [])
+    mixed = bool(kwargs.pop("mixed", False))
     _: str = kwargs.pop("invalid_feedback", None)
+    if mixed:
+        value = []
     # 从 kwargs 中移除多余的键，避免传递给 put_checkbox 造成冲突
     for key in ("disabled", "value", "options"):
         kwargs.pop(key, None)
@@ -946,7 +999,11 @@ _widget_type_to_func: Dict[str, Callable] = {
 
 
 def put_output(output_kwargs: T_Output_Kwargs) -> Optional[Output]:
-    return _widget_type_to_func[output_kwargs["widget_type"]](output_kwargs)
+    mixed = bool(output_kwargs.get("mixed", False))
+    out = _widget_type_to_func[output_kwargs["widget_type"]](output_kwargs)
+    if out is not None and mixed:
+        out.style("--arg-mixed--")
+    return out
 
 
 def get_loading_style(shape: str, fill: bool) -> str:

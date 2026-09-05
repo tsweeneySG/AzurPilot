@@ -297,7 +297,9 @@ class HomeMixin(WebUIMixinBase):
         aside = localstorage.get("aside")
         self._stored_aside = aside
         show_clarity_notice = localstorage.get("clarity_notice_shown") != "1"
-        restore_instance = initial_page == "home" and aside in alas_instance()
+        restore_instance = initial_page == "home" and (
+            aside in alas_instance() or aside == "All"
+        )
         if initial_page == "manage":
             self.ui_manage()
         elif not restore_instance:

@@ -27,6 +27,7 @@ from module.webui.app_helpers import (
 
 
 from module.webui.app_types import WebUIMixinBase
+from module.webui.common_editor import is_all_mode
 
 
 class DashboardMixin(WebUIMixinBase):
@@ -34,6 +35,8 @@ class DashboardMixin(WebUIMixinBase):
 
     def alas_update_overview_task(self) -> None:
         if not self.visible:
+            return
+        if is_all_mode(getattr(self, "alas_name", "")) or not hasattr(self, "alas"):
             return
         self.alas_config.load()
         self.alas_config.get_next_task()

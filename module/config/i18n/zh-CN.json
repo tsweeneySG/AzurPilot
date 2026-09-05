@@ -6136,6 +6136,9 @@
     "Aside": {
       "Install": "安装",
       "Home": "主页",
+      "StartAll": "全部启动",
+      "StopAll": "全部停止",
+      "All": "全部",
       "Develop": "开发",
       "Performance": "性能",
       "Setting": "设置",
@@ -6159,6 +6162,8 @@
     "Toast": {
       "DisableTranslateMode": "点击这里关闭翻译模式",
       "ConfigSaved": "设置已保存",
+      "ConfigSavedAll": "已保存到 {0} 个配置",
+      "CommonEditorNoTool": "工具页面需要单个配置，请先选择一个配置按钮",
       "AlasIsRunning": "调度器已在运行中",
       "ClickToUpdate": "有可用更新nanoda!"
     },
@@ -6204,6 +6209,8 @@
     },
     "Overview": {
       "Scheduler": "调度器",
+      "CommonEditor": "正在编辑 {0} 个配置：{1}",
+      "CommonEditorHelp": "调度器、日志和启动/停止仍在各配置按钮上。此处的修改会写入列出的每个配置。",
       "Dashboard": "仪表盘",
       "SecondsAgo": "秒前",
       "MinutesAgo": "分钟前",
@@ -6468,6 +6475,7 @@
     "Text": {
       "InvalidFeedBack": "格式错误。 示例：{0}",
       "Clear": "清除",
+      "Mixed": "（混合）",
       "RunNow": "立即运行",
       "EnterPassword": "输入密码",
       "ChooseFile": "选择文件"

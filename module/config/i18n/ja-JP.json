@@ -6136,6 +6136,9 @@
     "Aside": {
       "Install": "インストール",
       "Home": "ホームページ",
+      "StartAll": "全て開始",
+      "StopAll": "全て停止",
+      "All": "全て",
       "Develop": "開発する",
       "Performance": "パフォーマンス",
       "Setting": "設定",
@@ -6159,6 +6162,8 @@
     "Toast": {
       "DisableTranslateMode": "翻訳モードをオフにするにはここをクリックしてください",
       "ConfigSaved": "設定が保存されました",
+      "ConfigSavedAll": "{0} 件のコンフィグを保存しました",
+      "CommonEditorNoTool": "ツールページは単一コンフィグが必要です。先にアカウントボタンを選んでください",
       "AlasIsRunning": "スケジューラはすでに実行されています",
       "ClickToUpdate": "nanoda に利用可能なアップデートがあります!"
     },
@@ -6204,6 +6209,8 @@
     },
     "Overview": {
       "Scheduler": "スケジューラ",
+      "CommonEditor": "{0} 件のコンフィグを編集中: {1}",
+      "CommonEditorHelp": "スケジューラー、ログ、開始/停止は各コンフィグボタンにあります。ここでの変更は一覧の全コンフィグに書き込まれます。",
       "Dashboard": "ダッシュボード",
       "SecondsAgo": "秒前",
       "MinutesAgo": "分前",
@@ -6468,6 +6475,7 @@
     "Text": {
       "InvalidFeedBack": "フォーマットエラー。例: {0}",
       "Clear": "クリア",
+      "Mixed": "(mixed)",
       "RunNow": "今すぐ実行",
       "EnterPassword": "パスワードを入力してください",
       "ChooseFile": "ファイルを選択"

@@ -6136,6 +6136,9 @@
     "Aside": {
       "Install": "安裝",
       "Home": "主頁",
+      "StartAll": "全部啟動",
+      "StopAll": "全部停止",
+      "All": "全部",
       "Develop": "開發",
       "Performance": "效能",
       "Setting": "設定",
@@ -6159,6 +6162,8 @@
     "Toast": {
       "DisableTranslateMode": "點選這裡關閉翻譯模式",
       "ConfigSaved": "設定已儲存",
+      "ConfigSavedAll": "已儲存到 {0} 個設定",
+      "CommonEditorNoTool": "工具頁面需要單一設定，請先選擇一個設定按鈕",
       "AlasIsRunning": "排程器已在執行中",
       "ClickToUpdate": "有可用更新nanoda!"
     },
@@ -6204,6 +6209,8 @@
     },
     "Overview": {
       "Scheduler": "排程器",
+      "CommonEditor": "正在編輯 {0} 個設定：{1}",
+      "CommonEditorHelp": "調度器、日誌和啟動/停止仍在各設定按鈕上。此處的修改會寫入列出的每個設定。",
       "Dashboard": "儀表盤",
       "SecondsAgo": "秒前",
       "MinutesAgo": "分鐘前",
@@ -6468,6 +6475,7 @@
     "Text": {
       "InvalidFeedBack": "格式錯誤。 示例：{0}",
       "Clear": "清除",
+      "Mixed": "（混合）",
       "RunNow": "立即運行",
       "EnterPassword": "輸入密碼",
       "ChooseFile": "選擇檔案"

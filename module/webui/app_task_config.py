@@ -65,6 +65,17 @@ from module.webui.config_search import (
 
 
 from module.webui.app_types import WebUIMixinBase
+from module.webui.common_editor import (
+    IDENTITY_PATHS,
+    MIXED_SENTINEL,
+    READONLY_ALL_TYPES,
+    common_editor_instances,
+    consensus,
+    displayed_pin_value,
+    is_all_mode,
+    is_locked_in_all,
+    read_common_configs,
+)
 
 
 class TaskConfigMixin(WebUIMixinBase):
@@ -109,10 +120,13 @@ class TaskConfigMixin(WebUIMixinBase):
                 for task in task_data.get("tasks", []):
                     onclick = _onclick
                     if menu == "FleetManagement":
-                        onclick = {
-                            "FleetScan": self.fleet_scan_page,
-                            "FleetInfo": self.fleet_info_page,
-                        }.get(task, _onclick)
+                        if is_all_mode(self.alas_name):
+                            onclick = self.alas_daemon_overview
+                        else:
+                            onclick = {
+                                "FleetScan": self.fleet_scan_page,
+                                "FleetInfo": self.fleet_info_page,
+                            }.get(task, _onclick)
                     task_btn_list.append(
                         put_buttons(
                             [
@@ -138,10 +152,13 @@ class TaskConfigMixin(WebUIMixinBase):
                 for task in task_data.get("tasks", []):
                     onclick = _onclick
                     if menu == "FleetManagement":
-                        onclick = {
-                            "FleetScan": self.fleet_scan_page,
-                            "FleetInfo": self.fleet_info_page,
-                        }.get(task, _onclick)
+                        if is_all_mode(self.alas_name):
+                            onclick = self.alas_daemon_overview
+                        else:
+                            onclick = {
+                                "FleetScan": self.fleet_scan_page,
+                                "FleetInfo": self.fleet_info_page,
+                            }.get(task, _onclick)
                     put_buttons(
                         [
                             {
@@ -247,7 +264,11 @@ class TaskConfigMixin(WebUIMixinBase):
 
     def _get_config_search_entries(self) -> List[ConfigSearchEntry]:
         """按当前实例和服务器返回可见参数的内存索引。"""
-        config = self.alas_config.read_file(self.alas_name)
+        if is_all_mode(self.alas_name):
+            _, configs = read_common_configs(State.config_updater)
+            config = configs[0] if configs else {}
+        else:
+            config = self.alas_config.read_file(self.alas_name)
         package_name = deep_get(config, "Alas.Emulator.PackageName", "cn")
         signature = (
             self.alas_name,
@@ -314,9 +335,14 @@ class TaskConfigMixin(WebUIMixinBase):
         group_name: str,
         group_args: Dict[str, Any],
         config: Dict[str, Any],
+        all_configs: Optional[List[Dict[str, Any]]] = None,
     ):
         """解析当前服务器下会渲染的参数，并供表单与搜索索引共享。"""
-        package_name = deep_get(config, "Alas.Emulator.PackageName", "cn")
+        all_mode = all_configs is not None
+        if all_mode and all_configs:
+            package_name = deep_get(all_configs[0], "Alas.Emulator.PackageName", "cn")
+        else:
+            package_name = deep_get(config, "Alas.Emulator.PackageName", "cn")
         server = to_server(package_name if isinstance(package_name, str) else "cn")
         for arg, arg_definition in deep_iter(group_args, depth=1):
             if not isinstance(arg_definition, dict):
@@ -330,12 +356,23 @@ class TaskConfigMixin(WebUIMixinBase):
             if display == "disabled":
                 output_kwargs["disabled"] = True
 
-            value = deep_get(
-                config, [task, group_name, arg_name], output_kwargs["value"]
-            )
+            path = [task, group_name, arg_name]
+            path_str = f"{task}.{group_name}.{arg_name}"
+            mixed = False
+            if all_mode:
+                value, mixed = consensus(
+                    all_configs or [], path, output_kwargs["value"]
+                )
+                if is_locked_in_all(path_str, widget_type):
+                    output_kwargs["disabled"] = True
+            else:
+                value = deep_get(
+                    config, path, output_kwargs["value"]
+                )
             # datetime 控件只能接收文本，避免 Pin 在重绘时丢失原始时间值。
             value = str(value) if isinstance(value, datetime) else value
             output_kwargs["value"] = value
+            output_kwargs["mixed"] = mixed
 
             options = output_kwargs.pop("option", [])
             available_events = deep_get(
@@ -383,7 +420,16 @@ class TaskConfigMixin(WebUIMixinBase):
         """
         Set arg groups from dict
         """
-        config = self.alas_config.read_file(self.alas_name)
+        all_configs = None
+        if is_all_mode(self.alas_name):
+            _, all_configs = read_common_configs(State.config_updater)
+            config = all_configs[0] if all_configs else {}
+            self._pin_baseline = {}
+            self._pin_mixed = set()
+        else:
+            config = self.alas_config.read_file(self.alas_name)
+            self._pin_baseline = {}
+            self._pin_mixed = set()
         self.init_menu(name=task)
         self.set_title(t(f"Task.{task}.name"))
 
@@ -409,7 +455,7 @@ class TaskConfigMixin(WebUIMixinBase):
 
         for group, arg_dict in deep_iter(self.ALAS_ARGS[task], depth=1):
             group_output, group_watcher_paths, _ = self._build_config_group(
-                group, arg_dict, config, task
+                group, arg_dict, config, task, all_configs=all_configs
             )
             if group_output is not None:
                 group_outputs.append(group_output)
@@ -449,9 +495,15 @@ class TaskConfigMixin(WebUIMixinBase):
         arg_dict,
         config: Dict[str, Any],
         task: str,
+        all_configs: Optional[List[Dict[str, Any]]] = None,
     ) -> tuple[Optional[Output], List[List[str]], int]:
         """构建一个配置分组，延迟到外层页面统一发送。"""
         group_name = group[0]
+        all_mode = all_configs is not None
+        if not hasattr(self, "_pin_baseline"):
+            self._pin_baseline = {}
+        if not hasattr(self, "_pin_mixed"):
+            self._pin_mixed = set()
 
         output_list: List[tuple[str, Output]] = []
         watcher_paths: List[List[str]] = []
@@ -460,9 +512,18 @@ class TaskConfigMixin(WebUIMixinBase):
             display,
             widget_type,
             resolved_kwargs,
-        ) in self._iter_group_arguments(task, group_name, arg_dict, config):
+        ) in self._iter_group_arguments(
+            task, group_name, arg_dict, config, all_configs=all_configs
+        ):
             output_kwargs = resolved_kwargs.copy()
-            if group_name == "Scheduler" and arg_name == "NextRun":
+            mixed = bool(output_kwargs.get("mixed", False))
+            pin_name = output_kwargs["name"]
+            self._pin_baseline[pin_name] = displayed_pin_value(
+                widget_type, output_kwargs["value"], mixed
+            )
+            if mixed:
+                self._pin_mixed.add(pin_name)
+            if group_name == "Scheduler" and arg_name == "NextRun" and not all_mode:
                 # 立即运行按钮：清空 NextRun 触发调度器立即执行该任务
                 run_now_path = f"{task}.Scheduler.NextRun"
 
@@ -559,6 +620,33 @@ class TaskConfigMixin(WebUIMixinBase):
             return
         self.simulator.start()
 
+    def _pin_value_equal(self, a, b) -> bool:
+        if a == b:
+            return True
+        try:
+            return parse_pin_value(a) == parse_pin_value(b)
+        except Exception:
+            return str(a) == str(b)
+
+    def _should_queue_pin_change(self, path: str, pin_name: str, value) -> bool:
+        if path in IDENTITY_PATHS:
+            return False
+        arg_type = deep_get(self.ALAS_ARGS, path + ".type")
+        if is_all_mode(self.alas_name) and arg_type in READONLY_ALL_TYPES:
+            return False
+        if value == MIXED_SENTINEL:
+            return False
+        baseline = getattr(self, "_pin_baseline", {}).get(pin_name, None)
+        if pin_name in getattr(self, "_pin_baseline", {}) and self._pin_value_equal(
+            baseline, value
+        ):
+            return False
+        if pin_name in getattr(self, "_pin_mixed", set()) and not isinstance(
+            value, (list, dict)
+        ) and not len(str(value)):
+            return False
+        return True
+
     def _bind_config_watcher(self, path: List[str]) -> None:
         """为已渲染的配置控件注册一次变更监听。"""
         pin_name = "_".join(path)
@@ -572,49 +660,85 @@ class TaskConfigMixin(WebUIMixinBase):
         path_text = ".".join(path)
 
         def put_queue(value: Any) -> None:
-            self.modified_config_queue.put({"name": path_text, "value": value})
+            if not self._should_queue_pin_change(path_text, pin_name, value):
+                return
+            self._pin_baseline[pin_name] = value
+            getattr(self, "_pin_mixed", set()).discard(pin_name)
+            all_mode = is_all_mode(self.alas_name)
+            targets = common_editor_instances() if all_mode else [self.alas_name]
+            if not targets or not targets[0]:
+                return
+            self.modified_config_queue.put({
+                "name": path_text,
+                "value": value,
+                "targets": list(targets),
+                "all_mode": all_mode,
+            })
 
         pin_on_change(name=pin_name, onchange=put_queue)
         watcher_pins.add(pin_name)
 
     def _alas_thread_update_config(self) -> None:
-        modified = {}
         while self.alive:
             try:
-                d = self.modified_config_queue.get(timeout=10)
-                config_name = self.alas_name
-                config_updater = self.alas_config
+                first = self.modified_config_queue.get(timeout=10)
             except queue.Empty:
                 continue
-            modified[d["name"]] = d["value"]
+            items = [first]
             while True:
                 try:
-                    d = self.modified_config_queue.get(timeout=1)
-                    modified[d["name"]] = d["value"]
+                    items.append(self.modified_config_queue.get(timeout=1))
                 except queue.Empty:
-                    self._save_config(modified, config_name, config_updater)
-                    modified.clear()
                     break
+            batches = {}
+            for d in items:
+                targets = tuple(d.get("targets") or (self.alas_name,))
+                all_mode = bool(d.get("all_mode"))
+                if not targets or not targets[0]:
+                    continue
+                key = (targets, all_mode)
+                if key not in batches:
+                    batches[key] = {}
+                batches[key][d["name"]] = d["value"]
+            config_updater = State.config_updater
+            for (targets, all_mode), modified in batches.items():
+                self._save_config(
+                    modified, list(targets), config_updater, all_mode=all_mode
+                )
 
     def _save_config(
         self,
         modified: Dict[str, Any],
-        config_name: str,
+        config_name: str | List[str],
         config_updater: Any = State.config_updater,
+        all_mode: bool = False,
     ) -> None:
         if os.environ.get("DEMO") == "1":
             return
 
+        config_names = [config_name] if isinstance(config_name, str) else list(config_name)
+        if not config_names:
+            return
+
         try:
-            skip_time_record = False
             valid = []
             invalid = []
-            config = config_updater.read_file(config_name)
+            write_pins = not all_mode
+            for k, v in list(modified.items()):
+                if v == MIXED_SENTINEL:
+                    modified.pop(k, None)
+                    continue
+                if all_mode and k in IDENTITY_PATHS:
+                    modified.pop(k, None)
+                    continue
+                arg_type = deep_get(self.ALAS_ARGS, k + ".type")
+                if all_mode and arg_type in READONLY_ALL_TYPES:
+                    modified.pop(k, None)
+            if not modified:
+                return
+
+            parsed: Dict[str, Any] = {}
             n = current_time()
-            for p, v in deep_iter(config, depth=3):
-                if p[-1].endswith("un") and not isinstance(v, bool):
-                    if (v - n).days >= 31:
-                        deep_set(config, p, "")
             for k, v in modified.copy().items():
                 arg_def = deep_get(self.ALAS_ARGS, k, {})
                 valuetype = (
@@ -630,20 +754,19 @@ class TaskConfigMixin(WebUIMixinBase):
                 validate = deep_get(self.ALAS_ARGS, k + ".validate")
                 if not len(str(v)):
                     default = deep_get(self.ALAS_ARGS, k + ".value")
-                    modified[k] = default
-                    deep_set(config, k, default)
+                    parsed[k] = default
                     valid.append(k)
-                    pin["_".join(k.split("."))] = default
+                    if write_pins:
+                        pin["_".join(k.split("."))] = default
 
                 elif not validate or re_fullmatch(validate, v):
-                    deep_set(config, k, v)
-                    modified[k] = v
+                    parsed[k] = v
                     valid.append(k)
                     for set_key, set_value in config_updater.save_callback(k, v):
-                        modified[set_key] = set_value
-                        deep_set(config, set_key, set_value)
+                        parsed[set_key] = set_value
                         valid.append(set_key)
-                        pin["_".join(set_key.split("."))] = to_pin_value(set_value)
+                        if write_pins:
+                            pin["_".join(set_key.split("."))] = to_pin_value(set_value)
                     # ==================== 自定义弹窗逻辑 ====================
                     # 当保存侵蚀1兑换凭证保留值为 0 时弹出提示
                     try:
@@ -696,17 +819,40 @@ class TaskConfigMixin(WebUIMixinBase):
                     logger.warning(f"[WebUI-任务配置] 无效值 {v}，键 {k}，跳过保存")
             self.pin_remove_invalid_mark(valid)
             self.pin_set_invalid_mark(invalid)
-            if modified:
-                toast(
-                    t("Gui.Toast.ConfigSaved"),
-                    duration=1,
-                    position="right",
-                    color="success",
-                )
+            if not parsed:
+                return
+            saved = []
+            for name in config_names:
+                config = config_updater.read_file(name)
+                for p, v in deep_iter(config, depth=3):
+                    if p[-1].endswith("un") and not isinstance(v, bool):
+                        try:
+                            if (v - n).days >= 31:
+                                deep_set(config, p, "")
+                        except Exception:
+                            pass
+                for k, v in parsed.items():
+                    deep_set(config, k, v)
+                config_updater.write_file(name, config)
+                saved.append(name)
                 logger.info(
-                    f"[WebUI-任务配置] 保存配置 {filepath_config(config_name)}, {dict_to_kv(modified)}"
+                    f"[WebUI-任务配置] 保存配置 {filepath_config(name)}, {dict_to_kv(parsed)}"
                 )
-                config_updater.write_file(config_name, config)
+            if saved:
+                if all_mode or len(saved) > 1:
+                    toast(
+                        t("Gui.Toast.ConfigSavedAll", len(saved)),
+                        duration=1,
+                        position="right",
+                        color="success",
+                    )
+                else:
+                    toast(
+                        t("Gui.Toast.ConfigSaved"),
+                        duration=1,
+                        position="right",
+                        color="success",
+                    )
                 self._invalidate_config_search_cache()
         except Exception as e:
             logger.exception(e)
