@@ -352,18 +352,50 @@ def dict_to_kv(dictionary, allow_none=True):
     return ', '.join([f'{k}={repr(v)}' for k, v in dictionary.items() if allow_none or v is not None])
 
 
-def server_timezone() -> timedelta:
-    return SERVER_TO_TIMEZONE.get(server_.server, SERVER_TO_TIMEZONE['cn'])
+def server_timezone(server=None) -> timedelta:
+    """
+    Args:
+        server (str): 包名或服务器键（`en` / `jp` / `cn` / `tw`）。
+            None 使用进程全局 `module.config.server.server`。
+    """
+    key = server_.server
+    if server:
+        key = server_.to_server(server)
+    return SERVER_TO_TIMEZONE.get(key, SERVER_TO_TIMEZONE['cn'])
 
 
-def server_time_offset() -> timedelta:
+def server_time_offset(server=None) -> timedelta:
     """
     计算本地时间与服务器时间的偏移量。
 
     本地时间转服务器时间：server_time = local_time + server_time_offset()
     服务器时间转本地时间：local_time = server_time - server_time_offset()
+
+    Args:
+        server (str): 包名或服务器键。None 使用进程全局服务器。
     """
-    return current_time(timezone.utc).astimezone().utcoffset() - server_timezone()
+    return current_time(timezone.utc).astimezone().utcoffset() - server_timezone(server)
+
+
+def os_server_now(server=None, now=None) -> datetime:
+    """大世界 / 每日重置所用的服务器本地朴素时间。
+
+    国际服全年 UTC-7，日服 UTC+9，国服/台服 UTC+8。
+    大世界月在该时区 1 日 00:00 切换——日服比国际服早很多小时。
+
+    Args:
+        server (str): 包名或服务器键。None 使用进程全局服务器。
+        now (datetime): 朴素本地时间或带时区时间。None 使用当前 UTC。
+    """
+    tz = timezone(server_timezone(server))
+    if now is None:
+        utc = current_time(timezone.utc)
+    elif now.tzinfo is None:
+        local_tz = current_time(timezone.utc).astimezone().tzinfo
+        utc = now.replace(tzinfo=local_tz).astimezone(timezone.utc)
+    else:
+        utc = now.astimezone(timezone.utc)
+    return utc.astimezone(tz).replace(tzinfo=None)
 
 
 def random_normal_distribution_int(a, b, n=3):
@@ -417,36 +449,60 @@ def ensure_time(second, n=3, precision=3):
         return second
 
 
-def get_os_next_reset():
+def get_os_next_reset(server=None, now=None):
     """
     获取下个月的第一天（大世界重置时间）。
+
+    使用指定游戏服务器的午夜（日服 UTC+9，国际服 UTC-7，国服/台服 UTC+8）。
+
+    Args:
+        server (str): 包名或服务器键。None 使用进程全局服务器。
+        now (datetime): 朴素本地时间。None 使用当前时间。
 
     Returns:
         datetime.datetime: 下次重置的本地时间。
     """
-    diff = server_time_offset()
-    server_now = current_time() - diff
+    if now is None:
+        now = current_time()
+    server_now = os_server_now(server=server, now=now)
     server_reset = (server_now.replace(day=1) + timedelta(days=32)) \
         .replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    server_reset = server_reset.replace(tzinfo=timezone(server_timezone()))
+    server_reset = server_reset.replace(tzinfo=timezone(server_timezone(server)))
     local_reset = server_reset.astimezone().replace(tzinfo=None)
     return local_reset
 
 
-def get_os_reset_remain():
+def get_os_reset_remain(server=None, now=None):
     """
     获取距离大世界下次重置的剩余天数。
+
+    Args:
+        server (str): 包名或服务器键。None 使用进程全局服务器。
+        now (datetime): 朴素本地时间。None 使用当前时间。
 
     Returns:
         int: 剩余天数。
     """
-    next_reset = get_os_next_reset()
-    now = current_time()
+    if now is None:
+        now = current_time()
+    next_reset = get_os_next_reset(server=server, now=now)
     logger.attr('大世界下次重置', next_reset)
 
+    if getattr(now, 'tzinfo', None) is not None:
+        now = now.astimezone().replace(tzinfo=None)
     remain = int((next_reset - now).total_seconds() // 86400)
     logger.attr('重置剩余天数', remain)
     return remain
+
+
+def get_os_month_id(server=None, now=None) -> str:
+    """当前大世界月，服务器本地时间的 `YYYY-MM`。
+
+    Args:
+        server (str): 包名或服务器键。None 使用进程全局服务器。
+        now (datetime): 朴素本地时间。None 使用当前时间。
+    """
+    return os_server_now(server=server, now=now).strftime('%Y-%m')
 
 
 def get_server_next_update(daily_trigger):

@@ -120,9 +120,21 @@ class CampaignRun(CampaignEvent, ShopStatus):
                 content=f"<{self.config.config_name}> {self.name} reached run count limit"
             )
             return True
-        # 等级限制
-        if self.config.StopCondition_ReachLevel and self.campaign.config.LV_TRIGGERED:
-            logger.hr(f'触发停止条件: 达到等级 {self.config.StopCondition_ReachLevel}')
+        # 等级上限 / 达到等级 X
+        cap_hit = self.campaign.config.LV_TRIGGERED
+        if not cap_hit and getattr(self.config, 'StopCondition_LevelCap', False):
+            from module.alas_bridge.sortie_status import level_cap_triggered
+            cap_hit = level_cap_triggered(self.config)
+        if cap_hit and (
+            getattr(self.config, 'StopCondition_LevelCap', False)
+            or self.config.StopCondition_ReachLevel
+        ):
+            label = (
+                '等级上限'
+                if getattr(self.config, 'StopCondition_LevelCap', False)
+                else f'达到等级 {self.config.StopCondition_ReachLevel}'
+            )
+            logger.hr(f'触发停止条件: {label}')
             self.config.Scheduler_Enable = False
             handle_notify(
                 self.config.Error_OnePushConfig,
@@ -469,12 +481,25 @@ class CampaignRun(CampaignEvent, ShopStatus):
                 self.device.screenshot()
             self.campaign.device.image = self.device.image
             if self.campaign.is_in_map():
-                logger.info('[战役] 已在地图中，执行撤退。')
-                try:
-                    self.campaign.withdraw()
-                except CampaignEnd:
-                    pass
-                self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
+                from module.alas_bridge.sitback import wait_leftover_autofight
+                leftover = wait_leftover_autofight(
+                    self.config, self.device, handler=self.campaign)
+                if leftover == 'timeout':
+                    logger.warning(
+                        '[战役] 图上仍有未结束的模组自律寻敌，推迟而不是撤退'
+                    )
+                    self.config.task_delay(minute=10)
+                    self.config.task_stop('Campaign: waiting leftover AutoFight')
+                if leftover == 'ended':
+                    logger.info('[战役] 残留自律寻敌已结束，继续战役界面')
+                    self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
+                else:
+                    logger.info('[战役] 已在地图中，执行撤退。')
+                    try:
+                        self.campaign.withdraw()
+                    except CampaignEnd:
+                        pass
+                    self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
             elif self.campaign.is_in_auto_search_menu():
                 if self.can_use_auto_search_continue():
                     logger.info('[战役] 在自动搜索菜单中，跳过 ensure_campaign_ui。')

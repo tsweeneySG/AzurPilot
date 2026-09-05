@@ -444,4 +444,7 @@ class StorageHandler(GlobeOperation, ZoneManager):
             self.storage_logger_use_all()
 
         result = self.storage_checkout_item(item, skip_obscure_hazard_2=skip_obscure_hazard_2)
+        if item in ('OBSCURE', 'ABYSSAL'):
+            from module.os.ap_preserve import mark_high_ap_content
+            mark_high_ap_content(self.config, item, bool(result))
         return result

@@ -313,6 +313,13 @@ class Raid(MapOperation, RaidCombat, CampaignEvent):
                 logger.hr('触发停止条件: 物资上限')
                 self.handle_task_balancer()
                 return True
+        # 等级上限（Sweeney 桥接）
+        if getattr(self.config, 'StopCondition_LevelCap', False):
+            from module.alas_bridge.sortie_status import level_cap_triggered
+            if level_cap_triggered(self.config):
+                logger.hr('触发停止条件: 等级上限')
+                self.config.Scheduler_Enable = False
+                return True
 
         return False
 

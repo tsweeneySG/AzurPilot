@@ -356,6 +356,8 @@ class OSShop(PortShop, AkashiShop):
                 continue
             if self.os_shop_buy_execute(_item):
                 logger.info(f'已购买物品 {_item.name}')
+                from module.os.ap_preserve import mark_coordinate_from_item_name
+                mark_coordinate_from_item_name(self.config, _item.name)
                 skip_get_coins = False
                 count += 1
             else:

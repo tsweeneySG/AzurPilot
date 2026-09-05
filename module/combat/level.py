@@ -60,6 +60,29 @@ class Level(ModuleBase):
         self._lv = [-1] * 6
         self._lv_before_battle = [-1] * 6
 
+    def _try_level_cap_bridge(self, after_battle=False):
+        """等级上限 + Sweeney 桥接时用出击名单代替 OCR。
+
+        Returns:
+            bool: True 表示本路径已处理，应跳过 OCR。
+        """
+        if not getattr(self.config, 'Optimization_SweeneyBridge', False):
+            return False
+        if not getattr(self.config, 'StopCondition_LevelCap', False):
+            return False
+        if after_battle:
+            from module.alas_bridge.sortie_status import any_at_cap, fetch_sortie_status
+            status = fetch_sortie_status(self.config)
+            ship = any_at_cap(status)
+            if ship is not None:
+                logger.info(
+                    f'[等级-上限] {ship.get("name")} '
+                    f'Lv.{ship.get("level")}/{ship.get("max_level")} '
+                    f'hard={ship.get("hard_cap")} soft={ship.get("soft_cap")}'
+                )
+                self.config.LV_TRIGGERED = True
+        return True
+
     @Config.when(SERVER='en')
     def _lv_grid(self):
         return ButtonGrid(origin=(56, 113), delta=(0, 100), button_shape=(46, 19), grid_shape=(1, 6))
@@ -81,6 +104,9 @@ class Level(ModuleBase):
         Returns:
             list[int]: 各位置的等级列表。
         """
+        if self._try_level_cap_bridge(after_battle=after_battle):
+            return self.lv
+
         if not self.config.StopCondition_ReachLevel and not self.config.STOP_IF_REACH_LV32:
             return [-1] * 6
 

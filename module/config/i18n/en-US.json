@@ -126,6 +126,10 @@
       "name": "War Archives",
       "help": "Due to lack of maintenance for War Archives, the clearing function may not work properly. If you find AzurPilot running abnormally, please complete the clearing manually and then use the auto-search function."
     },
+    "WarArchivesCatchup": {
+      "name": "War Archives Catchup",
+      "help": "Requires Sweeney Bridge. Auto-picks the next incomplete accessible War Archives map, applies fleet 5/6 (or 6/5 on hard) presets and AutoFight flags, then watches while the mod runs. Stops on tickets, oil, or emotion. Disables itself when nothing is left."
+    },
     "EventA": {
       "name": "Daily Map A",
       "help": ""
@@ -1375,6 +1379,10 @@
     "ReachLevel": {
       "name": "Stop When Ship Reaches Level X",
       "help": "Any ship below level X will stop after reaching level X\n0 means no level restriction"
+    },
+    "LevelCap": {
+      "name": "Stop at Level Cap",
+      "help": "Requires Sweeney Mod Bridge. Stop when a ship in the sortie roster hits a hard cap (70/80/90) or a soft cap (vanguard XP enough to 120, other ships XP enough to 125)."
     }
   },
   "WarArchives": {
@@ -3060,6 +3068,10 @@
     "UseLogger": {
       "name": "Use Coordinate Logger",
       "help": "Every time you enter the storage, use all Coordinate Loggers"
+    },
+    "MonthStartRotation": {
+      "name": "Month-Start Task Rotation",
+      "help": "At OpSi monthly reset (00:00 server time: Global UTC-7, JP UTC+9) keep Data Logger Bought on, and turn off Obscure Zones, Abyssal Zones, Siren Strongholds, and Meowfficer Farming so they do not spend AP needed for Explore / Daily. Turn those four back on manually later in the month."
     },
     "BuyActionPointLimit": {
       "name": "Buy Action Points X Times",

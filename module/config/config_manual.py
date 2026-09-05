@@ -67,7 +67,7 @@ class ManualConfig:
     > OpsiAbyssal > OpsiStronghold > OpsiObscure > OpsiArchive
     > Daily > Hard > OpsiAshBeacon > OpsiAshAssist > OpsiMonthBoss
     > Sos > EventSp > EventA > EventB > EventC > EventD
-    > RaidDaily > CoalitionSp > WarArchives > MaritimeEscort
+    > RaidDaily > CoalitionSp > WarArchives > WarArchivesCatchup > MaritimeEscort
     > IslandJuuEatery > IslandJuuCoffee > IslandGrill > IslandTeahouse > IslandRestaurant
     > IslandFarm > IslandRancher > IslandMineForest > IslandDailyGather > IslandManufacture
     > IslandAirDrop > IslandBusiness

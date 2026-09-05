@@ -347,6 +347,8 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
         Returns:
             Function: 待运行的任务。
         """
+        from module.os.month_start import apply_opsi_month_start
+        apply_opsi_month_start(self)
         self.get_next_task()
 
         if self.pending_task:

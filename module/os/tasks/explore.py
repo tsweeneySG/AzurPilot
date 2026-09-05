@@ -62,7 +62,13 @@ class OpsiExplore(OSMap):
             with self.config.multi_set():
                 self.config.OpsiExplore_LastZone = 0
                 self.config.OpsiExplore_ExploreProgress = '已完成百分之100.00'
-                self.config.OpsiExplore_SpecialRadar = False
+                # 原版假定 5k 油数据记录仪每月过期。月初轮换（以及模组全图视野）
+                # 保持开启，避免下月每区再等 27 分钟。
+                if self.config.cross_get(
+                        'OpsiGeneral.OpsiGeneral.MonthStartRotation', default=True):
+                    self.config.OpsiExplore_SpecialRadar = True
+                else:
+                    self.config.OpsiExplore_SpecialRadar = False
                 self.config.task_delay(target=next_reset)
                 self.config.task_call('OpsiDaily', force_call=False)
                 self.config.task_call('OpsiShop', force_call=False)

@@ -1326,6 +1326,14 @@ class OpsiScheduling(CoinTaskMixin, OSMap):
             return False
         remain = get_os_reset_remain()
         active = remain <= cleanup_days
+        if active:
+            from module.os.ap_preserve import should_hold_ap_for_loggers
+            hold, reason = should_hold_ap_for_loggers(self.config)
+            if hold:
+                logger.info(
+                    f'[大世界-月末清理] 仍有高耗行动力内容（{reason}），暂不清理'
+                )
+                return False
         logger.info(
             f'[大世界-月末清理] 清理天数={cleanup_days}, 重置剩余={remain}, '
             f'月末清理{"启用" if active else "未启用"}'

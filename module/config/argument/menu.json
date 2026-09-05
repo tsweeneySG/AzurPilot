@@ -35,7 +35,8 @@
       "CoalitionScuttle",
       "MaritimeEscort",
       "EventShop",
-      "WarArchives"
+      "WarArchives",
+      "WarArchivesCatchup"
     ]
   },
   "EventDaily": {

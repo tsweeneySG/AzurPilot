@@ -343,7 +343,7 @@ YukikazeTaskManager:
       > OpsiAbyssal > OpsiStronghold > OpsiObscure > OpsiArchive
       > Daily > Hard > OpsiAshBeacon > OpsiAshAssist > OpsiMonthBoss
       > Sos > EventSp > EventA > EventB > EventC > EventD
-      > RaidDaily > CoalitionSp > WarArchives > MaritimeEscort
+      > RaidDaily > CoalitionSp > WarArchives > WarArchivesCatchup > MaritimeEscort
       > IslandJuuEatery > IslandJuuCoffee > IslandGrill > IslandTeahouse > IslandRestaurant
       > IslandFarm > IslandRancher > IslandMineForest > IslandDailyGather > IslandManufacture
       > IslandAirDrop > IslandBusiness > IslandDailyOrder > IslandDailyInteract > IslandPearlSell > IslandCargoPreparation
@@ -402,6 +402,7 @@ StopCondition:
   StageIncrease: false
   GetNewShip: false
   ReachLevel: 0
+  LevelCap: false
 WarArchives:
   DailyRunCount: 0
   DailyRunCountRemain:
@@ -1025,6 +1026,7 @@ OpsiAshAssist:
   Tier: 15
 OpsiGeneral:
   UseLogger: true
+  MonthStartRotation: true
   BuyActionPointLimit:
     value: 0
     option: [0, 1, 2, 3, 4, 5]
@@ -1054,7 +1056,7 @@ OpsiAshBeacon:
   DossierAutoAttackMode: false
   RequestAssist: true
   EnsureFullyCollected: true
-  AutoCollectShip: true
+  AutoCollectShip: false
 OpsiFleetFilter:
   Filter: |-
     Fleet-4 > CallSubmarine > Fleet-2 > Fleet-3 > Fleet-1

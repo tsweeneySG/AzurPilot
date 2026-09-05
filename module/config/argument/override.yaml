@@ -539,6 +539,24 @@ WarArchives:
   Campaign:
     Mode: normal
     AmbushEvade: true
+WarArchivesCatchup:
+  Scheduler:
+    SuccessInterval: 30
+    FailureInterval: 30
+    ServerUpdate: 00:00
+  StopCondition:
+    RunCount:
+      display: hide
+    MapAchievement:
+      display: hide
+    StageIncrease:
+      display: hide
+    GetNewShip:
+      display: hide
+    ReachLevel:
+      display: hide
+    LevelCap:
+      display: hide
 
 # ==================== Opsi ====================
 

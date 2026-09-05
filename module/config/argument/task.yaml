@@ -158,6 +158,10 @@ Event:
       - Emotion
       - HpControl
       - EnemyPriority
+    WarArchivesCatchup:
+      - Scheduler
+      - StopCondition
+      - Emotion
 EventDaily:
   menu: collapse
   page: setting

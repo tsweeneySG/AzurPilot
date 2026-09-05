@@ -1358,6 +1358,10 @@ class AzurLaneAutoScript:
         CampaignWarArchives(config=self.config, device=self.device).run(
             name=self.config.Campaign_Name, folder=self.config.Campaign_Event, mode=self.config.Campaign_Mode)
 
+    def war_archives_catchup(self):
+        from module.war_archives_catchup.catchup import WarArchivesCatchup
+        WarArchivesCatchup(config=self.config, device=self.device).run()
+
     def raid_daily(self):
         from module.raid.daily import RaidDaily
         RaidDaily(config=self.config, device=self.device).run()
@@ -1812,6 +1816,11 @@ class AzurLaneAutoScript:
                     if not self.wait_until(task.next_run):
                         del_cached_property(self, 'config')
                         continue
+            # 等待可能已跨过大世界月重置（日服与国际服午夜不同）。
+            from module.os.month_start import apply_opsi_month_start
+            if apply_opsi_month_start(self.config):
+                del_cached_property(self, 'config')
+                continue
             break
 
         AzurLaneConfig.is_hoarding_task = False
@@ -1896,6 +1905,16 @@ class AzurLaneAutoScript:
                 logger.info(f'[Alas] 调度器: 开始任务 `{task}`')
                 self.device.stuck_record_clear()
                 self.device.click_record_clear()
+                from module.alas_bridge.sitback import should_skip_wait, wait_leftover_autofight
+                if not should_skip_wait(task):
+                    leftover = wait_leftover_autofight(self.config, self.device)
+                    if leftover == 'timeout':
+                        logger.warning(
+                            '[Alas] 图上仍有未结束的模组自律寻敌，推迟当前任务以免互相打断'
+                        )
+                        self.config.task_delay(minute=10)
+                        del_cached_property(self, 'config')
+                        continue
                 logger.hr(task, level=0)
                 # 激活看门狗：任务执行期间监测日志心跳和运行时间
                 # 防止主线程卡死在 I/O 调用中或陷入逻辑死循环

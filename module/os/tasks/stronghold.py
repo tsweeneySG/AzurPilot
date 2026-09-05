@@ -33,6 +33,8 @@ class OpsiStronghold(CoinTaskMixin, OSMap):
             self.os_map_goto_globe()
             self.globe_update()
             zone = self.find_siren_stronghold()
+            from module.os.ap_preserve import mark_high_ap_content
+            mark_high_ap_content(self.config, 'STRONGHOLD', zone is not None)
             if zone is None:
                 self.config.OpsiStronghold_HasStronghold = False
                 self.os_globe_goto_map()
