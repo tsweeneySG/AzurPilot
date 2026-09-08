@@ -81,4 +81,5 @@ class MaritimeEscort(MapOperation, CampaignEvent):
         else:
             logger.info('[活动-护航] 海上护卫今日已完成')
 
-        self.config.task_delay(server_update=True)
+        # 前半段半延迟补跑，避免剩余次数识别漏打后等到次日
+        self.config.task_delay(server_update=True, half=True)

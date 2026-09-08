@@ -93,4 +93,5 @@ class RaidDaily(RaidRun):
             logger.hr('ex', level=1)
             super().run(name=name, mode='ex', total=self.get_remain('ex'))
 
-        self.config.task_delay(server_update=True)
+        # 前半段半延迟补跑，避免剩余次数识别漏打后等到次日
+        self.config.task_delay(server_update=True, half=True)

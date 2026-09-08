@@ -557,6 +557,43 @@ def get_server_last_update(daily_trigger):
     return update
 
 
+def resolve_half_server_update(
+        now,
+        last_update,
+        next_update,
+        min_remaining=None,
+):
+    """计算“半延迟补跑”的下次运行时间。
+
+    本刷新周期的前半段完成时，延迟到距下次刷新剩余时间的一半，
+    给困难/每日/演习等定额任务一次自动补跑；后半段或剩余时间过短时，
+    仍延迟到下次服务器刷新，避免同一周期内反复执行。
+
+    Args:
+        now (datetime): 当前时间。
+        last_update (datetime): 上次服务器刷新时间。
+        next_update (datetime): 下次服务器刷新时间。
+        min_remaining (timedelta): 剩余时间短于此值时不再半延迟。
+
+    Returns:
+        datetime: 下次运行时间。
+    """
+    if min_remaining is None:
+        min_remaining = timedelta(hours=1)
+    if not isinstance(now, datetime) or not isinstance(next_update, datetime):
+        return next_update
+    if next_update <= now:
+        return next_update
+
+    remaining = next_update - now
+    period = next_update - last_update if isinstance(last_update, datetime) else remaining
+    if period.total_seconds() <= 0:
+        return next_update
+    if remaining < min_remaining or remaining <= period / 2:
+        return next_update
+    return (now + remaining / 2).replace(microsecond=0)
+
+
 def nearest_future(future, interval=120):
     """
     获取最近的未来时间点。

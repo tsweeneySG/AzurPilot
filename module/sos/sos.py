@@ -264,5 +264,5 @@ class CampaignSos(CampaignRun, CampaignBase):
                 logger.warning(f'清除SOS信号失败，无法定位章节 {self.config.Sos_Chapter}')
                 break
 
-        # Scheduler
-        self.config.task_delay(server_update=True)
+        # 前半段半延迟补跑，避免信号 OCR 漏打后等到次日
+        self.config.task_delay(server_update=True, half=True)

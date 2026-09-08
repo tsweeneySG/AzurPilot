@@ -362,7 +362,7 @@ class Exercise(ExerciseCombat):
                            - datetime.timedelta(hours=self.config.Exercise_DelayUntilHoursBeforeNextUpdate)
                 now = current_time()
                 if next_run < now or run:
-                    self.config.task_delay(server_update=True)
+                    self.config.task_delay(server_update=True, half=True)
                     return
                 minutes_to_delay = int((next_run - now).total_seconds() / 60 + 1)
                 self.config.task_delay(minute=minutes_to_delay)

@@ -79,6 +79,6 @@ class CampaignHard(CampaignRun):
         self.campaign.ensure_auto_search_exit()
         # self.campaign.equipment_take_off_when_finished()
 
-        # 调度器
-        self.config.task_delay(server_update=True)
+        # 调度器：前半段半延迟补跑，避免 OCR/UI 漏打后等到次日
+        self.config.task_delay(server_update=True, half=True)
         self.config.task_call('Reward', force_call=False)

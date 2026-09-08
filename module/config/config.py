@@ -18,10 +18,10 @@ import pywebio
 from module.base.filter import Filter
 from module.config.config_generated import GeneratedConfig
 from module.config.config_manual import ManualConfig, OutputConfig
-from module.config.config_updater import ConfigUpdater, ensure_time, get_server_next_update, nearest_future
+from module.config.config_updater import ConfigUpdater, ensure_time, get_server_last_update, get_server_next_update, nearest_future
 from module.config.deep import deep_get, deep_set
 from module.config.time_source import now as current_time
-from module.config.utils import DEFAULT_TIME, dict_to_kv, filepath_config, get_os_reset_remain, path_to_arg, is_good_gpu
+from module.config.utils import DEFAULT_TIME, dict_to_kv, filepath_config, get_os_reset_remain, path_to_arg, is_good_gpu, resolve_half_server_update
 from module.config.watcher import ConfigWatcher
 from module.exception import RequestHumanTakeover, ScriptError
 from module.logger import logger
@@ -479,7 +479,7 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
         if self.auto_update:
             self.update()
 
-    def task_delay(self, success=None, server_update=None, target=None, minute=None, task=None):
+    def task_delay(self, success=None, server_update=None, target=None, minute=None, task=None, half=False):
         """设置 Scheduler.NextRun，延迟任务的下次运行时间。
 
         至少需要设置一个参数。如果设置了多个参数，取最近的时间。
@@ -497,10 +497,30 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
                 延迟指定分钟数。
             task (str):
                 跨任务设置。None 表示当前任务。
+            half (bool):
+                True 表示在本刷新周期前半段只延迟剩余时间的一半，
+                用于困难/每日/演习等定额任务漏打后的自动补跑。
+                未传 server_update 时视为 True。
         """
 
         def ensure_delta(delay):
             return timedelta(seconds=int(ensure_time(delay, precision=3) * 60))
+
+        if half:
+            if server_update is None:
+                server_update = True
+            trigger = self.Scheduler_ServerUpdate if server_update is True else server_update
+            next_update = get_server_next_update(trigger)
+            half_target = resolve_half_server_update(
+                now=current_time(),
+                last_update=get_server_last_update(trigger),
+                next_update=next_update,
+            )
+            if half_target < next_update:
+                target = half_target
+                server_update = None
+            elif server_update is True:
+                server_update = trigger
 
         run = []
         if success is not None:
@@ -529,6 +549,7 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
                     "server_update": server_update,
                     "target": target,
                     "minute": minute,
+                    "half": True if half else None,
                 },
                 allow_none=False,
             )

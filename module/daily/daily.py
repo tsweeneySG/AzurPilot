@@ -384,4 +384,5 @@ class Daily(Combat):
         self.daily_run()
 
         # 不能停留在 page_daily，因为顺序会乱掉。
-        self.config.task_delay(server_update=True)
+        # 前半段半延迟补跑，避免 OCR/UI 漏打后等到次日
+        self.config.task_delay(server_update=True, half=True)

@@ -1385,6 +1385,82 @@ class TestWarArchivesCatchupPolicy(unittest.TestCase):
             {'already_in_map': True, 'resume_active': True}, on_map))
         self.assertTrue(wa_goto_ready_to_sit({'pending_battle': True}, home))
 
+        hub = {
+            'scene_key': 'LEVEL',
+            'page': 'page_campaign_menu',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': True},
+            'level': {'in_map': False, 'entrance': True},
+            'battle': {'state': 'BATTLE_IDLE'},
+        }
+        self.assertFalse(watch_on_map_ui(hub))
+        self.assertTrue(watch_in_sortie(hub))
+        chapter_list = {
+            'scene_key': 'LEVEL',
+            'page': 'page_campaign',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': False},
+            'level': {'in_map': False, 'entrance': False},
+            'battle': {'state': 'BATTLE_IDLE'},
+        }
+        self.assertFalse(watch_on_map_ui(chapter_list))
+
+        live_map_stale_entrance = {
+            'scene_key': 'LEVEL',
+            'page': 'page_in_map',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': False},
+            'level': {'in_map': True, 'entrance': True},
+            'battle': {'state': 'BATTLE_IDLE'},
+        }
+        self.assertTrue(watch_on_map_ui(live_map_stale_entrance))
+        self.assertTrue(watch_in_sortie(live_map_stale_entrance))
+
+    def test_leftover_off_map_ui_menus(self):
+        from module.war_archives_catchup.policy import leftover_off_map_ui
+
+        home = {
+            'scene_key': 'MAINUI',
+            'page': 'page_main',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': False},
+            'level': {'in_map': False, 'entrance': False},
+            'battle': {'state': 'BATTLE_IDLE'},
+        }
+        self.assertTrue(leftover_off_map_ui(home))
+        attack = {
+            'scene_key': 'LEVEL',
+            'page': 'page_campaign_menu',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': True},
+            'level': {'in_map': False, 'entrance': True},
+            'battle': {'state': 'BATTLE_IDLE'},
+        }
+        self.assertTrue(leftover_off_map_ui(attack))
+        on_map = {
+            'scene_key': 'LEVEL',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': True},
+            'level': {'in_map': True, 'entrance': False},
+            'battle': {'state': 'BATTLE_IDLE'},
+        }
+        self.assertFalse(leftover_off_map_ui(on_map))
+        battle = {
+            'scene_key': 'BATTLE',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': True},
+            'battle': {'state': 'BATTLE_FIGHT'},
+        }
+        self.assertFalse(leftover_off_map_ui(battle))
+        dock = {
+            'scene_key': 'DOCKYARD',
+            'page': 'page_dock',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': True},
+            'level': {'in_map': False},
+        }
+        self.assertFalse(leftover_off_map_ui(dock))
+        live_map_stale_entrance = {
+            'scene_key': 'LEVEL',
+            'page': 'page_in_map',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': False},
+            'level': {'in_map': True, 'entrance': True},
+            'battle': {'state': 'BATTLE_IDLE'},
+        }
+        self.assertFalse(leftover_off_map_ui(live_map_stale_entrance))
+
     def test_watch_ends_on_level_after_grace(self):
         from module.war_archives_catchup.policy import watch_map_ended
 
@@ -1657,6 +1733,70 @@ class TestSitback(unittest.TestCase):
             sitback._read_state = orig_read
             sitback.time.sleep = orig_sleep
 
+    def test_wait_clicks_battle_report_when_auto_off(self):
+        from module.alas_bridge import actions, sitback
+
+        class Dev:
+            def stuck_record_clear(self):
+                pass
+
+        clicks = []
+        n = {'i': 0}
+
+        def fake_read(config, max_age=8.0):
+            n['i'] += 1
+            if n['i'] <= 3:
+                return {
+                    'scene_key': 'BATTLE',
+                    'chapter': {'active': False},
+                    'battle': {'state': 'BATTLE_REPORT'},
+                }
+            return {
+                'scene_key': 'MAINUI',
+                'chapter': {'active': False},
+                'battle': {'state': 'BATTLE_IDLE'},
+            }
+
+        def fake_click(*a, **k):
+            clicks.append(1)
+            return True
+
+        orig_en = actions.bridge_enabled
+        orig_read = sitback._read_state
+        orig_sleep = sitback.time.sleep
+        orig_click = sitback.handle_sitback_battle_status
+        try:
+            actions.bridge_enabled = lambda config: True
+            sitback._read_state = fake_read
+            sitback.time.sleep = lambda s: None
+            sitback.handle_sitback_battle_status = fake_click
+            self.assertEqual(sitback.wait_leftover_autofight(object(), Dev()), 'ended')
+            self.assertTrue(clicks)
+        finally:
+            actions.bridge_enabled = orig_en
+            sitback._read_state = orig_read
+            sitback.time.sleep = orig_sleep
+            sitback.handle_sitback_battle_status = orig_click
+
+    def test_need_battle_click_raid_report(self):
+        from module.alas_bridge.sitback import _need_battle_click
+
+        self.assertTrue(_need_battle_click({
+            'scene_key': 'BATTLE',
+            'chapter': {},
+            'battle': {'state': 'BATTLE_REPORT'},
+        }))
+        self.assertFalse(_need_battle_click({
+            'scene_key': 'BATTLE',
+            'chapter': {'auto_fight': True},
+            'battle': {'state': 'BATTLE_REPORT'},
+        }))
+        self.assertFalse(_need_battle_click({
+            'scene_key': 'BATTLE',
+            'chapter': {},
+            'battle': {'state': 'BATTLE_FIGHT'},
+        }))
+
     def test_wait_does_not_resume_from_dockyard(self):
         from module.alas_bridge import actions, sitback
 
@@ -1702,6 +1842,139 @@ class TestSitback(unittest.TestCase):
             sitback.time.sleep = orig_sleep
             sitback._resume_active_chapter = orig_resume
             sitback.handle_sitback_dock_full = orig_dock
+
+    def test_wait_resumes_again_when_stuck_on_menu(self):
+        from module.alas_bridge import actions, sitback
+
+        class Dev:
+            def stuck_record_clear(self):
+                pass
+
+        resumed = []
+        n = {'i': 0}
+
+        def fake_read(config, max_age=8.0):
+            n['i'] += 1
+            if n['i'] <= 4:
+                return {
+                    'scene_key': 'LEVEL',
+                    'page': 'page_campaign_menu',
+                    'chapter': {'active': True, 'id': 1604, 'auto_fight': False},
+                    'level': {'in_map': False, 'entrance': True},
+                    'battle': {'state': 'BATTLE_IDLE'},
+                }
+            return {
+                'scene_key': 'LEVEL',
+                'chapter': {'active': False},
+                'level': {'in_map': False, 'entrance': False},
+            }
+
+        orig_en = actions.bridge_enabled
+        orig_read = sitback._read_state
+        orig_sleep = sitback.time.sleep
+        orig_resume = sitback._resume_active_chapter
+        orig_every = sitback.RESUME_RETRY_EVERY
+        orig_dock = sitback.handle_sitback_dock_full
+        try:
+            actions.bridge_enabled = lambda config: True
+            sitback._read_state = fake_read
+            sitback.time.sleep = lambda s: None
+            sitback.RESUME_RETRY_EVERY = 0
+            sitback._resume_active_chapter = lambda *a, **k: resumed.append(1) or True
+            sitback.handle_sitback_dock_full = lambda *a, **k: False
+            self.assertEqual(sitback.wait_leftover_autofight(object(), Dev()), 'ended')
+            self.assertGreaterEqual(len(resumed), 2)
+        finally:
+            actions.bridge_enabled = orig_en
+            sitback._read_state = orig_read
+            sitback.time.sleep = orig_sleep
+            sitback._resume_active_chapter = orig_resume
+            sitback.RESUME_RETRY_EVERY = orig_every
+            sitback.handle_sitback_dock_full = orig_dock
+
+    def test_leftover_needs_enable_auto(self):
+        from module.alas_bridge.sitback import leftover_needs_enable_auto
+
+        on_map_off = {
+            'scene_key': 'LEVEL',
+            'page': 'page_in_map',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': False},
+            'level': {'in_map': True, 'entrance': True},
+            'battle': {'state': 'BATTLE_IDLE'},
+        }
+        self.assertTrue(leftover_needs_enable_auto(on_map_off))
+        on_map_on = {
+            'scene_key': 'LEVEL',
+            'page': 'page_in_map',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': True},
+            'level': {'in_map': True, 'entrance': False},
+            'battle': {'state': 'BATTLE_IDLE'},
+        }
+        self.assertFalse(leftover_needs_enable_auto(on_map_on))
+        hub = {
+            'scene_key': 'LEVEL',
+            'page': 'page_campaign_menu',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': False},
+            'level': {'in_map': False, 'entrance': True},
+            'battle': {'state': 'BATTLE_IDLE'},
+        }
+        self.assertFalse(leftover_needs_enable_auto(hub))
+        battle = {
+            'scene_key': 'BATTLE',
+            'chapter': {'active': True, 'id': 1604, 'auto_fight': False},
+            'battle': {'state': 'BATTLE_REPORT'},
+        }
+        self.assertFalse(leftover_needs_enable_auto(battle))
+
+    def test_wait_enables_auto_when_off_on_map(self):
+        from module.alas_bridge import actions, sitback
+
+        class Dev:
+            def stuck_record_clear(self):
+                pass
+
+        flags = []
+        n = {'i': 0}
+
+        def fake_read(config, max_age=8.0):
+            n['i'] += 1
+            if n['i'] <= 3:
+                return {
+                    'scene_key': 'LEVEL',
+                    'page': 'page_in_map',
+                    'chapter': {'active': True, 'id': 1604, 'auto_fight': False},
+                    'level': {'in_map': True, 'entrance': True},
+                    'battle': {'state': 'BATTLE_IDLE'},
+                }
+            return {
+                'scene_key': 'LEVEL',
+                'chapter': {'active': False},
+                'level': {'in_map': False},
+            }
+
+        orig_en = actions.bridge_enabled
+        orig_read = sitback._read_state
+        orig_sleep = sitback.time.sleep
+        orig_flags = actions.set_mod_flags
+        orig_dock = sitback.handle_sitback_dock_full
+        orig_every = sitback.AUTO_ENABLE_EVERY
+        try:
+            actions.bridge_enabled = lambda config: True
+            sitback._read_state = fake_read
+            sitback.time.sleep = lambda s: None
+            sitback.AUTO_ENABLE_EVERY = 0
+            sitback.handle_sitback_dock_full = lambda *a, **k: False
+            actions.set_mod_flags = lambda *a, **k: flags.append(k) or {}
+            self.assertEqual(sitback.wait_leftover_autofight(object(), Dev()), 'ended')
+            self.assertTrue(flags)
+            self.assertTrue(flags[0].get('force_auto_fight_without_loop'))
+        finally:
+            actions.bridge_enabled = orig_en
+            sitback._read_state = orig_read
+            sitback.time.sleep = orig_sleep
+            actions.set_mod_flags = orig_flags
+            sitback.handle_sitback_dock_full = orig_dock
+            sitback.AUTO_ENABLE_EVERY = orig_every
 
     def test_dock_full_runs_retirement(self):
         from module.alas_bridge import actions, sitback

@@ -263,19 +263,45 @@ def battles_for_emotion(ch: Optional[dict], flags: Optional[dict] = None) -> int
 
 
 def watch_on_map_ui(state: Optional[dict]) -> bool:
-    """True when the client is actually on the sortie UI (not Home with an active chapter)."""
+    """True when the client is actually on the sortie UI (not Home with an active chapter).
+
+    Attack hub (`level.entrance`) and LEVEL chapter list (`in_map` false) are
+    not the map. Stale BATTLE_FIGHT/REPORT off the battle scene is not either.
+    """
     if not isinstance(state, dict):
         return False
     scene = str(state.get('scene_key') or '')
     if scene in COMBAT_SCENE_KEYS:
         return True
+    if scene == 'MAINUI':
+        return False
     level = state.get('level') if isinstance(state.get('level'), dict) else {}
+    # Stage view showing is the map even if entranceStatus lingered true.
     if level.get('in_map'):
         return True
-    battle = state.get('battle') if isinstance(state.get('battle'), dict) else {}
-    if str(battle.get('state') or '') in BATTLE_BUSY:
-        return True
+    if level.get('entrance') is True:
+        return False
     return False
+
+
+def leftover_off_map_ui(state: Optional[dict]) -> bool:
+    """True when a live chapter is on Home / Attack hub / chapter list.
+
+    AutoFight cannot advance there; leftover wait must `wa_goto` into combat
+    (same as tapping Combat) instead of heartbeat-only sit.
+    """
+    if not isinstance(state, dict):
+        return False
+    if sitback_on_dock_scene(state):
+        return False
+    if not watch_in_sortie(state):
+        return False
+    if watch_on_map_ui(state):
+        return False
+    scene = str(state.get('scene_key') or '')
+    if scene in COMBAT_SCENE_KEYS:
+        return False
+    return True
 
 
 def watch_in_sortie(state: Optional[dict]) -> bool:

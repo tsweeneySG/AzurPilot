@@ -216,6 +216,29 @@ class AutoSearchHandler(EnemySearchingHandler):
         return self.appear(AUTO_SEARCH_MAP_OPTION_ON, offset=self._auto_search_offset) \
                and self.appear(AUTO_SEARCH_MAP_OPTION_ON)
 
+    def _bridge_enable_chapter_autofight(self):
+        """
+        通过 Sweeney 桥重新打开 ChapterProxy AutoFight（含 tryAutoTrigger）。
+
+        Returns:
+            bool: 是否发送了 set_mod_flags。
+        """
+        try:
+            from module.alas_bridge.actions import bridge_enabled, set_mod_flags
+            if not bridge_enabled(self.config):
+                return False
+            set_mod_flags(self.config, force_auto_fight_without_loop=True)
+            return True
+        except Exception:
+            return False
+
+    def _sweeney_bridge_on(self):
+        try:
+            from module.alas_bridge.actions import bridge_enabled
+            return bool(bridge_enabled(self.config))
+        except Exception:
+            return False
+
     def handle_auto_search_map_option(self):
         """
         确保地图中的自动搜索选项已开启。
@@ -231,6 +254,9 @@ class AutoSearchHandler(EnemySearchingHandler):
             pass
         if self.appear(AUTO_SEARCH_MAP_OPTION_OFF, offset=self._auto_search_offset) \
                 and self.appear_then_click(AUTO_SEARCH_MAP_OPTION_OFF, interval=2):
+            # Dock-full / retire clears ChapterProxy auto; the UI click alone
+            # does not call tryAutoTrigger.
+            self._bridge_enable_chapter_autofight()
             return True
 
         return False

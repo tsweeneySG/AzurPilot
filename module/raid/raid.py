@@ -398,10 +398,17 @@ class Raid(MapOperation, RaidCombat, CampaignEvent):
         """
         entrance = raid_entrance(raid=raid, mode=mode)
         while 1:
+            # 入场点击必须对着当前画面。复用突袭页缓存会把 Hard
+            # 点到出击菜单右侧空白（日志仍显示 @ BIGSHOT_RAID_HARD）。
             if skip_first_screenshot:
                 skip_first_screenshot = False
-            else:
-                self.device.screenshot()
+            self.device.screenshot()
+
+            if not self.is_raid_rpg() and self.ui_page_appear(page_campaign_menu, offset=(30, 30)):
+                logger.info('突袭入场: 仍在出击菜单，先进入突袭页面')
+                self.ui_current = page_campaign_menu
+                self.ui_goto(page_raid)
+                continue
 
             if self.appear(entrance, offset=(10, 10), interval=5):
                 # 入口出现时检查 PT 积分限制

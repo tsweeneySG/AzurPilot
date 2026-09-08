@@ -6,6 +6,8 @@ from typing import Optional
 
 from module.logger import logger
 from module.war_archives_catchup.policy import (
+    COMBAT_SCENE_KEYS,
+    leftover_off_map_ui,
     sitback_on_dock_scene,
     watch_in_sortie,
     watch_on_map_ui,
@@ -15,9 +17,52 @@ SKIP_TASKS = ('Restart', 'WarArchivesCatchup')
 WAIT_TIMEOUT = 3600
 RESUME_TRIES = 36
 RESUME_SLEEP = 1.5
+RESUME_RETRY_EVERY = 8.0
+AUTO_ENABLE_EVERY = 8.0
 LOG_EVERY = 30.0
 DOCK_TICK_SLEEP = 0.4
 DOCK_PEEK_SECONDS = 8.0
+FIGHTING_BATTLE = ('BATTLE_FIGHT', 'BATTLE_OPENING')
+BATTLE_CLICK_SLEEP = 0.5
+
+
+def _chapter_dict(state: Optional[dict]) -> dict:
+    if not isinstance(state, dict):
+        return {}
+    chapter = state.get('chapter')
+    return chapter if isinstance(chapter, dict) else {}
+
+
+def _battle_fighting(state: Optional[dict]) -> bool:
+    """True while the client is in opening/fight, not the victory overlay."""
+    if not isinstance(state, dict):
+        return False
+    if str(state.get('scene_key') or '') not in ('BATTLE', 'COMBATLOAD'):
+        return False
+    battle = state.get('battle') if isinstance(state.get('battle'), dict) else {}
+    return str(battle.get('state') or '') in FIGHTING_BATTLE
+
+
+def _auto_fight_on(state: Optional[dict]) -> bool:
+    return bool(_chapter_dict(state).get('auto_fight'))
+
+
+def _need_battle_click(state: Optional[dict]) -> bool:
+    """
+    Victory / Touch-to-continue while AutoFight is not advancing the overlay.
+
+    Raid and exercise have no ChapterProxy, so auto_fight is missing. Sitting
+    heartbeat-only then never taps the results screen.
+    """
+    if not isinstance(state, dict):
+        return False
+    if str(state.get('scene_key') or '') != 'BATTLE':
+        return False
+    if _battle_fighting(state):
+        return False
+    if _auto_fight_on(state):
+        return False
+    return True
 
 
 def _retire_handler(config, device, handler=None):
@@ -27,6 +72,46 @@ def _retire_handler(config, device, handler=None):
         return None
     from module.retire.retirement import Retirement
     return Retirement(config=config, device=device)
+
+
+def _combat_handler(config, device, handler=None):
+    if handler is not None and hasattr(handler, 'handle_battle_status'):
+        return handler
+    if config is None or device is None:
+        return None
+    from module.combat.combat import Combat
+    return Combat(config=config, device=device)
+
+
+def handle_sitback_battle_status(config, device, handler=None, state=None) -> bool:
+    """
+    Click victory / drops / exp when leftover wait cannot rely on AutoFight.
+
+    One tick only. Caller keeps sitting until the scene leaves BATTLE.
+
+    Returns:
+        True if a click ran.
+    """
+    if not _need_battle_click(state):
+        return False
+    combat = _combat_handler(config, device, handler)
+    if combat is None or device is None:
+        return False
+    device.screenshot()
+    try:
+        device.stuck_record_clear()
+    except Exception:
+        pass
+    if combat.handle_battle_status():
+        logger.info('Sit-back battle status click')
+        return True
+    if hasattr(combat, 'handle_get_items') and combat.handle_get_items():
+        logger.info('Sit-back get-items click')
+        return True
+    if hasattr(combat, 'handle_exp_info') and combat.handle_exp_info():
+        logger.info('Sit-back exp-info click')
+        return True
+    return False
 
 
 def handle_sitback_dock_full(
@@ -150,36 +235,56 @@ def _chapter_id(state: Optional[dict]) -> Optional[int]:
     return cid if cid > 0 else None
 
 
+def leftover_needs_enable_auto(state: Optional[dict]) -> bool:
+    """True on the live map with ChapterProxy auto off (dock-full / toggle)."""
+    if not isinstance(state, dict):
+        return False
+    if leftover_off_map_ui(state) or sitback_on_dock_scene(state):
+        return False
+    if str(state.get('scene_key') or '') in COMBAT_SCENE_KEYS:
+        return False
+    if not watch_on_map_ui(state):
+        return False
+    if _auto_fight_on(state):
+        return False
+    if not _chapter_dict(state).get('active') and not _chapter_id(state):
+        return False
+    return True
+
+
+def _enable_leftover_autofight(config) -> None:
+    from module.alas_bridge.actions import set_mod_flags
+
+    logger.info('Leftover AutoFight auto is off on map, enabling')
+    set_mod_flags(config, force_auto_fight_without_loop=True)
+
+
 def _resume_active_chapter(config, chapter_id: int) -> bool:
     from module.alas_bridge.actions import wa_goto
 
     for attempt in range(RESUME_TRIES):
         result = wa_goto(config, chapter_id=chapter_id)
-        if isinstance(result, dict) and (
-            result.get('already_in_map')
-            or result.get('pending_battle')
-            or result.get('info_showing')
-        ):
-            state = _read_state(config, max_age=8.0)
-            if result.get('pending_battle') or watch_on_map_ui(state):
-                logger.info(
-                    f'Leftover AutoFight resumed chapter={chapter_id} try={attempt + 1}'
-                )
-                return True
-            if result.get('resume_active'):
-                time.sleep(RESUME_SLEEP)
-                continue
-            if result.get('already_in_map') and not watch_on_map_ui(state):
-                logger.info(
-                    f'Leftover AutoFight already_in_map but scene='
-                    f'{None if not isinstance(state, dict) else state.get("scene_key")}, retry'
-                )
-                time.sleep(RESUME_SLEEP)
-                continue
-            if result.get('info_showing') and not watch_on_map_ui(state):
-                time.sleep(RESUME_SLEEP)
-                continue
+        state = _read_state(config, max_age=8.0)
+        if isinstance(result, dict) and result.get('pending_battle'):
+            logger.info(
+                f'Leftover AutoFight resumed chapter={chapter_id} try={attempt + 1} (battle)'
+            )
             return True
+        if watch_on_map_ui(state):
+            logger.info(
+                f'Leftover AutoFight resumed chapter={chapter_id} try={attempt + 1}'
+            )
+            return True
+        if attempt == 0 or attempt % 5 == 4:
+            scene = None if not isinstance(state, dict) else state.get('scene_key')
+            page = None if not isinstance(state, dict) else state.get('page')
+            flags = []
+            if isinstance(result, dict):
+                flags = sorted(k for k, v in result.items() if v)
+            logger.info(
+                f'Leftover AutoFight resume pending chapter={chapter_id} '
+                f'try={attempt + 1} scene={scene} page={page} wa_goto={flags}'
+            )
         time.sleep(RESUME_SLEEP)
     return False
 
@@ -188,10 +293,15 @@ def wait_leftover_autofight(config, device, timeout: float = WAIT_TIMEOUT, handl
     """
     Sit on heartbeat until ChapterProxy is idle.
 
-    If the chapter is still active on MAINUI (client restart), resume via
-    wa_goto / GO_SCENE LEVEL the same way tapping Combat would. While sitting,
-    dock-full Sort/Expand/Enhance is handled (enhance then retire), then AutoFight
-    can continue.
+    If the chapter is still active on MAINUI or the Attack/chapter list (client
+    restart, or leftover wait bounced to a menu), resume via wa_goto /
+    GO_SCENE LEVEL the same way tapping Combat would. Heartbeat-only sit is
+    only for the live map or combat flow with AutoFight on. If AutoFight was
+    toggled off (dock full, retire, map option), leftover wait re-enables it
+    via set_mod_flags / ApplyChapterAutoFightFlag. While sitting, dock-full
+    Sort/Expand/Enhance is handled (enhance then retire), then AutoFight
+    can continue. Victory overlays with AutoFight off (or no chapter, e.g. raid)
+    are clicked through instead of heartbeat-only sit.
 
     Returns:
         idle: no live chapter (or bridge off)
@@ -209,22 +319,25 @@ def wait_leftover_autofight(config, device, timeout: float = WAIT_TIMEOUT, handl
 
     chapter_id = _chapter_id(state)
     scene = str((state or {}).get('scene_key') or '') if isinstance(state, dict) else ''
+    chapter = _chapter_dict(state)
+    battle = state.get('battle') if isinstance(state, dict) and isinstance(state.get('battle'), dict) else {}
     logger.info(
         f'Leftover AutoFight detected chapter={chapter_id} scene={scene} '
-        f'on_map={watch_on_map_ui(state)}'
+        f'auto={chapter.get("auto_fight")} battle={battle.get("state")} '
+        f'on_map={watch_on_map_ui(state)} click={_need_battle_click(state)}'
     )
 
     if sitback_on_dock_scene(state):
         logger.info('Leftover AutoFight on dock, retire before resume')
-    elif chapter_id and not watch_on_map_ui(state) and scene not in (
-        'BATTLE', 'COMBATLOAD', 'TRANSITION', 'DOCKYARD',
-    ):
+    elif leftover_off_map_ui(state) and chapter_id:
         if not _resume_active_chapter(config, chapter_id):
             logger.warning('Leftover AutoFight resume via wa_goto did not reach map UI')
 
     started = time.time()
     last_log = started
     last_dock_peek = 0.0
+    last_resume = 0.0
+    last_auto_enable = 0.0
     logged_sit = False
     retire = handler
     while time.time() - started < timeout:
@@ -251,20 +364,53 @@ def wait_leftover_autofight(config, device, timeout: float = WAIT_TIMEOUT, handl
         if not watch_in_sortie(state):
             logger.info('Leftover AutoFight ended')
             return 'ended'
+        if leftover_off_map_ui(state):
+            cid = _chapter_id(state) or chapter_id
+            if cid and (now - last_resume) >= RESUME_RETRY_EVERY:
+                last_resume = now
+                level = state.get('level') if isinstance(state.get('level'), dict) else {}
+                logger.info(
+                    f'Leftover AutoFight off map scene={state.get("scene_key")} '
+                    f'page={state.get("page")} entrance={level.get("entrance")} '
+                    f'in_map={level.get("in_map")} — resume into combat'
+                )
+                if _resume_active_chapter(config, cid):
+                    logged_sit = False
+            time.sleep(1)
+            continue
+        if leftover_needs_enable_auto(state):
+            if (now - last_auto_enable) >= AUTO_ENABLE_EVERY:
+                last_auto_enable = now
+                _enable_leftover_autofight(config)
+                logged_sit = False
+            time.sleep(1)
+            continue
+        if handle_sitback_battle_status(
+            config, device, handler=handler, state=state
+        ):
+            time.sleep(DOCK_TICK_SLEEP)
+            continue
+        if _need_battle_click(state):
+            # AutoFight is not advancing this overlay; keep screenshot-clicking.
+            time.sleep(BATTLE_CLICK_SLEEP)
+            continue
         now = time.time()
         if not logged_sit:
             logger.info('Leftover AutoFight sit-back (heartbeat only, no screenshot)')
             logged_sit = True
         if now - last_log >= LOG_EVERY:
             last_log = now
-            chapter = (state or {}).get('chapter') if isinstance(state, dict) else {}
+            chapter = _chapter_dict(state)
+            battle = state.get('battle') if isinstance(state.get('battle'), dict) else {}
             logger.attr(
                 'LeftoverAutoFight',
                 f'{int(now - started)}s chapter={_chapter_id(state)} '
-                f'auto={None if not isinstance(chapter, dict) else chapter.get("auto_fight")} '
-                f'scene={None if not isinstance(state, dict) else state.get("scene_key")}',
+                f'auto={chapter.get("auto_fight")} '
+                f'scene={state.get("scene_key")} '
+                f'battle={battle.get("state")}',
             )
         time.sleep(1)
 
     logger.warning('Leftover AutoFight wait timeout')
     return 'timeout'
+

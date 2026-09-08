@@ -81,11 +81,14 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             if self.handle_auto_search_map_option():
                 self.interval_reset(AUTO_SEARCH_MAP_OPTION_ON)
                 continue
-            # To handle a bug in Azur Lane game client.
-            # Auto search icon shows it's running but it's doing nothing
-            # when Alas exited from retirement and turned it on immediately.
-            # Monkey clicker, disable auto search every 3s, beginning not included
-            if self.appear(AUTO_SEARCH_MAP_OPTION_ON, offset=self._auto_search_offset, interval=3) \
+            # Vanilla: Auto-Search icon can show ON but do nothing after retire.
+            # Monkey-clicking ON toggles AutoFight off under Sweeney, so re-trigger
+            # via set_mod_flags instead of clicking the button.
+            if self._sweeney_bridge_on():
+                if self.appear(AUTO_SEARCH_MAP_OPTION_ON, offset=self._auto_search_offset, interval=8):
+                    self._bridge_enable_chapter_autofight()
+                    continue
+            elif self.appear(AUTO_SEARCH_MAP_OPTION_ON, offset=self._auto_search_offset, interval=3) \
                     and self.appear_then_click(AUTO_SEARCH_MAP_OPTION_ON):
                 continue
             if self.handle_combat_low_emotion():

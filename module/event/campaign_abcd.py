@@ -96,5 +96,5 @@ class CampaignABCD(EventBase):
             if self.config.task_switched():
                 self.config.task_stop()
 
-        # 所有关卡执行完毕，延迟到次日服务器刷新
-        self.config.task_delay(server_update=True)
+        # 前半段半延迟补跑，避免漏打活动日常后等到次日
+        self.config.task_delay(server_update=True, half=True)

@@ -257,11 +257,20 @@ class InfoHandler(ModuleBase):
             if self.handle_popup_cancel('IGNORE_LOW_EMOTION'):
                 logger.warning('[心情-保底] 计算模式下出现红脸弹窗，'
                                '可能是ALAS计算错误或用户手动操作')
+                try:
+                    self.device.screenshot()
+                except Exception:
+                    pass
+                if self._combat_already_started():
+                    logger.warning('[心情-保底] 出击已开始，继续本场战斗')
+                    return True
                 logger.hr('心情异常保底')
                 # 退出关卡（弹窗已取消，阻止战斗）
                 # 捕获 withdraw() 抛出的 CampaignEnd，确保后续心情清零和延时被执行
                 try:
-                    self._emotion_emergency_exit()
+                    if self._emotion_emergency_exit():
+                        logger.warning('[心情-保底] 退出途中战斗已开始，继续本场战斗')
+                        return True
                 except CampaignEnd:
                     logger.info('[心情-保底] 撤退完成，已回到关卡页面')
                 # 心情清零，强制下次任务等待恢复
@@ -279,6 +288,29 @@ class InfoHandler(ModuleBase):
             self.interval_reset(AUTO_SEARCH_MAP_OPTION_OFF)
         return result
 
+    def _combat_already_started(self):
+        """
+        True when GO already loaded combat (PAUSE, BATTLE scene, or report).
+
+        红脸弹窗若在点击出击之后才出现，取消弹窗无法撤回已开始的战斗。
+        """
+        if hasattr(self, 'is_combat_executing'):
+            try:
+                if self.is_combat_executing():
+                    return True
+            except Exception:
+                pass
+        try:
+            from module.alas_bridge.game_state import GameState
+            from module.war_archives_catchup.policy import COMBAT_SCENE_KEYS
+            state = GameState.from_config(self.config).read(max_age=8.0)
+        except Exception:
+            return False
+        if not isinstance(state, dict):
+            return False
+        scene = str(state.get('scene_key') or '')
+        return scene in COMBAT_SCENE_KEYS
+
     def _emotion_emergency_exit(self):
         """
         红脸弹窗保底退出关卡。
@@ -287,9 +319,13 @@ class InfoHandler(ModuleBase):
         直到回到关卡选择页面或超时。用于 calculate 模式下出现红脸弹窗的
         异常保底流程，确保游戏回到关卡选择页面后再延时任务。
 
+        Returns:
+            True: 退出途中发现战斗已开始，调用方应继续本场战斗。
+            False: 已回到关卡选择或超时。
+
         Pages:
             in: 红脸弹窗已取消，可能在战斗准备/地图/自动搜索菜单
-            out: is_in_stage() 或超时
+            out: is_in_stage() 或超时，或战斗已开始
         """
         timeout = Timer(30, count=60).start()
         while 1:
@@ -297,7 +333,11 @@ class InfoHandler(ModuleBase):
 
             if timeout.reached():
                 logger.warning('[心情-保底] 退出关卡超时')
-                break
+                return False
+
+            if self._combat_already_started():
+                logger.warning('[心情-保底] 出击已开始，继续本场战斗')
+                return True
 
             if self.handle_popup_cancel('IGNORE_LOW_EMOTION'):
                 continue
@@ -312,11 +352,12 @@ class InfoHandler(ModuleBase):
                 continue
             # 已回到关卡页面
             if self.is_in_stage():
-                break
+                return False
             # 在地图中：撤退（withdraw 在 MapOperation 中，部分子类可能没有）
             if self.is_in_map() and hasattr(self, 'withdraw'):
                 self.withdraw()
-                break
+                return False
+        return False
 
     def handle_use_data_key(self):
         if not self.config.USE_DATA_KEY:

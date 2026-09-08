@@ -75,6 +75,62 @@ class UI(InfoHandler):
                 return True
         return self.appear(page.check_button, offset=offset, interval=interval)
 
+    def _ui_goto_needs_fresh_frame(self, destination):
+        """导航离开当前页时不能复用截图。
+
+        Sweeney 心跳可以先于像素更新（例如 BACK_ARROW 后已在出击菜单，
+        缓存仍是突袭页）。复用该帧会让 RAID_CHECK 立刻命中，从而跳过
+        CAMPAIGN_MENU_GOTO_EVENT，随后把 Hard 点到出击菜单空白处。
+        """
+        current = getattr(self, 'ui_current', None)
+        if current == destination:
+            return False
+        if {current, destination} == {page_main, page_main_white}:
+            return False
+        return True
+
+    def _ui_goto_blocked_by_source(self, destination, offset=(30, 30)):
+        """源页面检测仍命中时，不把目标页的误匹配当成已到达。"""
+        current = getattr(self, 'ui_current', None)
+        if current is None or current == destination:
+            return False
+        if {current, destination} == {page_main, page_main_white}:
+            return False
+        check = current.check_button
+        if check is None:
+            return False
+        return self.appear(check, offset=offset, interval=0)
+
+    def _ui_goto_blocked_by_bridge(self, destination, bridged):
+        """像素已命中目标页，但 Sweeney 心跳仍命名为另一页时视为未到达。
+
+        出击菜单（entrance）与主线章节列表共用 Attack/Chapter 顶栏，
+        CAMPAIGN_CHECK 会在菜单上误匹配。此时 HARD 开关不在屏幕上，
+        SWITCH_1_HARD 会点到作战档案。
+        """
+        if bridged is None or bridged == destination:
+            return False
+        if {bridged, destination} == {page_main, page_main_white}:
+            return False
+        return True
+
+    def _ui_click_toward_parent(self, page):
+        """沿 A* parent 点击一跳。受 interval 限制，点击则返回 True。"""
+        if page is None or page.parent is None:
+            return False
+        button = page.links.get(page.parent)
+        if button is None:
+            return False
+        timer = self.get_interval_timer(button, interval=5, renew=True)
+        if not timer.reached():
+            return False
+        logger.info(f'[UI] 页面切换: {page} -> {page.parent} (Sweeney bridge)')
+        self.ui_current = page
+        self.device.click(button)
+        timer.reset()
+        self.ui_button_interval_reset(button)
+        return True
+
     def _sweeney_bridge_enabled(self):
         return bool(getattr(self.config, 'Optimization_SweeneyBridge', False))
 
@@ -365,21 +421,31 @@ class UI(InfoHandler):
             GOTO_MAIN.clear_offset()
             if skip_first_screenshot:
                 skip_first_screenshot = False
+                if self._ui_goto_needs_fresh_frame(destination):
+                    self.device.screenshot()
             else:
                 self.device.screenshot()
 
-            # 到达目标页面
-            if self.ui_page_appear(page=destination, offset=offset):
-                logger.info(f'[UI] 到达页面: {destination}')
-                break
+            bridged = None
             if self._sweeney_bridge_enabled():
                 bridged = self._try_sweeney_current_page(verbose=False)
                 if bridged is not None:
                     bridged = self._reject_stale_bridge_in_map(bridged)
-                if bridged is not None and bridged == destination:
-                    logger.info(f'[UI] 到达页面: {destination} (Sweeney bridge)')
-                    self.ui_current = bridged
+
+            # 到达目标页面
+            if self.ui_page_appear(page=destination, offset=offset):
+                if self._ui_goto_blocked_by_source(destination, offset=offset):
+                    logger.info(f'[UI] 忽略 {destination} 检测 (仍在 {self.ui_current})')
+                elif self._ui_goto_blocked_by_bridge(destination, bridged):
+                    logger.info(f'[UI] 忽略 {destination} 检测 (Sweeney bridge 仍为 {bridged})')
+                else:
+                    logger.info(f'[UI] 到达页面: {destination}')
+                    self.ui_current = destination
                     break
+            if bridged is not None and bridged == destination:
+                logger.info(f'[UI] 到达页面: {destination} (Sweeney bridge)')
+                self.ui_current = bridged
+                break
             # 主界面新旧主题互为等价：目标为任一主界面时，
             # 检测到另一主题也视为到达
             if destination in (page_main, page_main_white) and self.is_in_main():
@@ -402,8 +468,14 @@ class UI(InfoHandler):
                 nav_timeout.reset()
                 continue
 
-            # 处理额外弹窗
+            # 处理额外弹窗（先关自律寻敌菜单，再点出击入口）
             if self.ui_additional(get_ship=get_ship):
+                nav_timeout.reset()
+                continue
+
+            # 出击菜单新布局不再显示 MAIN，CAMPAIGN_MENU_CHECK 会漏检。
+            # 心跳仍是 page_campaign_menu 时，按链接点进章节列表。
+            if self._ui_click_toward_parent(bridged):
                 nav_timeout.reset()
                 continue
 

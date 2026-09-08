@@ -48,16 +48,16 @@ class CampaignSP(EventBase):
             # 每日 SP 已完成或无法进入，延迟到次日
             logger.info('每日SP已完成或无法进入')
             logger.info('延迟任务到明天')
-            self.config.task_delay(server_update=True)
+            self.config.task_delay(server_update=True, half=True)
             return
 
         # 根据执行结果决定后续调度
         if self.run_count > 0:
             # SP 执行成功，延迟到次日服务器刷新
             logger.info(f'已完成, run_count={self.run_count}')
-            self.config.task_delay(server_update=True)
+            self.config.task_delay(server_update=True, half=True)
         else:
-            # SP 未成功执行（可能今日已完成），延迟到次日而非停止
+            # SP 未成功执行（可能今日已完成），半延迟补跑一次
             logger.info('执行失败，可能今天已完成')
             logger.info('延迟任务到明天')
-            self.config.task_delay(server_update=True)
+            self.config.task_delay(server_update=True, half=True)
