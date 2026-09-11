@@ -69,10 +69,68 @@ def hard_stage_family_match(want, got) -> bool:
     return hard_roster_family(want) == hard_roster_family(got)
 
 
+def is_activity_hard_stage_name(name) -> bool:
+    """Event C/D/HT chapters use CustomFleet elite rosters, not dock 1–6."""
+    return hard_roster_family(name) in ('c', 'd', 'ht')
+
+
+def event_stage_letter(name) -> str:
+    """A/B/C/D/HT family letter for live-event stage names. Empty if not those."""
+    n = normalize_chapter_name(name)
+    if n.startswith('ht'):
+        return 'ht'
+    if n[:1] in 'abcd' and (len(n) == 1 or n[1:2].isdigit() or n[1:2] == 's'):
+        return n[:1]
+    return ''
+
+
+def chapter_track_expected_stage(config) -> str:
+    """Stage the live map-prep modal should match.
+
+    Hard binds ``Hard_HardStage``, not ``Campaign_Name`` (that stays the Main
+    farm). A leftover ``SweeneySortieChapterName`` from catchup must not win
+    during Hard or the mod returns chapter_mismatch and sorties abort.
+    """
+    stage = _campaign_stage_name(config).strip()
+    if _task_command(config).lower() == 'hard':
+        return stage
+    overlay = str(getattr(config, 'SweeneySortieChapterName', None) or '').strip()
+    return overlay or stage
+
+
+def chapter_track_matches_stage(config, result: Optional[dict]) -> bool:
+    """False when TRACKING would sortie A/B SelectFleet for a C/D request (or the reverse)."""
+    if not isinstance(result, dict):
+        return False
+    letter = event_stage_letter(chapter_track_expected_stage(config))
+    if not letter:
+        return True
+    got_name = result.get('chapter_name')
+    if got_name:
+        got_letter = event_stage_letter(got_name)
+        if got_letter and got_letter != letter:
+            return False
+        if not got_letter and normalize_chapter_name(got_name) != normalize_chapter_name(
+                chapter_track_expected_stage(config)):
+            return False
+    custom = result.get('custom_fleet')
+    if letter in ('c', 'd', 'ht') and custom is False:
+        return False
+    if letter in ('a', 'b') and custom is True:
+        return False
+    return True
+
+
 def sortie_args_from_config(config) -> dict:
     """Content hint so the mod can resolve elite/raid/boss-rush rosters from the main menu."""
     task_l = _task_command(config).lower()
     campaign_mode = str(getattr(config, 'Campaign_Mode', 'normal') or 'normal').lower()
+    stage_name = _campaign_stage_name(config)
+    activity = _is_activity_campaign(config)
+    # Event GUI Mode is always `normal` (override.yaml). Auto-Search continue
+    # also skips the campaign-UI override to hard. Key C/D/HT off the stage
+    # name so live emotion is the elite roster, not dock Fleet 5/6.
+    event_elite = activity and is_activity_hard_stage_name(stage_name)
 
     args = {'source': 'regular'}
     chapter_id = getattr(config, 'SweeneySortieChapterId', None)
@@ -110,10 +168,10 @@ def sortie_args_from_config(config) -> dict:
     if task_l.startswith('coalition'):
         args['source'] = 'boss_rush'
         return args
-    if task_l == 'hard' or campaign_mode == 'hard':
+    if task_l == 'hard' or campaign_mode == 'hard' or event_elite:
         args['source'] = 'hard'
-        args['chapter_name'] = _campaign_stage_name(config)
-        args['activity'] = _is_activity_campaign(config)
+        args['chapter_name'] = stage_name
+        args['activity'] = activity
         # Event C/D (and HT) use that event's two elite fleets, not Hard_HardFleet.
         if not args['activity']:
             args['hard_index'] = int(getattr(config, 'Hard_HardFleet', 1) or 1)

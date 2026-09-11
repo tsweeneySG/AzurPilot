@@ -234,6 +234,7 @@ uv run -m dev_tools.button_extract
 # 开发工具
 uv run dev_tools/map_extractor.py       # 地图数据提取
 uv run dev_tools/emulator_test.py       # 模拟器连接测试
+uv run python dev_tools/scan_error_logs.py   # 当日日志聚类（见 LOG-REVIEW.md）
 ```
 
 ---
@@ -245,6 +246,7 @@ uv run dev_tools/emulator_test.py       # 模拟器连接测试
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 项目整体架构 |
 | [CONVENTIONS.md](CONVENTIONS.md) | 编码规范 |
 | [ISSUES.md](ISSUES.md) | 问题清单 |
+| [LOG-REVIEW.md](LOG-REVIEW.md) | 当日日志聚类与修复 TODO |
 | [MODULE-MAP.md](MODULE-MAP.md) | 模块映射表 |
 | [BASE.md](BASE.md) | 基础工具类分析 |
 | [CONFIG.md](CONFIG.md) | 配置系统分析 |

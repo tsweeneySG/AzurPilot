@@ -200,23 +200,25 @@ class Combat(Combat_, MapEventHandler):
         if self.is_combat_executing():
             return False
         sleep = self._get_exp_info_sleep()
-        if self.appear_then_click(EXP_INFO_S):
+        # 无 interval 会在结算页连点 EXP_INFO_S，再和 GET_ITEMS 的
+        # CLICK_SAFE_AREA 对打触发 GameTooManyClickError（敏感任务停机）。
+        if self.appear_then_click(EXP_INFO_S, interval=2):
             self._clear_battle_status_s_timer()
             self.device.sleep(sleep)
             return True
-        if self.appear_then_click(EXP_INFO_A):
+        if self.appear_then_click(EXP_INFO_A, interval=2):
             self._clear_battle_status_s_timer()
             self.device.sleep(sleep)
             return True
-        if self.appear_then_click(EXP_INFO_B):
+        if self.appear_then_click(EXP_INFO_B, interval=2):
             self._clear_battle_status_s_timer()
             self.device.sleep(sleep)
             return True
-        if self.appear_then_click(EXP_INFO_C):
+        if self.appear_then_click(EXP_INFO_C, interval=2):
             self._clear_battle_status_s_timer()
             self.device.sleep(sleep)
             return True
-        if self.appear_then_click(EXP_INFO_D):
+        if self.appear_then_click(EXP_INFO_D, interval=2):
             self._clear_battle_status_s_timer()
             self.device.sleep(sleep)
             return True
@@ -462,7 +464,7 @@ class Combat(Combat_, MapEventHandler):
         """
         sleep = self._get_exp_info_sleep()
         for exp_info_button in [EXP_INFO_S, EXP_INFO_A, EXP_INFO_B, EXP_INFO_C, EXP_INFO_D]:
-            if self.appear_then_click(exp_info_button):
+            if self.appear_then_click(exp_info_button, interval=2):
                 self._clear_battle_status_s_timer()
                 self.device.sleep(sleep)
                 return True

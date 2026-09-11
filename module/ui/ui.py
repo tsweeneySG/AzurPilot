@@ -41,9 +41,10 @@ from module.meowfficer.assets import MEOWFFICER_BUY
 from module.ocr.ocr import Ocr
 from module.os_handler.assets import (AUTO_SEARCH_REWARD, EXCHANGE_CHECK, RESET_FLEET_PREPARATION, RESET_TICKET_POPUP)
 from module.raid.assets import *
+from module.shop.assets import NAV_GENERAL, SHOP_REFRESH_CHECK, TAB_GENERAL, TAB_MERIT
 from module.ui.assets import *
 from module.ui.page import (Page, page_academy, page_campaign, page_campaign_menu,
-                            page_event, page_in_map, page_main, page_main_white, page_sp)
+                            page_event, page_in_map, page_main, page_main_white, page_munitions, page_sp)
 from module.ui_white.assets import *
 
 
@@ -58,6 +59,24 @@ class UI(InfoHandler):
     """
     ui_current: Page
 
+    def _is_munitions_page(self, offset=(20, 20), interval=0):
+        """检测军需 / NewShop 页面。
+
+        左侧「購買部」模板常在新商店 UI 上失效，刷新图标加标签/导航作为回退。
+        """
+        if self.appear(MUNITIONS_CHECK, offset=offset, interval=interval):
+            return True
+        if self.appear(SHOP_REFRESH_CHECK, offset=(30, 30), interval=interval):
+            if self.appear(TAB_GENERAL, offset=offset, interval=0):
+                return True
+            if self.appear(TAB_MERIT, offset=offset, interval=0):
+                return True
+            if self.appear(NAV_GENERAL, offset=offset, interval=0):
+                return True
+            if self.appear(SHOP_BACK_ARROW, offset=offset, interval=0):
+                return True
+        return False
+
     def ui_page_appear(self, page, offset=(30, 30), interval=0):
         """
         检测指定页面是否出现在屏幕上。
@@ -69,6 +88,8 @@ class UI(InfoHandler):
         """
         if page == page_main:
             return self.appear(page_main.check_button, offset=(5, 5), interval=interval)
+        if page == page_munitions:
+            return self._is_munitions_page(offset=offset, interval=interval)
         # 英文本地化导致学院标题字体宽度变化，需要额外检查其他按钮
         if self.config.SERVER == 'en' and page == page_academy:
             if self.appear(ACADEMY_GOTO_MUNITIONS, offset=offset, interval=interval):
@@ -111,6 +132,22 @@ class UI(InfoHandler):
         if bridged is None or bridged == destination:
             return False
         if {bridged, destination} == {page_main, page_main_white}:
+            return False
+        return True
+
+    def _ui_goto_wait_on_stale_bridge(self, destination, bridged):
+        """像素已命中目标、心跳仍滞后时，是否空等而不点 A*。
+
+        作战档案检测较准，空等可避免 GOTO_WAR_ARCHIVES 与 BACK_ARROW 对打。
+        出击菜单与章节列表共用 CAMPAIGN_CHECK，空等会点不到
+        CAMPAIGN_MENU_GOTO_CAMPAIGN，随后误点 SWITCH_1_HARD。
+
+        Returns:
+            bool: True 表示 continue 等待心跳；False 表示应继续往下点击。
+        """
+        if not self._ui_goto_blocked_by_bridge(destination, bridged):
+            return False
+        if destination == page_campaign and bridged == page_campaign_menu:
             return False
         return True
 
@@ -437,7 +474,11 @@ class UI(InfoHandler):
                 if self._ui_goto_blocked_by_source(destination, offset=offset):
                     logger.info(f'[UI] 忽略 {destination} 检测 (仍在 {self.ui_current})')
                 elif self._ui_goto_blocked_by_bridge(destination, bridged):
+                    # 像素已到目标、心跳仍滞后。作战档案应空等；
+                    # 出击菜单误匹配 CAMPAIGN_CHECK 时必须点进章节列表。
                     logger.info(f'[UI] 忽略 {destination} 检测 (Sweeney bridge 仍为 {bridged})')
+                    if self._ui_goto_wait_on_stale_bridge(destination, bridged):
+                        continue
                 else:
                     logger.info(f'[UI] 到达页面: {destination}')
                     self.ui_current = destination

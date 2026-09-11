@@ -280,18 +280,35 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                     if self.is_auto_search_running():
                         logger.info('[地图-操作] 自动搜索运行中出现')
                         break
-                    if hasattr(self, 'is_combat_loading') and self.is_combat_loading():
+                    if self._enter_map_combat_loading_means_entered():
                         logger.warning('[地图-操作] 进入地图时战斗加载画面出现')
                         break
                 else:
-                    if hasattr(self, 'is_combat_loading') and self.is_combat_loading():
-                        logger.warning('[地图-操作] 进入地图时战斗加载画面出现')
+                    if self._enter_map_combat_loading_means_entered():
+                        logger.warning('[地图-操作] 进入地图时战斗已开始')
                         break
+                    if hasattr(self, 'is_combat_loading') and self.is_combat_loading():
+                        # 进图加载条与战斗加载共用模板（常见 2%）。
+                        # 手动图此时结束 enter_map 会让 map_init 在非地图画面上
+                        # 抛 MapDetectionError。
+                        continue
                     if self.handle_in_map_with_enemy_searching():
                         # self.handle_map_after_combat_story()
                         break
 
         return True
+
+    def _enter_map_combat_loading_means_entered(self):
+        """进图加载条会被当成战斗加载。自动搜索可直接开打；手动图只有暂停键出现才算进战。
+
+        Returns:
+            bool: True 表示 enter_map 应结束，交给后续战斗或自动搜索。
+        """
+        if not hasattr(self, 'is_combat_loading') or not self.is_combat_loading():
+            return False
+        if self.map_is_auto_search:
+            return True
+        return hasattr(self, 'is_combat_executing') and self.is_combat_executing()
 
     def enter_map_cancel(self, skip_first_screenshot=True):
         """取消进入地图，从地图准备界面退回关卡选择界面。
@@ -345,7 +362,8 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                 MAP_MODE_SWITCH_NORMAL.clear_offset()
                 self.device.click(MAP_MODE_SWITCH_NORMAL)
                 self.interval_reset(MAP_MODE_SWITCH_HARD)
-            return False
+                return False
+            return self._map_mode_switch_bypass_if_prep_showing()
         elif mode == 'hard':
             if self._is_mod_switch_hard_appear(active=True):
                 logger.attr('地图模式', '困难')
@@ -355,10 +373,24 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                 MAP_MODE_SWITCH_HARD.clear_offset()
                 self.device.click(MAP_MODE_SWITCH_HARD)
                 return False
-            return False
+            return self._map_mode_switch_bypass_if_prep_showing()
         else:
             logger.attr('地图模式', '未知')
             return False
+
+    def _map_mode_switch_bypass_if_prep_showing(self):
+        """2024.07+ 活动把 Normal/Hard 放进 LevelInfoSPView，旧 MAP_MODE_SWITCH_* 对不上。
+
+        不要在活动列表上点主线 SWITCH_1_HARD。准备弹窗已由桥接确认时放行，
+        由 chapter_track 按 chapter_name 切换 SP 孪生关卡后再 TRACKING。
+
+        Returns:
+            bool: 地图准备弹窗已出现则为 True，否则 False。
+        """
+        if self._level_prep_from_bridge():
+            logger.info('[地图-操作] 关内难度模板未匹配，交给 chapter_track 切换 LevelInfoSPView')
+            return True
+        return False
 
     def _is_mod_switch_hard_appear(self, active=True, interval=0):
         """检测困难模式切换按钮是否出现。
@@ -450,6 +482,11 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         if not isinstance(result, dict):
             return False
         logger.info(f'Sweeney chapter_track: {result}')
+        if result.get('reason') == 'chapter_mismatch':
+            logger.warning('Sweeney chapter_track mismatch, falling back to screenshot click')
+            return False
+        if not (result.get('sent') or result.get('already_active') or result.get('opened_fleet')):
+            return False
         if auto_fight:
             self.map_is_auto_search = True
         return True

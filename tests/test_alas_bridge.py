@@ -234,6 +234,16 @@ class TestSortieStatus(unittest.TestCase):
             Fleet_Fleet1 = 6
             Fleet_Fleet2 = 5
 
+        class EventD:
+            # Event GUI Mode is always normal; D still uses CustomFleet.
+            task = type('T', (), {'command': 'Event'})()
+            Campaign_Mode = 'normal'
+            Campaign_Name = 'd2'
+            Campaign_Event = 'event_20260813_cn'
+            Hard_HardFleet = 1
+            Fleet_Fleet1 = 6
+            Fleet_Fleet2 = 5
+
         class EventA:
             task = type('T', (), {'command': 'Event'})()
             Campaign_Mode = 'normal'
@@ -247,9 +257,49 @@ class TestSortieStatus(unittest.TestCase):
         self.assertTrue(c_args['activity'])
         self.assertEqual(c_args['chapter_name'], 'c2')
         self.assertNotIn('hard_index', c_args)
+        d_args = sortie_args_from_config(EventD())
+        self.assertEqual(d_args['source'], 'hard')
+        self.assertTrue(d_args['activity'])
+        self.assertEqual(d_args['chapter_name'], 'd2')
+        self.assertNotIn('hard_index', d_args)
+        self.assertNotIn('fleet_ids', d_args)
         a_args = sortie_args_from_config(EventA())
         self.assertEqual(a_args['source'], 'regular')
         self.assertEqual(a_args['fleet_ids'], [6, 5])
+
+    def test_chapter_track_matches_event_cd_not_select_fleet(self):
+        from module.alas_bridge.sortie_status import chapter_track_matches_stage
+
+        class EventD:
+            Campaign_Name = 'd2'
+
+        class Main:
+            Campaign_Name = '16-4'
+
+        self.assertFalse(chapter_track_matches_stage(
+            EventD(), {'sent': True, 'chapter_id': 2060005, 'custom_fleet': False}))
+        self.assertFalse(chapter_track_matches_stage(
+            EventD(), {'sent': True, 'chapter_name': 'b2', 'custom_fleet': False}))
+        self.assertTrue(chapter_track_matches_stage(
+            EventD(), {'sent': True, 'chapter_name': 'd2', 'custom_fleet': True}))
+        self.assertTrue(chapter_track_matches_stage(Main(), {'sent': True, 'chapter_id': 16004}))
+
+    def test_chapter_track_expected_stage_hard_ignores_main_and_catchup_name(self):
+        from module.alas_bridge.sortie_status import chapter_track_expected_stage
+
+        class HardCfg:
+            task = type('T', (), {'command': 'Hard'})()
+            Hard_HardStage = '14-4'
+            Campaign_Name = '16-4'
+            SweeneySortieChapterName = 'D3'
+
+        class CatchupCfg:
+            task = type('T', (), {'command': 'WarArchivesCatchup'})()
+            Campaign_Name = 'sp1'
+            SweeneySortieChapterName = 'B3'
+
+        self.assertEqual(chapter_track_expected_stage(HardCfg()), '14-4')
+        self.assertEqual(chapter_track_expected_stage(CatchupCfg()), 'B3')
 
     def test_hard_roster_family_and_match(self):
         from module.alas_bridge.sortie_status import (
@@ -721,6 +771,55 @@ class TestBridgeActions(unittest.TestCase):
         self.assertEqual(seen['args']['fleet_ids'], [3, 4])
         self.assertTrue(seen['args']['auto_fight'])
         self.assertTrue(seen['args']['loop'])
+
+    def test_chapter_track_sends_chapter_name_and_rejects_event_b_for_d(self):
+        """Cross-aside B vs D must still mismatch. In-group A/C is switched in Lua."""
+        from module.alas_bridge import actions
+
+        seen = {}
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                seen['name'] = name
+                seen['args'] = args or {}
+                return {
+                    'id': '1',
+                    'ok': True,
+                    'name': name,
+                    'result': {
+                        'sent': True,
+                        'chapter_id': 2060005,
+                        'chapter_name': 'b2',
+                        'custom_fleet': False,
+                    },
+                }
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        class Cfg:
+            Campaign_Name = 'd2'
+            Fleet_Fleet1 = 6
+            Fleet_Fleet2 = 5
+            Submarine_Fleet = 0
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        try:
+            result = actions.chapter_track(Cfg(), auto_fight=True, loop=True)
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = FakeGS
+        self.assertEqual(seen['args']['chapter_name'], 'd2')
+        self.assertEqual(result.get('reason'), 'chapter_mismatch')
+        self.assertFalse(result.get('sent'))
 
     def test_pq_spend_stamina_rejects_incomplete(self):
         from module.alas_bridge import actions

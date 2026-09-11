@@ -9,7 +9,7 @@ from module.logger import logger
 from module.shop.assets import *
 from module.ui.assets import ACADEMY_GOTO_MUNITIONS, SHOP_BACK_ARROW
 from module.ui.navbar import Navbar
-from module.ui.page import page_academy, page_munitions
+from module.ui.page import page_academy, page_munitions, page_shop
 from module.ui.switch import Switch
 from module.ui.ui import UI
 
@@ -148,26 +148,34 @@ class ShopUI(UI):
         导航到 page_munitions（军需商店）。
         此路由保证进入时位于通用商店。
 
+        Sweeney 把 NewShopMainScene 映射为 page_shop，与 page_munitions 是同一界面。
+        学院摄像机可能挡住 ACADEMY_GOTO_MUNITIONS 标签，因此以 ACADEMY_CHECK 为准点击。
+
         Pages:
             in: Any
             out: page_munitions
         """
-        if self.ui_get_current_page() == page_munitions:
-            logger.info(f'[商店-UI] 已在 {page_munitions}')
+        current = self.ui_get_current_page()
+        if current in (page_munitions, page_shop):
+            logger.info(f'[商店-UI] 已在军需商店 ({current})')
+            self.ui_current = page_munitions
             return
 
         self.ui_ensure(page_academy)
 
-        skip_first_screenshot = True
-        while 1:
-            if skip_first_screenshot:
-                skip_first_screenshot = False
-            else:
-                self.device.screenshot()
-
-            if self.appear(page_munitions.check_button, offset=(20, 20)):
+        for _ in self.loop():
+            if self.ui_additional():
+                continue
+            if self.ui_page_appear(page_munitions, offset=(20, 20)):
+                self.ui_current = page_munitions
                 break
-
-            # 使用较大偏移量，因为学院中的摄像机可以移动
-            if self.appear_then_click(ACADEMY_GOTO_MUNITIONS, offset=(200, 200), interval=5):
+            if self._sweeney_bridge_enabled():
+                bp = self._try_sweeney_current_page(verbose=False)
+                if bp in (page_munitions, page_shop):
+                    logger.info('[商店-UI] 经 Sweeney 心跳到达军需商店')
+                    self.ui_current = page_munitions
+                    break
+            if self.ui_page_appear(page_academy, interval=5):
+                logger.info('[商店-UI] 在学院，进入军需商店')
+                self.device.click(ACADEMY_GOTO_MUNITIONS)
                 continue

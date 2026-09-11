@@ -146,6 +146,8 @@ class Camera(MapOperation):
                     and not self.is_in_strategy_mob_move() \
                     and not self.is_in_strategy_air_strike():
                 logger.warning('[地图-摄像机] 待检测图像不在地图中')
+                if self._camera_should_wait_for_map():
+                    return False
                 raise MapDetectionError('Image to detect is not in_map')
             self.view.load(self.device.image)
         except MapDetectionError as e:
@@ -241,6 +243,17 @@ class Camera(MapOperation):
                 raise e
 
         return True
+
+    def _camera_should_wait_for_map(self):
+        """进图/战斗加载时不要立刻 MapDetectionError，留给 Camera.update 重试。
+
+        Returns:
+            bool: True 表示当前不是地图，但应等待而不是报错。
+        """
+        if hasattr(self, 'is_combat_loading') and self.is_combat_loading():
+            logger.warning('[地图-摄像机] 战斗/地图加载中，等待进入地图')
+            return True
+        return False
 
     def _update_view_data(self):
         if self._prev_view is not None and np.linalg.norm(self._prev_swipe) > 0:

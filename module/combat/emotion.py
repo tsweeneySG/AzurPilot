@@ -363,6 +363,18 @@ class Emotion:
             else:
                 fleet.current = min(int(fleet.current), energy)
             applied += 1
+        if applied and isinstance(status, dict):
+            if status.get('source'):
+                logger.attr('Emotion source', status.get('source'))
+            chapter = status.get('chapter_name')
+            map_type = status.get('map_type')
+            matched = status.get('matched')
+            if chapter or map_type or matched is not None:
+                logger.attr(
+                    'Emotion roster',
+                    f'{chapter or "?"} {map_type or ""} '
+                    f'matched={1 if matched else 0} live={"replace" if replace else "floor"}'
+                )
         return applied
 
     def _apply_sortie_energy(self, replace_if_matched):

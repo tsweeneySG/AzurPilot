@@ -173,6 +173,16 @@ class CampaignUI(MapOperation, CampaignEvent, CampaignOcr):
             self.config.override(Campaign_Mode='hard')
 
         switch_2 = MODE_SWITCH_2.get(main=self)
+        switch_1 = MODE_SWITCH_1.get(main=self)
+        if switch_1 == 'unknown' and switch_2 == 'unknown':
+            # 章节列表可能尚未画完。先等一会儿，仍没有则不要盲点 SWITCH_1_HARD。
+            MODE_SWITCH_1.wait(main=self, skip_first_screenshot=False)
+            switch_1 = MODE_SWITCH_1.get(main=self)
+            switch_2 = MODE_SWITCH_2.get(main=self)
+        if switch_1 == 'unknown' and switch_2 == 'unknown':
+            # 出击菜单上 CAMPAIGN_CHECK 会误匹配章节列表，开关并不在屏幕上。
+            logger.warning('[战役-UI] 战役模式开关未出现，跳过模式切换')
+            return
 
         if switch_2 == 'unknown':
             if mode == 'ex':
@@ -297,9 +307,15 @@ class CampaignUI(MapOperation, CampaignEvent, CampaignOcr):
             search_name = 'd3'
             logger.info(f'[战役-UI] 关卡 {name} 在UI中使用入口 {search_name}')
 
+        # 2024.07+ 活动地图列表只显示 A/B（或 T），C/D（或 HT）在
+        # LevelInfoSPView 内切换。点可见孪生入口，不要去点主线 SWITCH_1_HARD。
         if self.config.MAP_HAS_MODE_SWITCH:
             for mode_name in self.campaign_get_mode_names(search_name):
                 if mode_name in self.stage_entrance:
+                    if mode_name != search_name:
+                        logger.info(
+                            f'[战役-UI] MAP_HAS_MODE_SWITCH: {search_name} 使用可见入口 {mode_name}'
+                        )
                     search_name = mode_name
 
         if search_name not in self.stage_entrance:

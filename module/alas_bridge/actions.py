@@ -515,10 +515,26 @@ def chapter_track(
         fleet_ids = fleet_ids_for_chapter_track(config)
     if fleet_ids:
         args['fleet_ids'] = [int(x) for x in fleet_ids if int(x) > 0]
+    from module.alas_bridge.sortie_status import (
+        chapter_track_expected_stage,
+        chapter_track_matches_stage,
+    )
+    expected = chapter_track_expected_stage(config)
+    if expected:
+        args['chapter_name'] = expected
     result = send_verb(config, 'chapter_track', args, timeout=timeout)
     if not isinstance(result, dict):
         return None
+    if result.get('reason') == 'chapter_mismatch':
+        _log(f'Sweeney chapter_track mismatch: {result}', warning=True)
+        return result
     if result.get('sent') or result.get('already_active') or result.get('opened_fleet'):
+        if not chapter_track_matches_stage(config, result):
+            _log(f'Sweeney chapter_track mismatch: {result}', warning=True)
+            out = dict(result)
+            out['reason'] = 'chapter_mismatch'
+            out['sent'] = False
+            return out
         return result
     return None
 

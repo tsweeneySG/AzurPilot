@@ -429,18 +429,22 @@ class GlobeOperation(ActionPointHandler):
             if self.handle_popup_confirm('GOTO_GLOBE'):
                 continue
 
+        if not unpin:
+            return
+
+        # 干净的全球地图没有海域弹窗。旧循环要求先成功取消固定一次，
+        # 会在无弹窗时空等到 GameStuck（OpsiStronghold 14:28 起连炸）。
         confirm_timer = Timer(1, count=2).start()
-        unpinned = 0
+        swipe_count = 0
         for _ in self.loop():
-            if unpin:
-                if self.handle_zone_pinned():
-                    unpinned += 1
-                    confirm_timer.reset()
-                else:
-                    if unpinned and confirm_timer.reached():
-                        break
+            if self.handle_zone_pinned():
+                swipe_count += 1
+                confirm_timer.reset()
+                if swipe_count >= 8:
+                    logger.warning('[大世界-操作] 取消海域固定滑动次数过多，继续')
+                    break
             else:
-                if self.is_zone_pinned():
+                if confirm_timer.reached():
                     break
 
     def globe_enter(self, zone):
