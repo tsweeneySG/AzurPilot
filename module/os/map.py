@@ -45,7 +45,7 @@ from module.exception import (
 from module.handler.login import LoginHandler, MAINTENANCE_ANNOUNCE
 from module.logger import logger
 from module.map.map import Map
-from module.os.assets import FLEET_EMP_DEBUFF, MAP_GOTO_GLOBE_FOG
+from module.os.assets import FLEET_EMP_DEBUFF, GLOBE_GOTO_MAP, MAP_GOTO_GLOBE_FOG
 from module.handler.assets import POPUP_CONFIRM
 from module.os.fleet import OSFleet, BossFleet
 from module.os.globe_camera import GlobeCamera
@@ -156,6 +156,8 @@ class OSMap(OSFleet, Map, GlobeCamera, StorageHandler, StrategicSearchHandler):
             if self.ui_page_appear(page_os):
                 self.ui_goto_main()
             self.ui_ensure(page_os)
+            if self.is_in_globe():
+                self.os_globe_goto_map()
 
         # 初始化
         self.zone_init()
@@ -257,6 +259,14 @@ class OSMap(OSFleet, Map, GlobeCamera, StorageHandler, StrategicSearchHandler):
         # MAP_EXIT 处理
         if self.is_in_special_zone():
             self.map_exit()
+        bridged = self._globe_goto_via_bridge(zone, types=types, stop_if_safe=stop_if_safe)
+        if bridged is not None:
+            if bridged:
+                if hasattr(self, "zone"):
+                    del self.zone
+            self.os_wait_in_map()
+            self.zone_init()
+            return bridged
         # IN_MAP 处理
         if self.is_in_map():
             self.os_map_goto_globe()
@@ -278,6 +288,35 @@ class OSMap(OSFleet, Map, GlobeCamera, StorageHandler, StrategicSearchHandler):
         self.zone_init()
         # self.map_init()
         return True
+
+    def _globe_goto_via_bridge(self, zone, types, stop_if_safe):
+        """
+        用 OpTransport 切海域，避开全球地图 ZONE_* 点击。
+
+        explore 的 stop_if_safe 仍走截图路径（需在星图上看 SAFE 而不进入）。
+
+        Returns:
+            True/False: 桥接完成（是否切换了海域）。
+            None: 桥接不可用，调用方继续截图路径。
+        """
+        if stop_if_safe:
+            return None
+        try:
+            from module.alas_bridge.os_missions import run_os_globe_goto
+            result = run_os_globe_goto(self.config, zone.zone_id, types=types)
+        except Exception as e:
+            logger.info(f'Sweeney OS globe goto miss: {e}')
+            return None
+        if result is None:
+            logger.info('Sweeney OS globe goto miss, screenshot fallback')
+            return None
+        logger.info(f'[大世界-地图] 地球仪前往 (bridge) zone={zone} switched={result}')
+        try:
+            self.device.stuck_record_clear()
+            self.device.click_record_clear()
+        except Exception:
+            pass
+        return result
 
     def os_map_goto_globe(self, *args, **kwargs):
         """
@@ -948,8 +987,7 @@ class OSMap(OSFleet, Map, GlobeCamera, StorageHandler, StrategicSearchHandler):
             int: 完成的战斗次数。
 
         Raises:
-            CampaignEnd: 自动搜索结束时抛出。
-            RequestHumanTakeover: 没有自动搜索选项时抛出。
+            CampaignEnd: 自动搜索结束，或海域 UI 上没有自律按钮时抛出。
 
         Pages:
             in: AUTO_SEARCH_OS_MAP_OPTION_OFF
@@ -980,11 +1018,14 @@ class OSMap(OSFleet, Map, GlobeCamera, StorageHandler, StrategicSearchHandler):
         auto_search_time_limit_timer = Timer(self.config.OpsiGeneral_AutoSearchTimeLimit * 60, count=1).start()
         for _ in self.loop():
             # 结束条件
-            if not unlock_checked and unlock_check_timer.reached():
-                logger.critical("[大世界] 当前海域未解锁自律，请先完成剧情任务。")
-                raise RequestHumanTakeover
-            if self.is_in_map():
+            # JP 自律寻敌时 IN_MAP 模板会漏检，卡死计时器只在 is_in_map 时清零，
+            # 点完 AUTO_SEARCH_OS_MAP_OPTION_OFF 后空等 3 分钟 GameStuck。
+            if (self.is_in_map()
+                    or self.appear(AUTO_SEARCH_OS_MAP_OPTION_ON, offset=(5, 120))
+                    or self.appear(AUTO_SEARCH_OS_MAP_OPTION_OFF, offset=(5, 120))
+                    or self.appear(AUTO_SEARCH_OS_MAP_OPTION_OFF_DISABLED, offset=(5, 120))):
                 self.device.stuck_record_clear()
+            if self.is_in_map():
                 if not success:
                     if died_timer.reached():
                         logger.warning("[大世界-战斗] 舰队阵亡确认")
@@ -1007,6 +1048,15 @@ class OSMap(OSFleet, Map, GlobeCamera, StorageHandler, StrategicSearchHandler):
                     unlock_checked = True
                 elif self.appear(AUTO_SEARCH_OS_MAP_OPTION_ON, offset=(5, 120)):
                     unlock_checked = True
+                elif self.is_in_globe() or self.appear(GLOBE_GOTO_MAP, offset=(20, 20)):
+                    logger.warning('[大世界] 自律按钮未出现，从星图进入海域后再试')
+                    self.os_globe_goto_map()
+                    unlock_check_timer.reset()
+                    continue
+                elif unlock_check_timer.reached():
+                    logger.warning(
+                        '[大世界] 未找到自律按钮，跳过本次自律（不断言未解锁剧情，避免重启模拟器）')
+                    raise CampaignEnd
 
             if self.handle_os_auto_search_map_option(drop=drop, enable=success):
                 unlock_checked = True

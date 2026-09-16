@@ -581,12 +581,13 @@ class FastForwardHandler(AutoSearchHandler):
         Returns:
             bool: 是否处理完成。
         """
-        if not self.map_is_clear_mode:
-            return False
         if not hasattr(self, 'emotion'):
             logger.info('情绪实例未加载，无法处理2倍经验书')
             return False
 
+        # 不以 map_is_clear_mode 为前置：桥接 map-prep 常在进度条动画前读到 0%，
+        # 会把通关模式判成未开启并跳过开关，游戏内上次勾选的高效作战指令书一直生效。
+        self.map_is_2x_book = bool(self.config.Campaign_Use2xBook)
         logger.info(f'[处理器-快进] 处理2倍经验书设置，模式={mode}')
         if mode == 'prep':
             book_check = BOOK_CHECK_PREP
@@ -607,7 +608,10 @@ class FastForwardHandler(AutoSearchHandler):
 
     def handle_2x_book_popup(self):
         if self.appear(BOOK_POPUP_CHECK, offset=(20, 20)):
-            if self.handle_popup_confirm('2X_BOOK'):
+            if self.config.Campaign_Use2xBook:
+                if self.handle_popup_confirm('2X_BOOK'):
+                    return True
+            elif self.handle_popup_cancel('2X_BOOK'):
                 return True
 
         return False

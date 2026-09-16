@@ -163,6 +163,9 @@ class OSShopUI(UI):
         """
         if pre_pos == cur_pos:
             logger.warning('大世界商店+滚动条拖动页面失败')
+            if OS_SHOP_SCROLL.at_top(main=self) and OS_SHOP_SCROLL.at_bottom(main=self):
+                logger.info('大世界商店+列表过短无需滚动')
+                return cur_pos
             if not OS_SHOP_SCROLL.appear(main=self):
                 logger.warning('大世界商店+滚动条未出现，尝试修复')
                 self.rescue_slider()

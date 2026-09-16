@@ -926,6 +926,10 @@ class Fleet(Camera, AmbushHandler):
         """
         logger.hr('地图初始化')
         self.map_data_init(map_)
+        if self._map_init_should_finish_combat():
+            logger.info('[地图] 进图后已进入战斗，先完成战斗再扫描地图')
+            self.combat(balance_hp=False, emotion_reduce=False, save_get_items=False)
+            self._enter_map_combat_started = False
         self.map_control_init()
 
     def map_data_init(self, map_):

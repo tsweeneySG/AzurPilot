@@ -104,6 +104,7 @@ def main():
         print(f'page      = {page_name_from_state(state)}')
         print(f'player    = {state.get("player")}')
         print(f'battle    = {state.get("battle")}')
+        print(f'os        = {state.get("os")}')
 
     if not args.verb:
         return 0 if state is not None else 1

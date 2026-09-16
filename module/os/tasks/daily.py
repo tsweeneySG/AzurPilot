@@ -132,12 +132,13 @@ class OpsiDaily(OSMap):
         """
         logger.hr('大世界-大世界每日+ 完成每日任务', level=1)
         count = 0
-        # 防止港口类型每日任务的无限刷新循环（如对话/拾取/商店交互等自动搜索无法完成的情况）
-        stuck_port_zone_id = None
-        stuck_port_retry = 0
-        abort_due_to_stuck_port = False
+        # 本轮已空刷的 entrance。星图/任务列表会反复指向同一海域（如 Asami 64），
+        # 仅港口 3 次检测拦不住非港口循环。
+        skip_entrances = set()
         while True:
-            result = self.os_get_next_mission(skip_siren_mission=skip_siren_mission)
+            result = self.os_get_next_mission(
+                skip_siren_mission=skip_siren_mission,
+                skip_entrances=skip_entrances)
             if not result:
                 break
 
@@ -145,6 +146,11 @@ class OpsiDaily(OSMap):
                 # 档案海域的名称是 "archive zone"，不是已存在的区域。
                 # 完成档案海域后会自动返回之前的区域。
                 self.zone_init()
+                if self.zone.zone_id in skip_entrances:
+                    logger.warning(
+                        f'[大世界-日常] 海域 {self.zone.zone_id} ({self.zone}) '
+                        f'本轮已空刷，截图路径仍指向该入口，结束大世界每日+')
+                    break
             if result == 'already_at_mission_zone':
                 self.globe_goto(self.zone, refresh=True)
             self.fleet_set(self.config.OpsiFleet_Fleet)
@@ -165,33 +171,17 @@ class OpsiDaily(OSMap):
                     self.os_daily_set_keep_mission_zone()
                 finished_combat = 0
 
-            # 检测港口中的重复无进展循环，提前停止本轮运行。
-            # 防止无尽的"刷新当前区域"来回切换。
-            if self.zone.is_port and finished_combat == 0 and result in (
+            # 空刷一次即跳过该入口，避免握手反复回到同一海域后点自律卡死。
+            if finished_combat == 0 and result in (
                     'already_at_mission_zone', 'pinned_at_mission_zone'):
                 zone_id = self.zone.zone_id
-                if stuck_port_zone_id == zone_id:
-                    stuck_port_retry += 1
-                else:
-                    stuck_port_zone_id = zone_id
-                    stuck_port_retry = 1
-
-                if stuck_port_retry >= 3:
-                    logger.warning(
-                        f'大世界每日+港口任务疑似卡在海域 {zone_id} ({self.zone})，'
-                        f'{stuck_port_retry} 次重试后自律寻敌仍无进展，停止大世界每日+以避免无限刷新海域。')
-                    abort_due_to_stuck_port = True
-                    break
-            else:
-                stuck_port_zone_id = None
-                stuck_port_retry = 0
+                skip_entrances.add(zone_id)
+                logger.warning(
+                    f'[大世界-日常] 海域 {zone_id} ({self.zone}) 自律寻敌 0 场，'
+                    f'本轮跳过该任务入口')
             count += 1
             if not keep_mission_zone:
                 self.config.check_task_switch()
-
-        if abort_due_to_stuck_port:
-            # 返回 0 让外层 OpsiDaily 流程干净地退出本轮
-            return 0
 
         return count
 

@@ -25,7 +25,23 @@ DOCK_SORTING = Switch('Dork_sorting')
 DOCK_SORTING.add_state('Ascending', check_button=SORT_ASC, click_button=SORTING_CLICK)
 DOCK_SORTING.add_state('Descending', check_button=SORT_DESC, click_button=SORTING_CLICK)
 
-DOCK_FAVOURITE = Switch('Favourite_filter')
+
+class DockFavouriteSwitch(Switch):
+    """船坞收藏筛选开关。
+
+    退役设置面板打开时会挡住顶部 Favourite 按钮，导致状态一直为 unknown
+    并连点 COMMON_SHIP_FILTER_DISABLE。先关掉该面板再识别筛选。
+    """
+
+    def handle_additional(self, main):
+        if main.appear(RETIRE_SETTING_QUIT, offset=(30, 100)):
+            logger.info('[退役-设置] 关闭挡住船坞筛选的退役设置面板')
+            main.device.click(RETIRE_SETTING_QUIT)
+            return True
+        return False
+
+
+DOCK_FAVOURITE = DockFavouriteSwitch('Favourite_filter')
 DOCK_FAVOURITE.add_state('on', check_button=COMMON_SHIP_FILTER_ENABLE)
 DOCK_FAVOURITE.add_state('off', check_button=COMMON_SHIP_FILTER_DISABLE)
 

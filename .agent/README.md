@@ -121,6 +121,7 @@ uv run python mcp_server_sse.py
 | module/map | 地图处理 | [MAP.md](MAP.md) |
 | module/map_detection | 地图检测 | [MAP-DETECTION.md](MAP-DETECTION.md) |
 | module/campaign | 战役执行 | [CAMPAIGN.md](CAMPAIGN.md) |
+| module/retire | 船坞满退役打断（一键退役 / EN 1080p） | 工作区 [azurpilot-retire.md](../../AzurLaneAutoScript/docs/azurpilot-retire.md) |
 
 ### 4.4 游戏功能层
 

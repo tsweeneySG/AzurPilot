@@ -153,7 +153,7 @@ class MissionHandler(GlobeOperation, ZoneManager):
             if self.appear_then_click(MISSION_QUIT, offset=(20, 20), interval=3):
                 continue
 
-    def os_get_next_mission(self, skip_siren_mission=False):
+    def os_get_next_mission(self, skip_siren_mission=False, skip_entrances=None):
         """
         获取下一个大世界任务。
 
@@ -162,11 +162,34 @@ class MissionHandler(GlobeOperation, ZoneManager):
 
         Args:
             skip_siren_mission (bool): 是否跳过塞壬研究任务。
+            skip_entrances: 本轮已空刷过的 entrance id，避免重复进入同一海域。
 
         Returns:
             str: pinned_at_mission_zone、already_at_mission_zone、pinned_at_archive_zone，
                 如果没有更多任务则返回 False。
         """
+        try:
+            from module.alas_bridge.os_missions import run_os_mission_handshake
+            if self.is_in_opsi_explore():
+                bridged = run_os_mission_handshake(
+                    self.config, skip_siren=skip_siren_mission, goto=False)
+                if bridged is not None:
+                    logger.info('[大世界处理-任务] 每月开荒+正在运行，仅接取任务并领取奖励 (bridge)')
+                    return False
+            else:
+                bridged = run_os_mission_handshake(
+                    self.config, skip_siren=skip_siren_mission,
+                    skip_entrances=skip_entrances)
+                if bridged is not None:
+                    logger.info(f'[大世界处理-任务] 接取大世界任务 (bridge) result={bridged}')
+                    try:
+                        self.device.stuck_record_clear()
+                    except Exception:
+                        pass
+                    return bridged
+        except Exception as e:
+            logger.info(f'Sweeney OS mission handshake miss: {e}')
+
         checkout_offset = self.os_mission_enter(skip_siren_mission=skip_siren_mission)
         checkout_offset = self._os_find_checkout_offset_skip_monthly_boss(checkout_offset)
         if checkout_offset is None:
@@ -180,6 +203,7 @@ class MissionHandler(GlobeOperation, ZoneManager):
             return False
 
         logger.info('[大世界处理-任务] 接取大世界任务')
+        accepted = False
         for _ in self.loop():
             # 结束
             if self.is_zone_pinned():
@@ -194,11 +218,22 @@ class MissionHandler(GlobeOperation, ZoneManager):
             if self.is_in_map() and self.info_bar_count():
                 logger.info('[大世界处理-任务] 已在任务区域')
                 return 'already_at_mission_zone'
+            # 接取后任务列表已关：信息条可能一闪而过；EN 常落到星图而非海域。
+            # 只等 is_in_map 会空等 60s（stuck_record 里全是 ZONE_*）。
+            if accepted and not self.is_in_os_mission():
+                if self.is_in_globe():
+                    logger.info('[大世界处理-任务] 接取后已在星图')
+                    return 'pinned_at_mission_zone'
+                if self.is_in_map():
+                    logger.info('[大世界处理-任务] 已离开任务列表，假定已在任务海域')
+                    return 'already_at_mission_zone'
 
             if self.appear_then_click(MISSION_CHECKOUT, offset=checkout_offset, interval=2, similarity=0.78):
+                accepted = True
                 continue
             if self.handle_popup_confirm('OS_MISSION_CHECKOUT'):
                 # 弹窗：退出当前海域后潜艇将撤退
+                accepted = True
                 continue
 
     def os_mission_overview_accept(self, skip_siren_mission=False, skip_first_screenshot=True):
@@ -217,6 +252,19 @@ class MissionHandler(GlobeOperation, ZoneManager):
             out: is_in_map
         """
         logger.hr('大世界任务总览接取', level=1)
+        try:
+            from module.alas_bridge.os_missions import run_os_accept_daily
+            bridged = run_os_accept_daily(self.config, skip_siren=skip_siren_mission)
+            if bridged is not None:
+                logger.info(f'[大世界处理-任务] 任务总览接取 (bridge) success={bridged}')
+                try:
+                    self.device.stuck_record_clear()
+                except Exception:
+                    pass
+                return bridged
+        except Exception as e:
+            logger.info(f'Sweeney OS daily accept miss: {e}')
+
         # is_in_map
         self.os_map_goto_globe(unpin=False)
         # is_in_globe

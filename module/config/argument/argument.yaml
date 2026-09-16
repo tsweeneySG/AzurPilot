@@ -89,7 +89,7 @@ Restart:
     value: false
     option: [true, false]
   LoginWaitTimeout:
-    value: 30
+    value: 180
     validate: [1, 3600]
 Emulator:
   Serial:

@@ -192,17 +192,21 @@ class PrivateQuarters(PQInteract, PQShop):
         # 执行互动流程
         self.pq_interact()
 
-    def pq_run(self, buy_roses, buy_cake, target_interact, target_ship):
+    def pq_run(self, buy_roses, buy_cake, target_interact, target_ship,
+               do_shop=True, do_interact=True):
         """
         执行私人宿舍日常流程。
 
         包括购买每周商品（玫瑰/蛋糕）和与目标舰娘互动。
+        桥接已完成的子任务由 do_shop / do_interact 跳过。
 
         Args:
             buy_roses (bool): 是否购买每周玫瑰
             buy_cake (bool): 是否购买每周蛋糕
             target_interact (bool): 是否执行舰娘互动
             target_ship (str): 目标舰娘名称
+            do_shop (bool): 是否走截图商店路径
+            do_interact (bool): 是否走截图互动路径
 
         Pages:
             in: 私人宿舍主页
@@ -215,55 +219,15 @@ class PrivateQuarters(PQInteract, PQShop):
                     f'舰娘互动={target_interact}, '
                     f'目标舰娘={target_title}')
 
-
-        try:
-            from module.alas_bridge.actions import (
-                bridge_enabled,
-                get_pq_status,
-                pq_from_heartbeat,
-                pq_shop_buy,
-                pq_spend_stamina,
-            )
-            if bridge_enabled(self.config):
-                status = pq_from_heartbeat(self.config) or get_pq_status(self.config)
-                shop_needed = bool(self.shop_filter)
-                interact_needed = bool(target_interact)
-                shop_done = not shop_needed
-                interact_done = not interact_needed
-                if isinstance(status, dict) and 'stamina' in status:
-                    stamina = int(status.get('stamina') or 0)
-                    logger.info(f'[私人休息室] 桥接体力={stamina}/{status.get("stamina_max")}')
-                    if interact_needed and stamina <= 0:
-                        logger.info('[私人休息室] 桥接：每日体力已用完')
-                        interact_done = True
-                if shop_needed and not shop_done:
-                    result = pq_shop_buy(
-                        self.config,
-                        roses=bool(buy_roses),
-                        cake=bool(buy_cake),
-                    )
-                    if isinstance(result, dict) and result.get('sent'):
-                        logger.info('[私人休息室] 商店购买通过桥接完成')
-                        shop_done = True
-                if interact_needed and not interact_done:
-                    result = pq_spend_stamina(self.config)
-                    if isinstance(result, dict) and result.get('sent'):
-                        logger.info('[私人休息室] 互动通过桥接完成')
-                        interact_done = True
-                if shop_done and interact_done:
-                    return
-        except Exception as e:
-            logger.info(f'Sweeney PQ bridge miss: {e}')
-
         # 进入商店购买每周物品
-        if self.shop_filter:
+        if do_shop and self.shop_filter:
             if server.server not in ['tw']:
                 self.pq_shop_weekly_items()
             else:
                 logger.info(f'[私人休息室] {server.server} 服务器不支持商店功能')
 
         # 执行舰娘互动
-        if target_interact:
+        if do_interact and target_interact:
             # Ensure target is supported for server
             # Update `not_supported_filter` to enable a target
             if target_ship in self.not_supported_filter[server.server]:
@@ -279,24 +243,113 @@ class PrivateQuarters(PQInteract, PQShop):
             # 执行互动
             self.pq_execute_interact(target_ship)
 
+    def _pq_bridge_try(self, buy_roses, buy_cake, target_interact, target_ship):
+        """
+        优先走 Sweeney 桥接买每周礼物、消耗每日体力，避免打开 Dorm3D。
+
+        Returns:
+            tuple[bool, bool]: (shop_done, interact_done)。任一为 False 时截图路径补做该子任务。
+        """
+        shop_needed = bool(self.shop_filter) and server.server not in ['tw']
+        interact_needed = bool(target_interact)
+        if target_interact and target_ship in self.not_supported_filter.get(server.server, ()):
+            logger.info(f'[私人休息室] 目标舰娘 {target_ship} 在 {server.server} 服务器不可用')
+            interact_needed = False
+
+        shop_done = not shop_needed
+        interact_done = not interact_needed
+        if shop_done and interact_done:
+            return True, True
+
+        try:
+            from module.alas_bridge.actions import (
+                bridge_enabled,
+                get_pq_status,
+                pq_from_heartbeat,
+                pq_shop_buy,
+                pq_spend_stamina,
+            )
+        except Exception as e:
+            logger.info(f'Sweeney PQ bridge import failed: {e}')
+            return shop_done, interact_done
+
+        if not bridge_enabled(self.config):
+            return shop_done, interact_done
+
+        status = pq_from_heartbeat(self.config) or get_pq_status(self.config)
+        if isinstance(status, dict) and 'stamina' in status:
+            stamina = int(status.get('stamina') or 0)
+            logger.info(f'[私人休息室] 桥接体力={stamina}/{status.get("stamina_max")}')
+            if interact_needed and stamina <= 0:
+                logger.info('[私人休息室] 桥接：每日体力已用完')
+                interact_done = True
+
+        if shop_needed and not shop_done:
+            try:
+                result = pq_shop_buy(self.config, roses=bool(buy_roses), cake=bool(buy_cake))
+            except Exception as e:
+                logger.info(f'Sweeney pq_shop_buy failed: {e}')
+                result = None
+            # pq_shop_buy 返回 buys[]（limit / complete_or_limit / bought），没有 sent
+            if isinstance(result, dict):
+                logger.info(f'[私人休息室] 商店购买通过桥接完成: {result}')
+                shop_done = True
+            else:
+                logger.info('[私人休息室] 商店桥接未完成，将使用截图路径')
+
+        if interact_needed and not interact_done:
+            try:
+                result = pq_spend_stamina(self.config, ship=target_ship)
+            except Exception as e:
+                logger.info(f'Sweeney pq_spend_stamina failed: {e}')
+                result = None
+            if isinstance(result, dict):
+                logger.info(
+                    f'[私人休息室] 互动通过桥接完成: '
+                    f'spent={result.get("spent")} '
+                    f'{result.get("stamina_before")}->{result.get("stamina_after")} '
+                    f'group={result.get("group_id")}'
+                )
+                interact_done = True
+            else:
+                logger.info('[私人休息室] 体力桥接未完成，将使用截图路径')
+
+        return shop_done, interact_done
+
     def run(self):
         """
         私人宿舍任务入口。
 
-        从任意页面导航到宿舍菜单，进入私人宿舍执行日常流程。
+        桥接可用时先 RPC 完成商店与体力，不进入宿舍 UI。
+        仅当桥接缺子任务时才导航到私人宿舍走截图路径。
 
         Pages:
             in: 任意页面
             out: page_main，可能有 info_bar
         """
+        buy_roses = self.config.PrivateQuarters_BuyRoses
+        buy_cake = self.config.PrivateQuarters_BuyCake
+        target_interact = self.config.PrivateQuarters_TargetInteract
+        target_ship = self.config.PrivateQuarters_TargetShip
+
+        shop_done, interact_done = self._pq_bridge_try(
+            buy_roses, buy_cake, target_interact, target_ship
+        )
+        if shop_done and interact_done:
+            logger.info('[私人休息室] 通过 Sweeney 桥接完成（未打开宿舍 UI）')
+            self.config.task_delay(server_update=True)
+            return
+
         self.ui_ensure(page_dormmenu)
         self.ui_goto(page_private_quarters, get_ship=False)
         self.handle_info_bar()
         self.pq_run(
-            buy_roses=self.config.PrivateQuarters_BuyRoses,
-            buy_cake=self.config.PrivateQuarters_BuyCake,
-            target_interact=self.config.PrivateQuarters_TargetInteract,
-            target_ship=self.config.PrivateQuarters_TargetShip
+            buy_roses=buy_roses,
+            buy_cake=buy_cake,
+            target_interact=target_interact,
+            target_ship=target_ship,
+            do_shop=not shop_done,
+            do_interact=not interact_done,
         )
 
         self.config.task_delay(server_update=True)

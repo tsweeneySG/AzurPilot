@@ -57,6 +57,12 @@ RESTART_OBSERVE_INTERVAL = 15
 # 避免 u2 调用无限挂起导致 LoginWaitTimeout / GameStuckRestart 等保护机制
 # （依赖 screenshot() 中的 stuck_record_check）均无法触发的死锁。
 RESTART_OPERATION_TIMEOUT = 120
+# 登录等待宽容默认值。device._stuck_image_timer 为 30 秒；旧模板把
+# LoginWaitTimeout 也写成 30，等于没有放宽，模拟器重启后的静态闪屏会被
+# 误判 GameStuckError 并立刻再 Restart，形成重启循环。
+LOGIN_WAIT_TIMEOUT_DEFAULT = 180.0
+# 与 Device._stuck_image_timer.limit 对齐；配置值不大于此则按默认 180 处理。
+LOGIN_WAIT_STUCK_TIMER = 30.0
 
 
 class LoginHandler(UI):
@@ -199,19 +205,31 @@ class LoginHandler(UI):
         登录等待中也能读到用户配置值。
 
         Returns:
-            float: 登录等待宽容时间（秒），配置非法时回退默认 30 秒。
+            float: 登录等待宽容时间（秒），配置非法或仍为旧默认 30 秒时回退 180 秒。
         """
-        value = deep_get(self.config.data, 'Restart.Restart.LoginWaitTimeout', default=30)
+        value = deep_get(
+            self.config.data, 'Restart.Restart.LoginWaitTimeout',
+            default=LOGIN_WAIT_TIMEOUT_DEFAULT,
+        )
         try:
             timeout = float(value)
         except (TypeError, ValueError):
             timeout = -1.0
         if not (timeout > 0):
-            logger.warning(f'[登录] Restart.LoginWaitTimeout 配置非法（{value!r}），回退默认 30 秒')
-            return 30.0
+            logger.warning(
+                f'[登录] Restart.LoginWaitTimeout 配置非法（{value!r}），'
+                f'回退默认 {LOGIN_WAIT_TIMEOUT_DEFAULT:g} 秒'
+            )
+            return LOGIN_WAIT_TIMEOUT_DEFAULT
         if timeout > 3600:
             logger.warning(f'[登录] Restart.LoginWaitTimeout 超过上限（{value!r}），按 3600 秒处理')
             return 3600.0
+        if timeout <= LOGIN_WAIT_STUCK_TIMER:
+            logger.warning(
+                f'[登录] Restart.LoginWaitTimeout={timeout:g} 不大于卡死阈值 '
+                f'{LOGIN_WAIT_STUCK_TIMER:g} 秒，按 {LOGIN_WAIT_TIMEOUT_DEFAULT:g} 秒处理'
+            )
+            return LOGIN_WAIT_TIMEOUT_DEFAULT
         return timeout
 
     def _restart_operation_timeout_enabled(self):

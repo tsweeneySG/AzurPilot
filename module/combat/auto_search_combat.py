@@ -458,6 +458,8 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                 # 先处理战斗结算界面（D评价、经验信息、获得舰船等），
                 # 结算完成后才会出现FLEET_SWITCH_CONFIRM或WITHDRAW按钮
                 # 沉船D评价流程：OPTS_INFO_D → BATTLE_STATUS_D → EXP_INFO_D → OPTS_INFO_D(再次出现) → FLEET_SWITCH_CONFIRM
+                if self.handle_retirement() or self.retirement_appear():
+                    continue
                 if self.appear_then_click(OPTS_INFO_D, offset=(30, 30), interval=2):
                     continue
                 if self.handle_battle_status():
@@ -520,6 +522,10 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                         continue
 
             # Combat status
+            # 船坞已满必须在 GET_SHIP 之前：AzurPilot 的 handle_get_ship
+            # 只要画面上还有 GET_SHIP 就返回 True，ALAS 原版会走到 handle_retirement。
+            if self.handle_retirement() or self.retirement_appear():
+                continue
             if self.handle_get_ship():
                 continue
             if not self._withdraw and self.handle_auto_search_map_option():

@@ -27,6 +27,10 @@ class TestPageNameFromState(unittest.TestCase):
             'mediator': 'NewSettingsMediator',
         }), 'page_settings')
         self.assertEqual(page_name_from_state({'scene': 'scene settings'}), 'page_settings')
+        from module.alas_bridge.game_state import page_from_name
+        settings = page_from_name('page_settings')
+        self.assertIsNotNone(settings)
+        self.assertEqual(settings.name, 'page_settings')
 
     def test_level_entrance_is_campaign_menu(self):
         self.assertEqual(
@@ -300,6 +304,19 @@ class TestSortieStatus(unittest.TestCase):
 
         self.assertEqual(chapter_track_expected_stage(HardCfg()), '14-4')
         self.assertEqual(chapter_track_expected_stage(CatchupCfg()), 'B3')
+
+        class MainCfg:
+            task = type('T', (), {'command': 'Main'})()
+            Campaign_Name = '16-4'
+            SweeneySortieChapterName = 'B3'
+
+        class EventCfg:
+            task = type('T', (), {'command': 'Event'})()
+            Campaign_Name = 'd2'
+            SweeneySortieChapterName = 'B3'
+
+        self.assertEqual(chapter_track_expected_stage(MainCfg()), '16-4')
+        self.assertEqual(chapter_track_expected_stage(EventCfg()), 'd2')
 
     def test_hard_roster_family_and_match(self):
         from module.alas_bridge.sortie_status import (
@@ -700,6 +717,14 @@ class TestBridgeActions(unittest.TestCase):
                     }
                 if name in ('get_wa_status', 'wa_goto'):
                     return {'id': '1', 'ok': True, 'name': name, 'result': {'ok': True}}
+                if name in (
+                    'get_os_missions', 'os_accept_daily', 'os_submit_tasks',
+                    'os_goto_task', 'os_goto_zone',
+                ):
+                    return {
+                        'id': '1', 'ok': True, 'name': name,
+                        'result': {'loaded': True, 'sent': True, 'zone_id': 44},
+                    }
                 return {'id': '1', 'ok': True, 'name': name, 'result': {'kind': (args or {}).get('kind')}}
 
         class FakeGS:
@@ -724,6 +749,11 @@ class TestBridgeActions(unittest.TestCase):
             self.assertIsNotNone(actions.set_mod_flags(
                 object(), force_auto_fight_without_loop=True, auto_fight_clear_before_boss=False))
             self.assertIsNotNone(actions.apply_fleet_preset(object(), swap=True, chapter_id=16004))
+            self.assertIsNotNone(actions.get_os_missions(object()))
+            self.assertIsNotNone(actions.os_accept_daily(object(), skip_siren=True))
+            self.assertIsNotNone(actions.os_submit_tasks(object(), ids=[1]))
+            self.assertIsNotNone(actions.os_goto_task(object(), task_id=3100))
+            self.assertIsNotNone(actions.os_goto_zone(object(), zone_id=44))
         finally:
             actions.BridgeRpc = orig_rpc
             actions.GameState = orig_gs
@@ -756,6 +786,7 @@ class TestBridgeActions(unittest.TestCase):
             Fleet_Fleet1 = 3
             Fleet_Fleet2 = 4
             Submarine_Fleet = 0
+            Campaign_Use2xBook = False
 
         orig_rpc = actions.BridgeRpc
         orig_gs = actions.GameState
@@ -771,6 +802,49 @@ class TestBridgeActions(unittest.TestCase):
         self.assertEqual(seen['args']['fleet_ids'], [3, 4])
         self.assertTrue(seen['args']['auto_fight'])
         self.assertTrue(seen['args']['loop'])
+        self.assertFalse(seen['args']['use_2x_book'])
+
+    def test_chapter_track_sends_use_2x_book_true(self):
+        from module.alas_bridge import actions
+
+        seen = {}
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                seen['args'] = args or {}
+                return {
+                    'id': '1',
+                    'ok': True,
+                    'name': name,
+                    'result': {'sent': True, 'chapter_id': 1604},
+                }
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        class Cfg:
+            Fleet_Fleet1 = 1
+            Fleet_Fleet2 = 2
+            Submarine_Fleet = 0
+            Campaign_Use2xBook = True
+            Campaign_Name = '16-4'
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        try:
+            actions.chapter_track(Cfg(), auto_fight=True, loop=True)
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = orig_gs
+        self.assertTrue(seen['args']['use_2x_book'])
+        self.assertNotIn('operation_item', seen['args'])
 
     def test_chapter_track_sends_chapter_name_and_rejects_event_b_for_d(self):
         """Cross-aside B vs D must still mismatch. In-group A/C is switched in Lua."""
@@ -816,7 +890,7 @@ class TestBridgeActions(unittest.TestCase):
             result = actions.chapter_track(Cfg(), auto_fight=True, loop=True)
         finally:
             actions.BridgeRpc = orig_rpc
-            actions.GameState = FakeGS
+            actions.GameState = orig_gs
         self.assertEqual(seen['args']['chapter_name'], 'd2')
         self.assertEqual(result.get('reason'), 'chapter_mismatch')
         self.assertFalse(result.get('sent'))
@@ -857,6 +931,45 @@ class TestBridgeActions(unittest.TestCase):
         finally:
             actions.BridgeRpc = orig_rpc
             actions.GameState = orig_gs
+
+    def test_pq_shop_buy_already_complete_is_success(self):
+        from module.alas_bridge import actions
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                if name == 'pq_shop_buy':
+                    return {
+                        'id': '1',
+                        'ok': True,
+                        'name': name,
+                        'result': {
+                            'buys': [{'gift_id': 1021002, 'bought': False, 'reason': 'complete_or_limit'}],
+                            'roses_shop': 1,
+                            'cake_shop': 0,
+                        },
+                    }
+                return {'id': '1', 'ok': True, 'name': name, 'result': {}}
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        try:
+            result = actions.pq_shop_buy(object(), roses=True)
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = orig_gs
+        self.assertIsInstance(result, dict)
+        self.assertNotIn('sent', result)
+        self.assertEqual(result['buys'][0]['reason'], 'complete_or_limit')
 
     def test_send_verb_error_returns_none(self):
         from module.alas_bridge import actions
@@ -1559,6 +1672,17 @@ class TestWarArchivesCatchupPolicy(unittest.TestCase):
             'battle': {'state': 'BATTLE_IDLE'},
         }
         self.assertFalse(leftover_off_map_ui(live_map_stale_entrance))
+        stale_scene_during_fight = {
+            'scene_key': 'LEVEL',
+            'page': 'page_event',
+            'chapter': {'active': True, 'id': 2060026, 'auto_fight': True},
+            'level': {'in_map': False, 'entrance': False},
+            'battle': {'state': 'BATTLE_FIGHT'},
+        }
+        self.assertFalse(leftover_off_map_ui(stale_scene_during_fight))
+        stale_scene_during_report = dict(stale_scene_during_fight)
+        stale_scene_during_report['battle'] = {'state': 'BATTLE_REPORT'}
+        self.assertFalse(leftover_off_map_ui(stale_scene_during_report))
 
     def test_watch_ends_on_level_after_grace(self):
         from module.war_archives_catchup.policy import watch_map_ended
@@ -1876,6 +2000,32 @@ class TestSitback(unittest.TestCase):
             sitback._read_state = orig_read
             sitback.time.sleep = orig_sleep
             sitback.handle_sitback_battle_status = orig_click
+
+    def test_bridge_report_click_caps(self):
+        from module.base.timer import Timer
+        from module.combat.combat import Combat
+
+        class Dev:
+            def __init__(self):
+                self.clicks = 0
+
+            def sleep(self, t):
+                pass
+
+            def click(self, b):
+                self.clicks += 1
+
+        combat = Combat.__new__(Combat)
+        combat.battle_status_click_interval = 0
+        combat._bridge_report_clicks = 0
+        combat.device = Dev()
+        combat.get_interval_timer = lambda name, interval=0: Timer(0)
+        hits = 0
+        for _ in range(10):
+            if combat._click_bridge_battle_report():
+                hits += 1
+        self.assertEqual(hits, 4)
+        self.assertEqual(combat.device.clicks, 4)
 
     def test_need_battle_click_raid_report(self):
         from module.alas_bridge.sitback import _need_battle_click

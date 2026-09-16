@@ -458,7 +458,7 @@
     },
     "Sensitive": {
       "name": "Sensitive task",
-      "help": "When an error occurs, prohibit restarting the game and stop AzurPilot immediately. Suitable for critical timing tasks like cross-month daily, Obscured Zones, Abyssal Zones, etc.",
+      "help": "When an error occurs, do not restart the game. AzurPilot only stops if Strict Restart is also enabled; otherwise this task is delayed and the scheduler continues. Use for critical timing tasks like cross-month daily, Obscured Zones, and Abyssal Zones.",
       "True": "Yes",
       "False": "No"
     }
@@ -480,7 +480,7 @@
     },
     "LoginWaitTimeout": {
       "name": "Login wait timeout",
-      "help": "Maximum time (seconds) to wait for login/startup to complete after the game restarts.\nIncrease this if the game starts slowly when the emulator runs in the background, to avoid false stuck detection and restart loops.\nDefault 30 seconds; only affects the post-restart login wait phase."
+      "help": "Maximum time (seconds) to wait for login/startup to complete after the game restarts.\nIncrease this if the game starts slowly when the emulator runs in the background, to avoid false stuck detection and restart loops.\nDefault 180 seconds; values of 30 or less are treated as 180 because they match the screenshot stuck timer. Only affects the post-restart login wait phase."
     }
   },
   "Emulator": {

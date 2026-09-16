@@ -1092,6 +1092,8 @@ def awaken_ship(self, use_array=False):
 #### 模块概述
 退役模块是较复杂的模块之一，负责管理游戏中的舰船退役和强化系统。
 
+Agent notes (EN, 1080p, zero-ship loop, what Quick Retire actually selects): workspace [azurpilot-retire.md](../../AzurLaneAutoScript/docs/azurpilot-retire.md).
+
 #### 文件清单与分析
 
 | 文件 | 行数 | 导出类型 | 主要职责 |

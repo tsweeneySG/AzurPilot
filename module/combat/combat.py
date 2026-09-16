@@ -99,21 +99,34 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             # 检测到战斗画面，退出循环
             if self.combat_appear():
                 break
-    def is_combat_loading(self):
-        """
-        检测是否处于战斗加载画面。
 
-        通过底部加载条模板匹配判断，CN/EN/TW 资源相同，JP 角色较小。
+    def is_combat_loading_bar(self):
+        """
+        仅检测底部战斗/进图加载条，不含暂停键回退。
+
+        CN/EN/TW 加载条资源相同，JP 角色尺寸较小。
 
         Returns:
-            是否处于战斗加载状态。
+            bool: 是否匹配到加载条。
         """
         image = self.image_crop((0, 620, 1280, 690), copy=False)
-        # CN/EN/TW 加载条资源相同，JP 角色尺寸较小
         similarity, button = TEMPLATE_COMBAT_LOADING.match_luma_result(image)
         if similarity > lower_template_match_similarity(0.85):
             loading = (button.area[0] + 38 - LOADING_BAR.area[0]) / (LOADING_BAR.area[2] - LOADING_BAR.area[0])
             logger.attr('加载进度', f'{int(loading * 100)}%')
+            return True
+        return False
+
+    def is_combat_loading(self):
+        """
+        检测是否处于战斗加载画面。
+
+        通过底部加载条模板匹配判断；加载条消失后仍可能用暂停键回退。
+
+        Returns:
+            是否处于战斗加载状态。
+        """
+        if self.is_combat_loading_bar():
             return True
         if self.is_combat_executing():
             logger.warning('[战斗-加载] 检测到战斗状态但未检测到加载条')
@@ -516,6 +529,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         skip_first = True
         self._bridge_fight_idle_t0 = None
         self._bridge_fight_peek_t0 = None
+        self._bridge_report_clicks = 0
 
         while 1:
             if self._bridge_combat_idle_tick(auto=auto, submarine=submarine, drop=drop):
@@ -571,6 +585,11 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
 
     def _click_bridge_battle_report(self, drop=None):
         """心跳显示结算层已打开，但评价模板尚未匹配时点击确认。"""
+        n = int(getattr(self, '_bridge_report_clicks', 0) or 0)
+        if n >= 4:
+            logger.warning(
+                '[战斗-结算] Sweeney BATTLE_REPORT 连续盲点无进展，停止点击 S 评价')
+            return False
         button = self._battle_status_report_click_button()
         interval = max(float(self.battle_status_click_interval or 0), 0.5)
         name = getattr(button, 'name', None) or str(button)
@@ -578,6 +597,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         if not timer.reached():
             return False
         timer.reset()
+        self._bridge_report_clicks = n + 1
         if drop:
             drop.handle_add(self)
         else:
@@ -586,11 +606,21 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         logger.info(f'[战斗-结算] Sweeney BATTLE_REPORT 点击 ({name})')
         return True
 
+    def _get_ship_blocks_settlement(self):
+        """新船 overlay 闪烁时不要点评价 / 经验 / 心跳盲点。"""
+        if self.appear(GET_SHIP):
+            self._hold_exp_for_get_ship()
+            return True
+        return not self._exp_hold_reached()
+
     def handle_battle_status(self, drop=None):
         """
         处理战斗结算画面（S/A/B/C/D 评价）。
 
         检测战斗是否仍在执行，然后按优先级匹配各评价等级的结算画面。
+        GET_SHIP 可见或刚见过时不要点 S 评价：心跳会停在 BATTLE_REPORT，
+        模板又把新船卡误判成 BATTLE_STATUS_S，与 GET_SHIP 对打
+        （nyan 16-4 2026-09-16 01:43 / 11:44 / 14:58）。
 
         Args:
             drop: 掉落记录对象，用于截图统计。
@@ -599,6 +629,8 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             是否点击了结算画面。
         """
         if self.is_combat_executing():
+            return False
+        if self._get_ship_blocks_settlement():
             return False
         if self.appear(BATTLE_STATUS_S, interval=self.battle_status_click_interval):
             if drop:
@@ -683,28 +715,49 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
 
         return False
 
+    def _hold_exp_for_get_ship(self):
+        """新船 overlay 出现后，短时禁止点 EXP / S 评价。"""
+        timer = getattr(self, '_get_ship_exp_hold', None)
+        if timer is None:
+            timer = Timer(20, count=30)
+            self._get_ship_exp_hold = timer
+        timer.reset()
+
+    def _exp_hold_reached(self):
+        timer = getattr(self, '_get_ship_exp_hold', None)
+        if timer is None:
+            return True
+        return timer.reached()
+
     def handle_exp_info(self):
         """
         处理经验结算画面（S/A/B/C/D 评价）。
+
+        GET_SHIP 仍可见时不要点经验结算：无 interval 时会与 GET_SHIP
+        对打触发 GameTooManyClickError（16-4 进图即战斗后的结算）。
+        新船 overlay 会闪，GET_SHIP 不是每帧都匹配；看见过后还要
+        再挡几秒，避免 EXP 与 GET_SHIP 交替点满阈值。
 
         Returns:
             是否点击了经验结算画面。
         """
         if self.is_combat_executing():
             return False
-        if self.appear_then_click(EXP_INFO_S):
+        if self._get_ship_blocks_settlement():
+            return False
+        if self.appear_then_click(EXP_INFO_S, interval=2):
             self.device.sleep((0.25, 0.5))
             return True
-        if self.appear_then_click(EXP_INFO_A):
+        if self.appear_then_click(EXP_INFO_A, interval=2):
             self.device.sleep((0.25, 0.5))
             return True
-        if self.appear_then_click(EXP_INFO_B):
+        if self.appear_then_click(EXP_INFO_B, interval=2):
             self.device.sleep((0.25, 0.5))
             return True
-        if self.appear_then_click(EXP_INFO_C):
+        if self.appear_then_click(EXP_INFO_C, interval=2):
             self.device.sleep((0.25, 0.5))
             return True
-        if self.appear_then_click(EXP_INFO_D):
+        if self.appear_then_click(EXP_INFO_D, interval=2):
             self.device.sleep((0.25, 0.5))
             return True
 
@@ -715,6 +768,8 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         处理获得新舰船画面。
 
         检测 GET_SHIP 按钮并点击，若出现 NEW_SHIP 标记则记录新船获取。
+        画面仍在时即使 interval 未到也返回 True，避免 combat_status
+        落到 EXP_INFO 连点。
 
         Args:
             drop: 掉落记录对象，用于截图统计。
@@ -722,15 +777,20 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         Returns:
             是否点击了获得舰船画面。
         """
-        if self.appear_then_click(GET_SHIP, interval=1):
+        if not self.appear(GET_SHIP):
+            return False
+        self._hold_exp_for_get_ship()
+        if self.handle_popup_confirm('GET_SHIP'):
+            logger.info('[战斗-舰船] 锁定新舰船')
+            self.config.GET_SHIP_TRIGGERED = True
+            return True
+        if self.appear_then_click(GET_SHIP, interval=2):
             if self.appear(NEW_SHIP):
                 logger.info('[战斗-舰船] 获得新舰船')
                 if drop:
                     drop.handle_add(self)
                 self.config.GET_SHIP_TRIGGERED = True
-            return True
-
-        return False
+        return True
 
     def handle_combat_mis_click(self):
         """
@@ -772,29 +832,38 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         self.device.screenshot_interval_set()
         self.device.stuck_record_clear()
         self.device.click_record_clear()
+        self._get_ship_exp_hold = None
         battle_status = False
         exp_info = False  # 用于处理游戏白屏 bug
         for _ in self.loop():
-
-            # 检测预期结束状态
-            if isinstance(expected_end, str):
-                if expected_end == 'in_stage' and self.handle_in_stage():
-                    break
-                if expected_end == 'with_searching' and self.handle_in_map_with_enemy_searching(drop=drop):
-                    break
-                if expected_end == 'no_searching' and self.handle_in_map_no_enemy_searching(drop=drop):
-                    break
-                if expected_end == 'in_ui' and self.appear(BACK_ARROW, offset=(30, 30)):
-                    break
-            if callable(expected_end):
-                if expected_end():
-                    break
-
             if self.handle_story_skip(drop=drop):
                 continue
-            # 处理战斗结算画面
+            # 船坞已满盖在 GET_SHIP/EXP 上。不处理会连点结算直到 GameStuck
+            # （Asami67 16-4 2026-09-15 10:42 / 13:54）。点 RETIRE 后
+            # handle_retirement 返回 False，弹窗仍在时也要挡住结算点击。
+            if self.handle_retirement() or self.retirement_appear():
+                continue
             if self.handle_get_ship(drop=drop):
                 continue
+
+            # IN_MAP / 关卡页必须在 overlay 之后：船坞满或新船卡会误匹配
+            # IN_MAP，随后卡在敌人搜索循环（1_67 2026-09-16 14:22）。
+            overlayed = (not self._exp_hold_reached()) or self.retirement_appear()
+            if not overlayed:
+                if isinstance(expected_end, str):
+                    if expected_end == 'in_stage' and self.handle_in_stage():
+                        break
+                    if expected_end == 'with_searching' and self.handle_in_map_with_enemy_searching(drop=drop):
+                        break
+                    if expected_end == 'no_searching' and self.handle_in_map_no_enemy_searching(drop=drop):
+                        break
+                    if expected_end == 'in_ui' and self.appear(BACK_ARROW, offset=(30, 30)):
+                        break
+                if callable(expected_end):
+                    if expected_end():
+                        break
+
+            # 处理战斗结算画面
             if self.handle_get_items(drop=drop):
                 continue
             if self.handle_popup_confirm('COMBAT_STATUS'):
@@ -837,7 +906,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             # 检测到关卡选择画面，退出循环
             if self.handle_in_stage():
                 break
-            if expected_end is None:
+            if expected_end is None and not overlayed:
                 if self.handle_in_map_with_enemy_searching(drop=drop):
                     break
 

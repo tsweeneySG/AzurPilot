@@ -12,7 +12,6 @@
 
 from datetime import timedelta
 
-from module.exception import RequestHumanTakeover
 from module.config.time_source import now as current_time
 from module.logger import logger
 from module.os.map import OSMap
@@ -132,6 +131,30 @@ class OpsiAbyssal(CoinTaskMixin, OSMap):
         self.config.task_delay(minute=60)
         self.config.task_stop()
 
+    def _handle_abyssal_fleet_exhausted(self):
+        """
+        深渊 Boss 打不过时退出地图并推迟任务，不请求人工接管。
+
+        舰队耗尽是已知战斗结果，重启或停机都无法变强。调度器应继续其他任务。
+        """
+        logger.warning('[大世界-深渊坐标] 无法击败 Boss，舰队已耗尽，退出地图并推迟任务')
+        try:
+            self.map_exit()
+        except Exception as e:
+            logger.warning(f'[大世界-深渊坐标] 退出深渊地图失败: {e}')
+        try:
+            self.handle_fleet_repair_by_config(revert=False)
+        except Exception as e:
+            logger.warning(f'[大世界-深渊坐标] 港口修理失败: {e}')
+
+        if self.is_running_smart_scheduling_task():
+            logger.info('[大世界-深渊坐标] 智能调度+代理执行中，本轮跳过深渊')
+            self._smart_scheduling_no_content_task = 'OpsiAbyssal'
+            return
+
+        self.config.task_delay(success=False)
+        self.config.task_stop()
+
     def clear_abyssal(self):
         """
         清理一个深渊坐标。
@@ -144,8 +167,7 @@ class OpsiAbyssal(CoinTaskMixin, OSMap):
 
         Raises:
             ActionPointLimit: 行动力不足。
-            TaskEnd: 没有更多深渊日志仪。
-            RequestHumanTakeover: 无法击败 Boss，舰队耗尽。
+            TaskEnd: 没有更多深渊日志仪，或无法击败 Boss 已推迟任务。
         """
         logger.hr('大世界-深渊坐标', level=1)
         self.cl1_ap_preserve()
@@ -174,7 +196,8 @@ class OpsiAbyssal(CoinTaskMixin, OSMap):
         with self.config.temporary(_disable_task_switch=True):
             result = self.run_abyssal()
             if not result:
-                raise RequestHumanTakeover
+                self._handle_abyssal_fleet_exhausted()
+                return False
 
             self.handle_fleet_repair_by_config(revert=False)
 

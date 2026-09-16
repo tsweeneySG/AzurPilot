@@ -20,7 +20,7 @@ from module.exception import CampaignEnd, CampaignNameError, ScriptEnd
 from module.logger import logger
 from module.map.assets import WITHDRAW
 from module.map.map_operation import MapOperation
-from module.ui.assets import CAMPAIGN_CHECK
+from module.ui.assets import CAMPAIGN_CHECK, CAMPAIGN_MENU_CHECK, EVENT_CHECK
 from module.ui.switch import Switch
 
 
@@ -326,6 +326,30 @@ class CampaignUI(MapOperation, CampaignEvent, CampaignOcr):
         entrance.name = entrance_name
         return entrance
 
+    def _campaign_mainline_stages_ready(self):
+        """主线章节列表是否已出现可 OCR 的数字关卡名。
+
+        活动页 BACK 或出击菜单上 CAMPAIGN_CHECK 会先命中，此时切模式/OCR
+        会得到空结果，ensure_campaign_ui 耗尽后 ScriptEnd。
+
+        Returns:
+            bool: True 表示当前是主线数字章节列表。
+        """
+        if self.appear(EVENT_CHECK, offset=(30, 30), interval=0):
+            logger.warning('[战役-UI] 主线章节列表尚未出现（仍在活动页）')
+            return False
+        if self.appear(CAMPAIGN_MENU_CHECK, offset=(30, 30), interval=0):
+            logger.warning('[战役-UI] 主线章节列表尚未出现（仍在出击菜单）')
+            return False
+        try:
+            self._get_stage_name(self.device.image)
+        except (CampaignNameError, IndexError):
+            return False
+        if not is_digit_chapter(getattr(self, 'campaign_chapter', None)):
+            logger.warning(f'[战役-UI] 关卡列表不是主线章节: {self.campaign_chapter}')
+            return False
+        return True
+
     def campaign_set_chapter_main(self, chapter, mode='normal'):
         """
         设置主线战役章节。
@@ -341,6 +365,10 @@ class CampaignUI(MapOperation, CampaignEvent, CampaignOcr):
         """
         if chapter.isdigit():
             self.ui_goto_campaign()
+            # 活动 BACK / 心跳会先报 page_campaign，关卡列表还不是主线。
+            # 先确认数字关卡名，再切模式，避免在空列表或活动页上点 SWITCH_1_HARD。
+            if not self._campaign_mainline_stages_ready():
+                raise CampaignNameError
             self.campaign_ensure_mode('normal')
             self.campaign_ensure_chapter(chapter)
             if mode == 'hard':

@@ -238,7 +238,8 @@ class OSMapOperation(MapOrderHandler, MissionHandler, PortHandler, StorageHandle
                 os_state = os_from_heartbeat(self.config)
                 zone_id = os_state.get('zone_id') if isinstance(os_state, dict) else None
                 if zone_id is not None:
-                    self.zone = self.name_to_zone(int(zone_id))
+                    from module.alas_bridge.os_missions import game_entrance_to_alas_zone
+                    self.zone = self.name_to_zone(game_entrance_to_alas_zone(int(zone_id)))
                     logger.attr('海域', self.zone)
                     self.zone_config_set()
                     return self.zone
@@ -266,6 +267,26 @@ class OSMapOperation(MapOrderHandler, MissionHandler, PortHandler, StorageHandle
             self.config.HOMO_EDGE_COLOR_RANGE = (0, 33)
             self.config.MAP_ENSURE_EDGE_INSIGHT_CORNER = ''
 
+    def os_wait_in_map(self, timeout=20):
+        """等海域地图 UI。GetInMap 在切图开始时就会变 true，不能当到达。
+
+        Args:
+            timeout (int): 超时秒数。
+
+        Returns:
+            bool: 已在海域地图。
+        """
+        if self.is_in_map():
+            return True
+        for _ in self.loop(timeout=timeout):
+            if self.is_in_map():
+                return True
+            if self.is_in_globe() or self.appear(GLOBE_GOTO_MAP, offset=(20, 20)):
+                self.os_globe_goto_map()
+                return self.is_in_map()
+        logger.warning('[大世界-地图操作] 等待海域地图超时')
+        return self.is_in_map()
+
     def zone_init(self, fallback_init=True):
         """
         包装 get_current_zone()，设置 self.zone 为当前海域。
@@ -281,9 +302,31 @@ class OSMapOperation(MapOrderHandler, MissionHandler, PortHandler, StorageHandle
             MapDetectionError: 解析海域名称失败时抛出。
         """
         logger.hr('[大世界-地图操作] 区域初始化')
+        try:
+            from module.alas_bridge.actions import bridge_enabled, os_from_heartbeat
+            if bridge_enabled(self.config):
+                os_state = os_from_heartbeat(self.config)
+                zone_id = os_state.get('zone_id') if isinstance(os_state, dict) else None
+                if zone_id is not None:
+                    logger.info('[大世界-地图操作] 获取区域名称 (bridge)')
+                    if self.is_in_map():
+                        return self.get_current_zone()
+                    logger.info('[大世界-地图操作] 不在海域地图，进入当前海域')
+                    try:
+                        from module.alas_bridge.os_missions import run_os_globe_goto
+                        run_os_globe_goto(
+                            self.config, int(zone_id), types=('SAFE', 'DANGEROUS'),
+                            alas_ids=False)
+                    except Exception as e:
+                        logger.info(f'Sweeney OS enter from globe miss: {e}')
+                    self.os_wait_in_map()
+                    return self.get_current_zone()
+        except Exception as e:
+            logger.info(f'Sweeney OS zone_init miss: {e}')
         self.wait_os_map_buttons()
         logger.info('[大世界-地图操作] 获取区域名称')
         timeout = Timer(1.5, count=5).start()
+        hard = Timer(8, count=20).start()
         for _ in self.loop():
             # 处理弹窗
             if self.handle_map_event():
@@ -294,9 +337,12 @@ class OSMapOperation(MapOrderHandler, MissionHandler, PortHandler, StorageHandle
                 continue
             # 月度重置后 EXCHANGE_CHECK 弹窗
             if self.is_in_globe():
-                self.os_globe_goto_map()
-                timeout.reset()
-                continue
+                try:
+                    return self.get_current_zone()
+                except MapDetectionError:
+                    self.os_globe_goto_map()
+                    timeout.reset()
+                    continue
             if self.appear(EXCHANGE_CHECK, offset=(30, 30), interval=3):
                 self.device.click(BACK_ARROW)
                 timeout.reset()
@@ -308,7 +354,7 @@ class OSMapOperation(MapOrderHandler, MissionHandler, PortHandler, StorageHandle
                 timeout.reset()
                 continue
 
-            if timeout.reached():
+            if hard.reached() or timeout.reached():
                 logger.warning('[大世界-地图操作] 区域初始化超时')
                 break
             if self.is_in_map():
@@ -316,8 +362,6 @@ class OSMapOperation(MapOrderHandler, MissionHandler, PortHandler, StorageHandle
                     return self.get_current_zone()
                 except MapDetectionError:
                     continue
-            else:
-                timeout.reset()
 
         if fallback_init:
             logger.warning('[大世界-地图] 无法获取区域名称，从地球仪获取当前区域')

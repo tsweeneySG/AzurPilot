@@ -150,6 +150,10 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         map_click = 0
         fleet_click = 0
         checked_in_map = False
+        self._enter_map_saw_load_bar = False
+        self._enter_map_bar_this_frame = False
+        self._enter_map_load_bar_finished = False
+        self._enter_map_combat_started = False
         self.stage_entrance = button
         self.map_clear_percentage_prev = -1
         self.map_clear_percentage_timer.reset()
@@ -165,9 +169,10 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
 
                 # 检查错误
                 if campaign_click > 5:
-                    logger.critical(f"[Map] 无法进入 {button}，对 {button} 的点击次数过多")
-                    logger.critical("[Map] 可能原因 #1: 您尚未达到解锁该关卡的指挥官等级。")
-                    raise RequestHumanTakeover
+                    logger.warning(f"[Map] 无法进入 {button}，对 {button} 的点击次数过多")
+                    logger.warning("[Map] 可能原因 #1: 关卡未解锁、章节页未切完、或仍有覆盖层。")
+                    logger.warning("[Map] 推迟任务而非重启模拟器")
+                    raise ScriptEnd('Cannot enter map')
                 if fleet_click > 5:
                     logger.critical(f"[Map] 无法进入 {button}，对 FLEET_PREPARATION 的点击次数过多")
                     logger.critical("[Map] 可能原因 #1: "
@@ -269,11 +274,13 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                     campaign_timer.reset()
                     continue
 
-                # 进入战役
-                if campaign_timer.reached() and self.appear_then_click(button):
-                    campaign_click += 1
-                    campaign_timer.reset()
-                    continue
+                # 进入战役。加载条出现后不要再点关卡入口，否则 JP 暂停键误判
+                # 时会连点 16-4 直到 RequestHumanTakeover。
+                if not getattr(self, '_enter_map_saw_load_bar', False):
+                    if campaign_timer.reached() and self.appear_then_click(button):
+                        campaign_click += 1
+                        campaign_timer.reset()
+                        continue
 
                 # 结束判断
                 if self.map_is_auto_search:
@@ -287,28 +294,92 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                     if self._enter_map_combat_loading_means_entered():
                         logger.warning('[地图-操作] 进入地图时战斗已开始')
                         break
-                    if hasattr(self, 'is_combat_loading') and self.is_combat_loading():
-                        # 进图加载条与战斗加载共用模板（常见 2%）。
-                        # 手动图此时结束 enter_map 会让 map_init 在非地图画面上
-                        # 抛 MapDetectionError。
+                    if getattr(self, '_enter_map_bar_this_frame', False):
+                        # 第一段进图加载条与战斗加载共用模板（常见 2%）。
+                        # 此时不要结束 enter_map。第二段加载条由
+                        # _enter_map_combat_loading_means_entered 判为战斗。
                         continue
+                    if not getattr(self, '_enter_map_saw_load_bar', False):
+                        if hasattr(self, 'is_combat_loading') and self.is_combat_loading():
+                            continue
                     if self.handle_in_map_with_enemy_searching():
                         # self.handle_map_after_combat_story()
                         break
 
         return True
 
+    def _enter_map_heartbeat_battle_busy(self):
+        """Sweeney 心跳是否已在战斗中。比 JP 暂停键颜色可靠。"""
+        config = getattr(self, 'config', None)
+        if config is None:
+            return False
+        try:
+            from module.alas_bridge.actions import battle_state_from_heartbeat
+            state = battle_state_from_heartbeat(config, max_age=3.0)
+        except Exception:
+            return False
+        return state in ('BATTLE_FIGHT', 'BATTLE_OPENING', 'BATTLE_REPORT')
+
+    def _enter_map_pause_is_template_reliable(self):
+        """CN/EN 暂停键走 luma 模板；JP/TW 颜色回退会把进图画面当成战斗。"""
+        config = getattr(self, 'config', None)
+        server = getattr(config, 'SERVER', None) if config is not None else None
+        return server in ('cn', 'en')
+
+    def _map_init_should_finish_combat(self):
+        """map_init 扫描前：若已在战斗/战斗加载中，先 combat()。
+
+        不用 JP 暂停键颜色。16-1 潜艇支援打完后已在地图上则返回 False。
+        """
+        if hasattr(self, 'combat_appear') and self.combat_appear():
+            return True
+        if hasattr(self, 'is_combat_loading_bar') and self.is_combat_loading_bar():
+            return True
+        return self._enter_map_heartbeat_battle_busy()
+
     def _enter_map_combat_loading_means_entered(self):
-        """进图加载条会被当成战斗加载。自动搜索可直接开打；手动图只有暂停键出现才算进战。
+        """进图加载条会被当成战斗加载。自动搜索可直接开打。
+
+        手动图：第一段加载条走完后 JP 暂停键颜色会误判“战斗已开始”。
+        见过加载条后等到 in_map，不要用暂停键回退结束 enter_map。
+        但加载走完后又出现加载条、心跳已在战斗、或 CN/EN 暂停键模板
+        命中时，说明已经开打，应结束 enter_map 交给 combat()。
 
         Returns:
             bool: True 表示 enter_map 应结束，交给后续战斗或自动搜索。
         """
-        if not hasattr(self, 'is_combat_loading') or not self.is_combat_loading():
-            return False
+        bar = hasattr(self, 'is_combat_loading_bar') and self.is_combat_loading_bar()
+        self._enter_map_bar_this_frame = bar
+        if bar:
+            if getattr(self, '_enter_map_load_bar_finished', False):
+                self._enter_map_combat_started = True
+                return True
+            self._enter_map_saw_load_bar = True
+            loading = True
+        elif getattr(self, '_enter_map_saw_load_bar', False):
+            # 加载条走完后 JP 暂停键颜色会每帧打 “未检测到加载条”。
+            self._enter_map_load_bar_finished = True
+            loading = False
+        else:
+            loading = hasattr(self, 'is_combat_loading') and self.is_combat_loading()
         if self.map_is_auto_search:
-            return True
-        return hasattr(self, 'is_combat_executing') and self.is_combat_executing()
+            return bool(loading)
+        if loading:
+            if getattr(self, '_enter_map_saw_load_bar', False):
+                return False
+            if hasattr(self, 'is_combat_executing') and self.is_combat_executing():
+                self._enter_map_combat_started = True
+                return True
+            return False
+        if getattr(self, '_enter_map_saw_load_bar', False):
+            if self._enter_map_heartbeat_battle_busy():
+                self._enter_map_combat_started = True
+                return True
+            if self._enter_map_pause_is_template_reliable():
+                if hasattr(self, 'is_combat_executing') and self.is_combat_executing():
+                    self._enter_map_combat_started = True
+                    return True
+        return False
 
     def enter_map_cancel(self, skip_first_screenshot=True):
         """取消进入地图，从地图准备界面退回关卡选择界面。
@@ -458,7 +529,8 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
     def _bridge_try_chapter_track(self):
         """
         通过 Sweeney 桥发送 GAME.TRACKING，替代点击出击。
-        未开自动搜索时打开舰队选择，以便仍可处理 2x 教材 / 职责。
+        未开自动搜索时打开舰队选择，以便仍可处理职责。
+        2x 教材由 chapter_track 的 use_2x_book 写入 TRACKING.operationItem。
         """
         try:
             from module.alas_bridge.actions import bridge_enabled, chapter_track

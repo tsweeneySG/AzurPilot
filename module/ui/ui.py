@@ -151,12 +151,29 @@ class UI(InfoHandler):
             return False
         return True
 
+    def _ui_goto_blocked_by_dest_chrome(self, destination):
+        """目标是主线章节列表时，活动页或出击菜单 chrome 仍在则未到达。
+
+        page_event BACK 后 CAMPAIGN_CHECK / 心跳会先报 page_campaign，
+        关卡名还是活动或菜单，随后 Mode_switch_1 与 OCR 空转。
+        """
+        if destination != page_campaign:
+            return False
+        if self.appear(CAMPAIGN_MENU_CHECK, offset=(30, 30), interval=0):
+            return True
+        if self.appear(EVENT_CHECK, offset=(30, 30), interval=0):
+            return True
+        return False
+
     def _ui_click_toward_parent(self, page):
         """沿 A* parent 点击一跳。受 interval 限制，点击则返回 True。"""
         if page is None or page.parent is None:
             return False
         button = page.links.get(page.parent)
         if button is None:
+            return False
+        if self._ui_skip_home_click(button):
+            logger.info('[UI] 已在主界面，跳过 GOTO_MAIN（避免打开设置）')
             return False
         timer = self.get_interval_timer(button, interval=5, renew=True)
         if not timer.reached():
@@ -214,9 +231,56 @@ class UI(InfoHandler):
         logger.info('Reject stale bridge page_in_map (no map chrome)')
         return page_main
 
+    def _reject_stale_bridge_campaign(self, bridged):
+        if bridged is None or bridged.name != 'page_campaign':
+            return bridged
+        if self.appear(CAMPAIGN_MENU_CHECK, offset=(30, 30), interval=0):
+            logger.info('Reject stale bridge page_campaign (campaign menu)')
+            return page_campaign_menu
+        if self.appear(EVENT_CHECK, offset=(30, 30), interval=0):
+            logger.info('Reject stale bridge page_campaign (event list)')
+            return page_event
+        return bridged
+
     def is_in_main(self, offset=(30, 30), interval=0):
         return (self.ui_page_appear(page_main, offset=offset, interval=interval)
                 or self.ui_page_appear(page_main_white, offset=offset, interval=interval))
+
+    def _ui_home_chrome_visible(self, offset=(30, 30)):
+        """主界面出击/编队按钮。右上角齿轮与 GOTO_MAIN_WHITE 同位置。"""
+        return (
+            self.appear(MAIN_GOTO_CAMPAIGN, offset=offset, interval=0)
+            or self.appear(MAIN_GOTO_CAMPAIGN_WHITE, offset=offset, interval=0)
+            or self.appear(MAIN_GOTO_FLEET, offset=offset, interval=0)
+            or self.appear(MAIN_GOTO_FLEET_WHITE, offset=offset, interval=0)
+        )
+
+    def _ui_page_from_home_chrome(self):
+        if self.appear(MAIN_GOTO_CAMPAIGN_WHITE, offset=(30, 30), interval=0):
+            return page_main_white
+        return page_main
+
+    def _ui_skip_home_click(self, button):
+        """GOTO_MAIN 与主界面设置齿轮同位置。已在主界面时再点会打开设置。"""
+        if button not in (GOTO_MAIN, GOTO_MAIN_WHITE):
+            return False
+        return self._ui_home_chrome_visible()
+
+    def _ui_unknown_prefer_back(self):
+        """设置页有 Back，HOME 六边形无效。Back 可见时不要点 HOME/齿轮。
+
+        Returns:
+            bool: True 表示应继续截图（已点 Back，或 Back 在 interval 内）。
+        """
+        if self.appear_then_click(BACK_ARROW, offset=(30, 30), interval=2):
+            return True
+        if self.appear_then_click(BACK_ARROW_WHITE, offset=(30, 30), interval=2):
+            return True
+        if self.appear(BACK_ARROW, offset=(30, 30), interval=0):
+            return True
+        if self.appear(BACK_ARROW_WHITE, offset=(30, 30), interval=0):
+            return True
+        return False
 
     def ui_main_appear_then_click(self, page, offset=(30, 30), interval=3):
         """
@@ -348,6 +412,7 @@ class UI(InfoHandler):
                     self.device.screenshot()
                 if page.name == 'page_in_map':
                     page = self._reject_stale_bridge_in_map(page)
+                page = self._reject_stale_bridge_campaign(page)
                 return page
             logger.info("Sweeney bridge miss, screenshot fallback")
 
@@ -387,6 +452,18 @@ class UI(InfoHandler):
 
             # 未知页面但可以处理
             logger.info("[UI] 未知UI页面")
+            # 设置页没有 check_button。Back 关闭；HOME 六边形无效，且与齿轮同槽。
+            # Back 在 interval 内时也要等，不能立刻改点 GOTO_MAIN。
+            if self._ui_unknown_prefer_back():
+                timeout.reset()
+                continue
+            # 主界面右上角齿轮与 GOTO_MAIN / GOTO_MAIN_WHITE 同位置。
+            if self._ui_home_chrome_visible():
+                page = self._ui_page_from_home_chrome()
+                logger.attr("UI", page.name)
+                logger.info("[UI] 未知页看到主界面 chrome，不点击 HOME（避免打开设置）")
+                self.ui_current = page
+                return page
             if self.appear_then_click(GOTO_MAIN, offset=(30, 30), interval=2):
                 timeout.reset()
                 continue
@@ -468,11 +545,14 @@ class UI(InfoHandler):
                 bridged = self._try_sweeney_current_page(verbose=False)
                 if bridged is not None:
                     bridged = self._reject_stale_bridge_in_map(bridged)
+                    bridged = self._reject_stale_bridge_campaign(bridged)
 
             # 到达目标页面
             if self.ui_page_appear(page=destination, offset=offset):
                 if self._ui_goto_blocked_by_source(destination, offset=offset):
                     logger.info(f'[UI] 忽略 {destination} 检测 (仍在 {self.ui_current})')
+                elif self._ui_goto_blocked_by_dest_chrome(destination):
+                    logger.info(f'[UI] 忽略 {destination} 检测 (仍有活动/出击菜单 chrome)')
                 elif self._ui_goto_blocked_by_bridge(destination, bridged):
                     # 像素已到目标、心跳仍滞后。作战档案应空等；
                     # 出击菜单误匹配 CAMPAIGN_CHECK 时必须点进章节列表。
@@ -499,8 +579,11 @@ class UI(InfoHandler):
                 if page.parent is None or page.check_button is None:
                     continue
                 if self.appear(page.check_button, offset=offset, interval=5):
-                    logger.info(f'[UI] 页面切换: {page} -> {page.parent}')
                     button = page.links[page.parent]
+                    if self._ui_skip_home_click(button):
+                        logger.info('[UI] 已在主界面，跳过 GOTO_MAIN（避免打开设置）')
+                        continue
+                    logger.info(f'[UI] 页面切换: {page} -> {page.parent}')
                     self.device.click(button)
                     self.ui_button_interval_reset(button)
                     clicked = True
@@ -517,6 +600,14 @@ class UI(InfoHandler):
             # 出击菜单新布局不再显示 MAIN，CAMPAIGN_MENU_CHECK 会漏检。
             # 心跳仍是 page_campaign_menu 时，按链接点进章节列表。
             if self._ui_click_toward_parent(bridged):
+                nav_timeout.reset()
+                continue
+            # 设置页无 check_button；心跳丢失时只能点 Back。
+            on_settings = (
+                getattr(bridged, 'name', None) == 'page_settings'
+                or getattr(self.ui_current, 'name', None) == 'page_settings'
+            )
+            if on_settings and self._ui_unknown_prefer_back():
                 nav_timeout.reset()
                 continue
 

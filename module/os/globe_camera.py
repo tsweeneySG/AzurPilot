@@ -290,7 +290,22 @@ class GlobeCamera(GlobeOperation, ZoneManager):
         zone = self.name_to_zone(zone)
         logger.info(f'[大世界-地球仪] 聚焦到: {zone.zone_id}')
 
+        click_count = 0
+        attempts = 0
         while 1:
+            attempts += 1
+            if click_count >= 5 or attempts >= 8:
+                logger.warning(
+                    f'[大世界-地球仪] 无法固定海域 {zone}，推迟任务而非连点'
+                )
+                try:
+                    self.device.click_record_clear()
+                    self.device.stuck_record_clear()
+                except Exception:
+                    pass
+                self.config.task_delay(minute=30)
+                self.config.task_stop('Cannot pin globe zone')
+
             if self.handle_zone_pinned():
                 self.globe_update()
                 continue
@@ -300,6 +315,7 @@ class GlobeCamera(GlobeOperation, ZoneManager):
             # Click zone
             button = self.zone_to_button(zone)
             self.device.click(button)
+            click_count += 1
             # Wait until zone pinned
             if self.globe_wait_until_zone_pinned(zone):
                 break

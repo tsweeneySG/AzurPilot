@@ -69,11 +69,17 @@ class Scroll:
             float: 位置值，0 到 1 之间。
         """
         mask = self.match_color(main)
-        middle = np.mean(np.where(mask)[0])
-
-        position = (middle - self.length / 2) / (self.total - self.length)
-        position = position if position > 0 else 0.0
-        position = position if position < 1 else 1.0
+        where = np.where(mask)[0]
+        middle = np.mean(where) if len(where) else 0.0
+        denom = self.total - self.length
+        # 滑块占满轨道时分母为 0 或负数，numpy 会算出 inf，再被夹成 1.00，
+        # 于是 at_top 为假、init_slider 会不停 set_top。
+        if denom <= 0 or not np.isfinite(middle):
+            position = 0.0
+        else:
+            position = (middle - self.length / 2) / denom
+            position = position if position > 0 else 0.0
+            position = position if position < 1 else 1.0
         logger.attr(self.name, f'{position:.2f} ({middle}-{self.length / 2})/({self.total}-{self.length})')
         return position
 
@@ -119,11 +125,28 @@ class Scroll:
         """
         return np.mean(self.match_color(main)) > 0.1
 
+    def thumb_fills_track(self):
+        """列表过短时滑块几乎占满轨道，无法滚动。
+
+        AdaptiveScroll 在直布罗陀等短列表上报 length≈total（甚至略大），
+        位置被夹成 0.00，at_bottom 永远为假，pre_scroll 会当成拖动失败。
+
+        Returns:
+            bool: 滑块已占满轨道。
+        """
+        return self.length >= max(self.total - 2, 1)
+
     def at_top(self, main):
-        return self.cal_position(main) < self.edge_threshold
+        pos = self.cal_position(main)
+        if self.thumb_fills_track():
+            return True
+        return pos < self.edge_threshold
 
     def at_bottom(self, main):
-        return self.cal_position(main) > 1 - self.edge_threshold
+        pos = self.cal_position(main)
+        if self.thumb_fills_track():
+            return True
+        return pos > 1 - self.edge_threshold
 
     def set(self, position, main, random_range=(-0.05, 0.05), distance_check=True, skip_first_screenshot=True):
         """
@@ -155,6 +178,9 @@ class Scroll:
                 main.device.screenshot()
 
             current = self.cal_position(main)
+            if self.thumb_fills_track() or self.total <= self.length:
+                logger.info(f'{self.name} 列表过短，跳过拖拽')
+                break
             if abs(position - current) < self.drag_threshold:
                 break
             if self.length:
@@ -194,6 +220,8 @@ class Scroll:
         if not skip_first_screenshot:
             main.device.screenshot()
         current = self.cal_position(main)
+        if self.thumb_fills_track() or self.total <= self.length:
+            return False
 
         multiply = self.length / (self.total - self.length)
         target = current + page * multiply

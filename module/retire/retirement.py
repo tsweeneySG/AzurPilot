@@ -12,8 +12,10 @@ from module.base.button import Button, ButtonGrid
 from module.base.filter import Filter
 from module.base.timer import Timer
 from module.base.utils import color_similar, get_color, resize, lower_template_match_similarity
-from module.combat.assets import GET_ITEMS_1
-from module.exception import RequestHumanTakeover, ScriptError
+from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2
+from module.config.config import TaskEnd
+from module.exception import (
+    GameStuckError, GameTooManyClickError, RequestHumanTakeover, ScriptError)
 from module.handler.assets import AUTO_SEARCH_MAP_OPTION_OFF, AUTO_SEARCH_MAP_OPTION_ON
 from module.logger import logger
 from module.retire.assets import (
@@ -25,9 +27,10 @@ from module.retire.assets import (
     TEMPLATE_DOWNES_1, TEMPLATE_DOWNES_2, TEMPLATE_FOOTE, TEMPLATE_HERMES,
     TEMPLATE_LANGLEY, TEMPLATE_RANGER, TEMPLATE_Z20, TEMPLATE_Z21
 )
-from module.retire.enhancement import Enhancement
+from module.retire.enhancement import Enhancement, OCR_DOCK_AMOUNT
 from module.retire.scanner import ShipScanner
 from module.retire.setting import QuickRetireSettingHandler
+from module.ui.assets import BACK_ARROW
 from module.ui.scroll import Scroll
 
 CARD_GRIDS = ButtonGrid(
@@ -84,10 +87,12 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
 
     Attributes:
         _unable_to_enhance (bool): 标记当前是否无法强化，切换到退役流程。
+        _retire_exhausted (bool): 本轮一键/旧退役已确认无舰可退，勿再点进退役。
         _have_kept_cv (bool): 标记是否已保留一艘普通航母。
         map_cat_attack_timer (Timer): 用于战斗中退役弹窗的计时。
     """
     _unable_to_enhance = False
+    _retire_exhausted = False
     _have_kept_cv = True
 
     # 来自 MapOperation，用于战斗中退役弹窗的计时
@@ -154,26 +159,32 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
         """
         logger.info('[退役-确认] 退役确认')
         executed = False
-        for button in [SHIP_CONFIRM, SHIP_CONFIRM_2, EQUIP_CONFIRM, EQUIP_CONFIRM_2, GET_ITEMS_1, SR_SSR_CONFIRM]:
+        for button in [SHIP_CONFIRM, SHIP_CONFIRM_2, EQUIP_CONFIRM, EQUIP_CONFIRM_2,
+                       GET_ITEMS_1, GET_ITEMS_2, SR_SSR_CONFIRM]:
             self.interval_clear(button)
         self.popup_interval_clear()
         timeout = Timer(10, count=10).start()
+        # 拆解确认后获得物品会晚一帧出现，不能刚看到船坞就退出
+        stable = Timer(1.2, count=2)
         while 1:
             if skip_first_screenshot:
                 skip_first_screenshot = False
             else:
                 self.device.screenshot()
 
+            overlay = self._retirement_overlay_visible()
+
             # 结束条件——超时兜底
             if timeout.reached():
                 logger.warning('[退役-确认] 等待退役确认超时，假设已完成')
                 break
-            # 有时 EQUIP_CONFIRM 没有黑色模糊背景，与 IN_RETIREMENT_CHECK 同时出现
-            if self.appear(IN_RETIREMENT_CHECK, offset=(20, 20)) and not self.appear(EQUIP_CONFIRM, offset=(30, 30)):
-                if executed:
+            if executed and self.appear(IN_RETIREMENT_CHECK, offset=(20, 20)) and not overlay:
+                if stable.reached():
                     break
             else:
-                timeout.reset()
+                stable.reset()
+                if overlay or not self.appear(IN_RETIREMENT_CHECK, offset=(20, 20)):
+                    timeout.reset()
 
             # 点击——按显示层级排序
             # SR/SSR 确认弹窗（一键退役或旧模式退役 SR/SSR 时出现）
@@ -207,19 +218,8 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
             if self.match_template_color(SHIP_CONFIRM, offset=(30, 30), interval=2):
                 self.device.click(SHIP_CONFIRM)
                 continue
-            # 装备拆解确认
-            if self.appear_then_click(EQUIP_CONFIRM, offset=(30, 30), interval=2):
-                continue
-            if self.appear_then_click(EQUIP_CONFIRM_2, offset=(30, 30), interval=2):
-                self.interval_clear(GET_ITEMS_1)
+            if self._handle_retirement_overlay():
                 executed = True
-                continue
-            # 获得物品画面
-            if self.appear(GET_ITEMS_1, offset=(30, 30), interval=2):
-                self.device.click(GET_ITEMS_1_RETIREMENT_SAVE)
-                self.interval_reset(SHIP_CONFIRM)
-                # 下一个出现的是装备拆解确认
-                self.interval_clear([EQUIP_CONFIRM, EQUIP_CONFIRM_2])
                 continue
 
     def retirement_appear(self):
@@ -233,17 +233,64 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
                and self.appear(RETIRE_APPEAR_2, offset=30) \
                and self.appear(RETIRE_APPEAR_3, offset=30)
 
+    def _retirement_overlay_visible(self):
+        """获得物品或装备拆解确认是否挡住退役船坞。"""
+        return self.appear(GET_ITEMS_1, offset=(30, 30)) \
+            or self.appear(GET_ITEMS_2, offset=(30, 30)) \
+            or self.appear(EQUIP_CONFIRM, offset=(30, 30)) \
+            or self.appear(EQUIP_CONFIRM_2, offset=(30, 30))
+
+    def _handle_retirement_overlay(self):
+        """关掉退役后的获得物品 / 拆解确认。挡住时点返回无效。
+
+        Returns:
+            bool: True 表示已点击，需要新截图。
+        """
+        if self.appear(GET_ITEMS_1, offset=(30, 30), interval=2):
+            self.device.click(GET_ITEMS_1_RETIREMENT_SAVE)
+            self.interval_reset(SHIP_CONFIRM)
+            self.interval_clear([EQUIP_CONFIRM, EQUIP_CONFIRM_2, GET_ITEMS_2])
+            return True
+        if self.appear(GET_ITEMS_2, offset=(30, 30), interval=2):
+            self.device.click(GET_ITEMS_2)
+            self.interval_clear([EQUIP_CONFIRM, EQUIP_CONFIRM_2, GET_ITEMS_1])
+            return True
+        if self.appear_then_click(EQUIP_CONFIRM, offset=(30, 30), interval=2):
+            return True
+        if self.appear_then_click(EQUIP_CONFIRM_2, offset=(30, 30), interval=2):
+            self.interval_clear([GET_ITEMS_1, GET_ITEMS_2])
+            return True
+        return False
+
     def _retirement_quit(self):
         """
         退出退役/船坞界面，返回上一级页面。
 
-        通过 ui_back 逐级返回，直到 IN_RETIREMENT_CHECK 和 DOCK_CHECK 均消失。
+        先关掉获得物品/拆解确认，再点返回。否则 BACK 点在遮罩上，
+        会一直等到 GameStuckError（nyan 2026-09-12）。
         """
-        def check_func():
+        def page_gone():
             return not self.appear(IN_RETIREMENT_CHECK, offset=(20, 20)) \
                    and not self.appear(DOCK_CHECK, offset=(20, 20))
 
-        self.ui_back(check_button=check_func, skip_first_screenshot=True)
+        def check_func():
+            return page_gone() and not self._retirement_overlay_visible()
+
+        def appear_back():
+            return not self._retirement_overlay_visible() and (
+                self.appear(IN_RETIREMENT_CHECK, offset=(20, 20))
+                or self.appear(DOCK_CHECK, offset=(20, 20))
+            )
+
+        self.ui_click(
+            click_button=BACK_ARROW,
+            check_button=check_func,
+            appear_button=appear_back,
+            additional=self._handle_retirement_overlay,
+            offset=(30, 30),
+            retry_wait=3,
+            skip_first_screenshot=True,
+        )
 
     @property
     def _retire_rarity(self):
@@ -505,6 +552,92 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
 
         return total
 
+    def _ocr_dock_remain(self):
+        """识别船坞剩余空位。失败返回 None，不要当成 0。"""
+        try:
+            _, remain, total = OCR_DOCK_AMOUNT.ocr(self.device.image)
+            if total > 0 and remain >= 0:
+                return remain
+        except Exception as e:
+            logger.info(f'[退役-船坞] 船坞空位识别失败: {e}')
+        return None
+
+    def _retire_leave_no_ships(self):
+        """一键/旧退役选中 0 艘：退出船坞，有空位则继续任务。
+
+        船坞已满（空位为 0）时先退出再推迟当前任务。重启模拟器清不掉
+        已满船坞，只会打断登录。识别失败当作仍有空位，优先离开循环。
+
+        Returns:
+            int: 0
+
+        Raises:
+            TaskEnd: OCR 明确读到 0 空位，当前任务已推迟。
+        """
+        remain = self._ocr_dock_remain()
+        logger.warning(f'[退役-船坞] 没有可退役舰船，剩余空位={remain}，退出船坞')
+        self._retire_exhausted = True
+        self._retirement_quit()
+        if remain == 0:
+            logger.warning(
+                '[退役] 船坞已满且没有符合一键退役条件的舰船，推迟任务而非重启模拟器'
+            )
+            self.config.task_delay(minute=30)
+            self.config.task_stop('Dock full, no ships to retire')
+        logger.info('[退役-船坞] 船坞仍有空位或空位未知，返回原流程')
+        return 0
+
+    def _retire_skip_repeat_entry(self):
+        """本轮已确认无舰可退时，不要再点进退役界面。
+
+        Returns:
+            bool | None: True/False 表示 handle_retirement 应直接返回；
+                None 表示清除标记并走正常流程。
+        """
+        if not self._retire_exhausted:
+            return None
+        if self.appear(IN_RETIREMENT_CHECK, offset=(20, 20)):
+            logger.warning('[退役-船坞] 已确认无舰可退，退出船坞')
+            try:
+                self._retirement_quit()
+            except Exception as e:
+                logger.warning(f'[退役-船坞] 退出船坞失败: {e}')
+            return True
+        if self.appear(RETIRE_APPEAR_1, offset=(20, 20)):
+            if self.handle_popup_cancel('RETIRE_NO_SHIPS'):
+                return True
+            logger.info('[退役-船坞] 无舰可退，忽略船坞已满弹窗，不再点击退役')
+            return False
+        self._retire_exhausted = False
+        return None
+
+    def _run_retire_handler(self):
+        """在退役界面执行 _retire_handler，卡死/连点/人工接管向上抛。
+
+        Returns:
+            bool: True 表示已处理（含无舰可退后已退出）。
+        """
+        try:
+            self._retire_handler()
+            self._unable_to_enhance = False
+            self.interval_reset(IN_RETIREMENT_CHECK)
+            self.map_cat_attack_timer.reset()
+            return True
+        except (RequestHumanTakeover, ScriptError, GameStuckError, GameTooManyClickError, TaskEnd):
+            raise
+        except Exception as e:
+            logger.warning(f'[退役-船坞] 退役失败: {e}')
+            self._unable_to_enhance = False
+            if self.appear(IN_RETIREMENT_CHECK, offset=(20, 20)):
+                logger.warning('[退役-船坞] 退役异常，退出船坞')
+                try:
+                    self._retirement_quit()
+                except Exception as quit_e:
+                    logger.warning(f'[退役-船坞] 退出船坞失败: {quit_e}')
+                self._retire_exhausted = True
+                return True
+            return False
+
     def handle_retirement(self):
         """
         处理船坞满载时的退役/强化流程。
@@ -513,12 +646,17 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
         - enhance: 先尝试强化，强化失败或剩余船坞不足时切换到退役
         - one_click_retire / old_retire: 直接退役
 
+        一键退役选中 0 艘时退出船坞并返回原流程，不再在退役界面重试。
+
         Returns:
-            bool: True 表示已完成退役或强化操作。
+            bool: True 表示已完成退役、强化，或已退出无舰可退的船坞。
         """
         # 2025.05.29 进入船坞时游戏会弹出皮肤信息提示
         if self.handle_game_tips():
             return True
+        skip = self._retire_skip_repeat_entry()
+        if skip is not None:
+            return skip
         if self._unable_to_enhance:
             if self.appear_then_click(RETIRE_APPEAR_1, offset=(20, 20), interval=3):
                 self.interval_clear(IN_RETIREMENT_CHECK)
@@ -526,17 +664,7 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
                 self.map_cat_attack_timer.reset()
                 return False
             if self.appear(IN_RETIREMENT_CHECK, offset=(20, 20), interval=10):
-                try:
-                    # 移除硬编码的退役模式参数，使用配置的默认模式
-                    self._retire_handler()
-                    self._unable_to_enhance = False
-                    self.interval_reset(IN_RETIREMENT_CHECK)
-                    self.map_cat_attack_timer.reset()
-                    return True
-                except Exception as e:
-                    logger.warning(f'[退役-船坞] 退役失败: {e}')
-                    self._unable_to_enhance = False  # 防止无限循环
-                    return False
+                return self._run_retire_handler()
         elif self.config.Retirement_RetireMode == 'enhance':
             if self.appear_then_click(RETIRE_APPEAR_3, offset=(20, 20), interval=3):
                 self.interval_clear(DOCK_CHECK)
@@ -567,16 +695,7 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
                 self.map_cat_attack_timer.reset()
                 return False
             if self.appear(IN_RETIREMENT_CHECK, offset=(20, 20), interval=10):
-                try:
-                    self._retire_handler()
-                    self._unable_to_enhance = False
-                    self.interval_reset(IN_RETIREMENT_CHECK)
-                    self.map_cat_attack_timer.reset()
-                    return True
-                except Exception as e:
-                    logger.warning(f'[退役-船坞] 退役失败: {e}')
-                    self._unable_to_enhance = False  # 防止无限循环
-                    return False
+                return self._run_retire_handler()
 
         return False
 
@@ -594,7 +713,8 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
             int: 退役的舰船总数。
 
         Raises:
-            RequestHumanTakeover: 无可退役舰船时抛出，需要用户介入。
+            TaskEnd: 船坞空位为 0 且没有可退役舰船，当前任务已推迟。
+                有空位时退出船坞并返回 0，不抛异常。
 
         Pages:
             in: IN_RETIREMENT_CHECK
@@ -632,23 +752,18 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
                     total = self.retire_ships_one_click()
             total += self.retire_gems_farming_flagships(keep_one=total > 0)
             if not total:
-                logger.critical('[退役] 杂鱼大叔~ 根本没有船可以退役啦，你是来表演冷笑话的吗？❤')
-                logger.critical('[退役] 赶紧把游戏里的”一键退役”配置好啦！不配置的话，难道大叔想让我亲手帮你点吗？❤')
-                logger.critical('[退役] 哼，因为大叔太笨没配置好退役，脚本只能停掉了呢。赶紧去求求谁教教你怎么操作吧~')
-                raise RequestHumanTakeover
+                return self._retire_leave_no_ships()
         elif mode == 'old_retire':
             self.handle_dock_cards_loading()
             total = self.retire_ships_old()
             total += self.retire_gems_farming_flagships()
             if not total:
-                logger.critical('[退役] 甚至没船能退役，你这设置是认真的吗？')
-                logger.critical('[退役] 既然你想让脚本停，我也挺支持的，毕竟这设置简直不可思议。')
-                logger.critical('[退役] 未退役任何船只，如果你眼瞎没开对应稀有度，请去 Alas 设置打开。')
-                raise RequestHumanTakeover
+                return self._retire_leave_no_ships()
         else:
             raise ScriptError(
                 f'[退役-模式] 未知退役模式: {self.config.Retirement_RetireMode}')
 
+        self._retire_exhausted = False
         self._retirement_quit()
         self.config.DOCK_FULL_TRIGGERED = True
 

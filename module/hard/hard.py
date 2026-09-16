@@ -11,6 +11,7 @@ import importlib
 
 from campaign.campaign_hard.campaign_hard import Campaign
 from module.campaign.run import CampaignRun
+from module.exception import CampaignEnd, ScriptEnd
 from module.handler.fast_forward import to_map_file_name
 from module.hard.assets import *
 from module.logger import logger
@@ -51,13 +52,17 @@ class CampaignHard(CampaignRun):
         module = importlib.import_module('.' + name, 'campaign.campaign_main')  # 从普通模式加载地图
         self.campaign.MAP = module.MAP
 
-        # UI 确认
+        # UI 确认。Hard 不走 CampaignRun.run()，必须自己接 ScriptEnd。
         self.device.screenshot()
         self.campaign.device.image = self.device.image
-        self.campaign.ensure_campaign_ui(
-            name=self.config.Hard_HardStage,
-            mode='hard'
-        )
+        try:
+            self.campaign.ensure_campaign_ui(
+                name=self.config.Hard_HardStage,
+                mode='hard'
+            )
+        except ScriptEnd as e:
+            self._handle_campaign_script_end(e)
+            return
 
         # 执行
         remain = None
@@ -73,8 +78,15 @@ class CampaignHard(CampaignRun):
         if remain is None:
             remain = OCR_HARD_REMAIN.ocr(self.device.image)
             logger.attr('剩余次数', remain)
-        for n in range(remain):
-            self.campaign.run()
+        try:
+            for n in range(remain):
+                self.campaign.run()
+        except ScriptEnd as e:
+            self._handle_campaign_script_end(e)
+            return
+        except CampaignEnd as e:
+            logger.hr('战役结束')
+            logger.info(str(e))
 
         self.campaign.ensure_auto_search_exit()
         # self.campaign.equipment_take_off_when_finished()

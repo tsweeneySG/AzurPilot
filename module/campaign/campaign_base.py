@@ -225,7 +225,13 @@ class CampaignBase(CampaignUI, Map, AutoSearchCombat):
         # 地图初始化
         if not self.map_is_auto_search:
             self.handle_map_fleet_lock()
-            self.map_init(self.MAP)
+            try:
+                self.map_init(self.MAP)
+            except CampaignEnd:
+                # 进图即战斗：结算后可能直接回到关卡页（自律完成）。
+                # 这是正常战役结束，不要冒泡到 alas.run() 去重启游戏。
+                logger.hr('战役结束')
+                return True
         else:
             self.map = self.MAP
             self.battle_count = 0

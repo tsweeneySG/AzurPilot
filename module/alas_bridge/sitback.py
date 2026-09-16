@@ -24,6 +24,7 @@ DOCK_TICK_SLEEP = 0.4
 DOCK_PEEK_SECONDS = 8.0
 FIGHTING_BATTLE = ('BATTLE_FIGHT', 'BATTLE_OPENING')
 BATTLE_CLICK_SLEEP = 0.5
+SITBACK_BATTLE_CLICK_CAP = 8
 
 
 def _chapter_dict(state: Optional[dict]) -> dict:
@@ -102,14 +103,16 @@ def handle_sitback_battle_status(config, device, handler=None, state=None) -> bo
         device.stuck_record_clear()
     except Exception:
         pass
-    if combat.handle_battle_status():
-        logger.info('Sit-back battle status click')
-        return True
+    # Drops / EXP first. Heartbeat REPORT + blind BATTLE_STATUS_S 12-clicked
+    # leftover sit-back (outside run()) and restarted the emulator.
     if hasattr(combat, 'handle_get_items') and combat.handle_get_items():
         logger.info('Sit-back get-items click')
         return True
     if hasattr(combat, 'handle_exp_info') and combat.handle_exp_info():
         logger.info('Sit-back exp-info click')
+        return True
+    if combat.handle_battle_status():
+        logger.info('Sit-back battle status click')
         return True
     return False
 
@@ -340,6 +343,9 @@ def wait_leftover_autofight(config, device, timeout: float = WAIT_TIMEOUT, handl
     last_auto_enable = 0.0
     logged_sit = False
     retire = handler
+    combat = _combat_handler(config, device, handler)
+    battle_clicks = 0
+    skip_battle_click = False
     while time.time() - started < timeout:
         if device is not None:
             try:
@@ -365,6 +371,8 @@ def wait_leftover_autofight(config, device, timeout: float = WAIT_TIMEOUT, handl
             logger.info('Leftover AutoFight ended')
             return 'ended'
         if leftover_off_map_ui(state):
+            skip_battle_click = False
+            battle_clicks = 0
             cid = _chapter_id(state) or chapter_id
             if cid and (now - last_resume) >= RESUME_RETRY_EVERY:
                 last_resume = now
@@ -385,9 +393,19 @@ def wait_leftover_autofight(config, device, timeout: float = WAIT_TIMEOUT, handl
                 logged_sit = False
             time.sleep(1)
             continue
-        if handle_sitback_battle_status(
-            config, device, handler=handler, state=state
+        if not skip_battle_click and handle_sitback_battle_status(
+            config, device, handler=combat, state=state
         ):
+            battle_clicks += 1
+            if battle_clicks >= SITBACK_BATTLE_CLICK_CAP:
+                logger.warning(
+                    'Sit-back battle overlay not dismissing, stop clicking')
+                skip_battle_click = True
+                _enable_leftover_autofight(config)
+                try:
+                    device.click_record_clear()
+                except Exception:
+                    pass
             time.sleep(DOCK_TICK_SLEEP)
             continue
         if _need_battle_click(state):

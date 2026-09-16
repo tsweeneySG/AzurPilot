@@ -15,7 +15,7 @@ import os
 from module.config.config import TaskEnd
 from module.config.utils import get_server_last_update
 from module.event.base import STAGE_FILTER, EventBase, EventStage
-from module.exception import ScriptEnd, RequestHumanTakeover
+from module.exception import ScriptEnd
 from module.logger import logger
 
 
@@ -78,11 +78,11 @@ class CampaignABCD(EventBase):
                 # 来自 CampaignUI.ensure_campaign_ui() 的关卡名错误
                 if str(e) == 'Campaign name error':
                     task = self.config.task.command
-                    logger.critical(
-                        f'无法找到关卡 "{stage}". '
-                        f'任务 "{task}" 是用于 3 倍日常PT的，如果您还没有解锁 {stage}，'
-                        f'应该使用任务 "Event" 来解锁它，而不是使用任务 "{task}"')
-                    raise RequestHumanTakeover
+                    logger.warning(
+                        f'无法找到关卡 "{stage}"（任务 {task}）。'
+                        f'活动列表 OCR 失败时会误报未解锁，推迟任务而非重启模拟器')
+                    self.config.task_delay(minute=30)
+                    raise TaskEnd
                 else:
                     raise
 

@@ -301,6 +301,11 @@ def leftover_off_map_ui(state: Optional[dict]) -> bool:
     scene = str(state.get('scene_key') or '')
     if scene in COMBAT_SCENE_KEYS:
         return False
+    battle = state.get('battle') if isinstance(state.get('battle'), dict) else {}
+    # Heartbeat can flicker to LEVEL / page_event while still in fight/report.
+    # wa_goto then interrupts the live sortie (Margaret Event D3, 16:12).
+    if str(battle.get('state') or '') in BATTLE_BUSY:
+        return False
     return True
 
 

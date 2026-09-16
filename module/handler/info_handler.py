@@ -132,6 +132,9 @@ class InfoHandler(ModuleBase):
                 if isinstance(snap, dict) and snap.get('showing') and snap.get('has_yes') is not False:
                     if msgbox_yes(self.config):
                         logger.info(f'Sweeney msgbox yes ({name})')
+                        # 心跳仍可能显示弹窗，下一帧不要再点模板确认，以免点到地球仪/地图
+                        self.interval_reset(POPUP_CONFIRM, interval=2)
+                        self.interval_reset(POPUP_CONFIRM_WHITE, interval=2)
                         return True
         except Exception:
             pass

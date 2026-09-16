@@ -495,6 +495,8 @@ def chapter_track(
         open_fleet: bool = False,
         fleet_ids: Optional[list] = None,
         chapter_id: Optional[int] = None,
+        use_2x_book: Optional[bool] = None,
+        operation_item: Optional[int] = None,
         timeout: float = 12.0,
 ) -> Optional[dict]:
     """
@@ -502,6 +504,9 @@ def chapter_track(
     Avoids GO / PROCEED / 出撃へ / HANDOVER template clicks.
     SelectFleet chapters (main 16-4 etc.) require fleet_ids; lastFleetIndex is
     only set after the fleet-select UI, which this path skips.
+    ``use_2x_book`` / ``operation_item`` override the in-game High-Efficiency
+    Combat Manual PlayerPrefs cache (GetActiveSPItemID). AutoFight TRACKING
+    skips fleet-prep, so screenshot 2x-book toggles never run on this path.
     """
     args = {
         'auto_fight': bool(auto_fight),
@@ -515,6 +520,12 @@ def chapter_track(
         fleet_ids = fleet_ids_for_chapter_track(config)
     if fleet_ids:
         args['fleet_ids'] = [int(x) for x in fleet_ids if int(x) > 0]
+    if operation_item is not None:
+        args['operation_item'] = int(operation_item)
+    elif use_2x_book is not None:
+        args['use_2x_book'] = bool(use_2x_book)
+    elif hasattr(config, 'Campaign_Use2xBook'):
+        args['use_2x_book'] = bool(config.Campaign_Use2xBook)
     from module.alas_bridge.sortie_status import (
         chapter_track_expected_stage,
         chapter_track_matches_stage,
@@ -654,6 +665,56 @@ def apply_fleet_preset(
     if result.get('applied'):
         return result
     return None
+
+
+def get_os_missions(config, timeout: float = 12.0) -> Optional[dict]:
+    return send_verb(config, 'get_os_missions', timeout=timeout)
+
+
+def os_accept_daily(config, skip_siren: bool = False, timeout: float = 15.0) -> Optional[dict]:
+    return send_verb(config, 'os_accept_daily', {
+        'skip_siren': bool(skip_siren),
+    }, timeout=timeout)
+
+
+def os_submit_tasks(
+        config,
+        ids: Optional[list] = None,
+        skip_monthly: bool = True,
+        timeout: float = 15.0,
+) -> Optional[dict]:
+    args = {'skip_monthly': bool(skip_monthly)}
+    if ids:
+        args['ids'] = [int(x) for x in ids]
+    return send_verb(config, 'os_submit_tasks', args, timeout=timeout)
+
+
+def os_goto_task(
+        config,
+        task_id: Optional[int] = None,
+        skip_siren: bool = False,
+        skip_monthly: bool = True,
+        timeout: float = 15.0,
+) -> Optional[dict]:
+    args = {
+        'skip_siren': bool(skip_siren),
+        'skip_monthly': bool(skip_monthly),
+    }
+    if task_id is not None:
+        args['task_id'] = int(task_id)
+    return send_verb(config, 'os_goto_task', args, timeout=timeout)
+
+
+def os_goto_zone(
+        config,
+        zone_id: int,
+        map_types: Optional[list] = None,
+        timeout: float = 20.0,
+) -> Optional[dict]:
+    args = {'zone_id': int(zone_id)}
+    if map_types:
+        args['map_types'] = list(map_types)
+    return send_verb(config, 'os_goto_zone', args, timeout=timeout)
 
 
 def pq_shop_buy(config, roses: bool = False, cake: bool = False,

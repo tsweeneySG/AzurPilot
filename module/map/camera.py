@@ -431,6 +431,16 @@ class Camera(MapOperation):
 
         return record
 
+    def _raise_focus_swipe_cap(self, reason):
+        """对向滑动或次数过多时结束聚焦，避免 MAP_SWIPE 点满重启。"""
+        logger.warning(f'[地图-摄像机] {reason}')
+        try:
+            self.device.click_record_clear()
+            self.device.stuck_record_clear()
+        except Exception:
+            pass
+        raise MapDetectionError(reason)
+
     def focus_to(self, location, swipe_limit=(4, 3)):
         """将相机聚焦到指定格子。
 
@@ -440,14 +450,28 @@ class Camera(MapOperation):
         """
         location = location_ensure(location)
         logger.info('[地图-摄像机] 聚焦到: %s' % location2node(location))
+        last = None
+        opposite = 0
+        swipes = 0
 
         while 1:
             vector = np.array(location) - self.camera
             swipe = tuple(np.min([np.abs(vector), swipe_limit], axis=0) * np.sign(vector))
+            swipe_i = (int(swipe[0]), int(swipe[1]))
+            if last is not None and (swipe_i[0] or swipe_i[1]) and swipe_i == (-last[0], -last[1]):
+                opposite += 1
+                if opposite >= 2:
+                    self._raise_focus_swipe_cap('Camera focus swipe ping-pong')
+            else:
+                opposite = 0
+            last = swipe_i
             has_swiped = self.map_swipe(swipe)
 
             if not has_swiped:
                 break
+            swipes += 1
+            if swipes >= 6:
+                self._raise_focus_swipe_cap('Camera focus swipe cap')
 
     def full_scan(self, queue=None, must_scan=None, battle_count=0, mystery_count=0, siren_count=0, carrier_count=0,
                   mode='normal'):
@@ -469,6 +493,7 @@ class Camera(MapOperation):
         if must_scan:
             queue = queue.add(must_scan)
 
+        predict_fail = 0
         while len(queue) > 0:
             if self.map.missing_is_none(battle_count, mystery_count, siren_count, carrier_count, mode):
                 if must_scan and queue.count != queue.delete(must_scan).count:
@@ -483,8 +508,12 @@ class Camera(MapOperation):
             self.focus_to_grid_center(0.25)
             success = self.map.update(grids=self.view, camera=self.camera, mode=mode)
             if not success:
+                predict_fail += 1
+                if predict_fail >= 5:
+                    self._raise_focus_swipe_cap('full_scan predict failed')
                 self.ensure_edge_insight(skip_first_update=False)
                 continue
+            predict_fail = 0
 
             queue = queue[1:]
 

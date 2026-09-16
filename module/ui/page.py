@@ -95,6 +95,8 @@ class Page:
         Page.all_pages[self.name] = self
 
     def __eq__(self, other):
+        if other is None or not isinstance(other, Page):
+            return False
         return self.name == other.name
 
     def __hash__(self):
@@ -161,6 +163,11 @@ page_unknown.link(button=GOTO_MAIN, destination=page_main)
 page_in_map = Page(None)
 page_in_map.link(button=BACK_ARROW, destination=page_campaign)
 page_in_map.link(button=GOTO_MAIN, destination=page_main)
+
+# SCENE.SETTINGS. Home hexagon is decorative; Back closes.
+# check_button is None so screenshot nav cannot confuse the gear with GOTO_MAIN.
+page_settings = Page(None)
+page_settings.link(button=BACK_ARROW, destination=page_main)
 
 # 演习
 # 不要从 page_campaign 进入 page_exercise

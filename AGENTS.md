@@ -312,7 +312,7 @@ Device ← Screenshot + Control + AppControl + Input
 | `freebies/` | 免费福利收取 |
 | `minigame/` | 小游戏 |
 | `awaken/` | 觉醒系统 |
-| `retire/` | 退役系统 |
+| `retire/` | 退役系统（船坞满打断，见工作区 azurpilot-retire.md） |
 | `equipment/` | 装备管理 |
 | `meta_reward/` | META 奖励收取 |
 | `daemon/` | 守护模式（后台监控） |
@@ -483,6 +483,7 @@ server.server = 'en'
 | `module/ocr/` | OCR 系统（RapidOCR/ONNX/NCNN） |
 | `module/combat/` | 战斗逻辑 |
 | `module/map/` / `module/map_detection/` | 地图处理和检测 |
+| `module/retire/` | 退役（船坞满打断）。工作区 [azurpilot-retire.md](../AzurLaneAutoScript/docs/azurpilot-retire.md) |
 | `module/os/` | 大世界（地图、摄像机、舰队） |
 | `module/research/` | 科研系统 |
 | `module/commission/` | 委托系统 |

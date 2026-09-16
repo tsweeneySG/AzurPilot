@@ -61,6 +61,31 @@ class TestCampaignEventModeSwitch(unittest.TestCase):
             campaign_ui_mod.MODE_SWITCH_1 = orig_1
             campaign_ui_mod.MODE_SWITCH_2 = orig_2
 
+    def test_mainline_stages_not_ready_on_event_chrome(self):
+        from module.campaign.campaign_ui import CampaignUI
+        from module.ui.assets import EVENT_CHECK
+
+        ui = CampaignUI.__new__(CampaignUI)
+
+        def appear(button, **kwargs):
+            return button is EVENT_CHECK
+
+        ui.appear = appear
+        self.assertFalse(ui._campaign_mainline_stages_ready())
+
+    def test_set_chapter_main_raises_before_mode_switch(self):
+        from module.campaign.campaign_ui import CampaignUI
+        from module.exception import CampaignNameError
+
+        ui = CampaignUI.__new__(CampaignUI)
+        ui.ui_goto_campaign = lambda: None
+        ui._campaign_mainline_stages_ready = lambda: False
+        called = []
+        ui.campaign_ensure_mode = lambda mode: called.append(mode)
+        with self.assertRaises(CampaignNameError):
+            ui.campaign_set_chapter_main('16', 'normal')
+        self.assertEqual(called, [])
+
 
 if __name__ == '__main__':
     unittest.main()

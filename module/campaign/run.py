@@ -445,6 +445,23 @@ class CampaignRun(CampaignEvent, ShopStatus):
             self.config.task_call('Commission')
             self.config.task_stop('Commission notice found')
 
+    def _handle_campaign_script_end(self, e):
+        """将 ScriptEnd 转为推迟，而不是让调度器当未处理异常重启游戏。"""
+        logger.hr('脚本结束')
+        logger.info(str(e))
+        if str(e) == 'DefeatWithdraw=withdraw_stop':
+            self.config.Scheduler_Enable = False
+        elif str(e) == 'Cannot enter map':
+            logger.warning(
+                '无法进入关卡，推迟任务而非重启模拟器')
+            self.config.task_delay(minute=30)
+            self.config.task_stop('Cannot enter map')
+        elif str(e) == 'Campaign name error':
+            logger.warning(
+                '无法识别关卡名，推迟任务而非重启游戏')
+            self.config.task_delay(minute=30)
+            self.config.task_stop('Campaign name error')
+
     def run(self, name, folder='campaign_main', mode='normal', total=0):
         """
         运行战役任务。
@@ -480,35 +497,39 @@ class CampaignRun(CampaignEvent, ShopStatus):
             if not self.device.has_cached_image:
                 self.device.screenshot()
             self.campaign.device.image = self.device.image
-            if self.campaign.is_in_map():
-                from module.alas_bridge.sitback import wait_leftover_autofight
-                leftover = wait_leftover_autofight(
-                    self.config, self.device, handler=self.campaign)
-                if leftover == 'timeout':
-                    logger.warning(
-                        '[战役] 图上仍有未结束的模组自律寻敌，推迟而不是撤退'
-                    )
-                    self.config.task_delay(minute=10)
-                    self.config.task_stop('Campaign: waiting leftover AutoFight')
-                if leftover == 'ended':
-                    logger.info('[战役] 残留自律寻敌已结束，继续战役界面')
-                    self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
+            try:
+                if self.campaign.is_in_map():
+                    from module.alas_bridge.sitback import wait_leftover_autofight
+                    leftover = wait_leftover_autofight(
+                        self.config, self.device, handler=self.campaign)
+                    if leftover == 'timeout':
+                        logger.warning(
+                            '[战役] 图上仍有未结束的模组自律寻敌，推迟而不是撤退'
+                        )
+                        self.config.task_delay(minute=10)
+                        self.config.task_stop('Campaign: waiting leftover AutoFight')
+                    if leftover == 'ended':
+                        logger.info('[战役] 残留自律寻敌已结束，继续战役界面')
+                        self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
+                    else:
+                        logger.info('[战役] 已在地图中，执行撤退。')
+                        try:
+                            self.campaign.withdraw()
+                        except CampaignEnd:
+                            pass
+                        self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
+                elif self.campaign.is_in_auto_search_menu():
+                    if self.can_use_auto_search_continue():
+                        logger.info('[战役] 在自动搜索菜单中，跳过 ensure_campaign_ui。')
+                    else:
+                        logger.info('[战役] 在自动搜索菜单中，关闭。')
+                        # 因为 event_20240725 任务均衡器删除了 self.campaign.ensure_auto_search_exit()
+                        self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
                 else:
-                    logger.info('[战役] 已在地图中，执行撤退。')
-                    try:
-                        self.campaign.withdraw()
-                    except CampaignEnd:
-                        pass
                     self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
-            elif self.campaign.is_in_auto_search_menu():
-                if self.can_use_auto_search_continue():
-                    logger.info('[战役] 在自动搜索菜单中，跳过 ensure_campaign_ui。')
-                else:
-                    logger.info('[战役] 在自动搜索菜单中，关闭。')
-                    # 因为 event_20240725 任务均衡器删除了 self.campaign.ensure_auto_search_exit()
-                    self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
-            else:
-                self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
+            except ScriptEnd as e:
+                self._handle_campaign_script_end(e)
+                break
             self.config.override(Campaign_Mode=self.campaign.config.Campaign_Mode)
             self.disable_raid_on_event()
             self.handle_commission_notice()
@@ -537,12 +558,11 @@ class CampaignRun(CampaignEvent, ShopStatus):
             try:
                 self.campaign.run()
             except ScriptEnd as e:
-                logger.hr('脚本结束')
-                logger.info(str(e))
-                # 撤退后关闭任务：禁用当前任务，调度器将运行后续任务
-                if str(e) == 'DefeatWithdraw=withdraw_stop':
-                    self.config.Scheduler_Enable = False
+                self._handle_campaign_script_end(e)
                 break
+            except CampaignEnd as e:
+                logger.hr('战役结束')
+                logger.info(str(e))
 
             # 更新配置
             if len(self.campaign.config.modified):

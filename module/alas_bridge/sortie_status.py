@@ -88,14 +88,19 @@ def chapter_track_expected_stage(config) -> str:
     """Stage the live map-prep modal should match.
 
     Hard binds ``Hard_HardStage``, not ``Campaign_Name`` (that stays the Main
-    farm). A leftover ``SweeneySortieChapterName`` from catchup must not win
-    during Hard or the mod returns chapter_mismatch and sorties abort.
+    farm). ``SweeneySortieChapterName`` is only the War Archives catchup
+    overlay — leftover B3/D3 from that task must not win on Main 16-4 or the
+    mod returns chapter_mismatch and AutoFight TRACKING never sends
+    ``use_2x_book``.
     """
     stage = _campaign_stage_name(config).strip()
-    if _task_command(config).lower() == 'hard':
+    task = _task_command(config).lower()
+    if task == 'hard':
         return stage
-    overlay = str(getattr(config, 'SweeneySortieChapterName', None) or '').strip()
-    return overlay or stage
+    if task == 'wararchivescatchup':
+        overlay = str(getattr(config, 'SweeneySortieChapterName', None) or '').strip()
+        return overlay or stage
+    return stage
 
 
 def chapter_track_matches_stage(config, result: Optional[dict]) -> bool:

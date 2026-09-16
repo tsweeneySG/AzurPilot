@@ -713,16 +713,22 @@ class AzurLaneAutoScript:
 
     def _check_sensitive_exit(self, command, error):
         """
-        检查当前任务是否为敏感任务，如果是则直接退出。
+        检查当前任务是否为敏感任务，并决定是否停止恢复流程。
 
-        敏感任务出错时不做任何重启或恢复，完全停止 Alas 运行。
+        敏感任务出错时禁止重启游戏/模拟器，以免破坏大世界进度。
+        仅当同时开启 Error.StrictRestart 时才停止 AzurPilot；
+        否则推迟当前任务并让调度器继续运行其他任务。
+
+        游戏或模拟器已经不在时仍走原有重启恢复，不按敏感任务停机。
 
         Args:
             command (str): 任务方法名（下划线形式，如 opsi_cross_month）。
             error (Exception): 触发的异常对象。
 
         Returns:
-            bool: True 表示已退出（不会返回），False 表示非敏感任务，继续原有逻辑。
+            bool: True 表示已推迟敏感任务，调用方应跳过重启恢复并返回。
+                  False 表示继续原有恢复逻辑。
+                  StrictRestart 开启时直接 exit(1)，不会返回。
         """
         task_name = inflection.camelize(command)
         sensitive = self.config.cross_get(
@@ -730,6 +736,29 @@ class AzurLaneAutoScript:
         )
         if not sensitive:
             return False
+
+        # 进程已经丢了，必须重启，不能因为敏感任务把调度器停掉。
+        if isinstance(error, (GameNotRunningError, EmulatorNotRunningError)):
+            return False
+
+        if not getattr(self.config, 'Error_StrictRestart', False):
+            logger.warning(
+                f'[Alas] 敏感任务 `{task_name}` 出错（{type(error).__name__}），'
+                f'StrictRestart 未启用：推迟任务并继续调度，不重启游戏/模拟器。'
+            )
+            try:
+                self.config.task_delay(success=False)
+            except Exception as delay_e:
+                logger.warning(f'[Alas] 推迟敏感任务 `{task_name}` 失败: {delay_e}')
+            notify_webui(
+                self.config_name,
+                title=f"{self.config_name} 敏感任务已推迟喵",
+                content=(
+                    f"`{task_name}` 出错但未开启严格重启，"
+                    f"已推迟任务并继续调度喵\n{error}"
+                ),
+            )
+            return True
 
         logger.error_context(
             title=f'敏感任务失败，禁止自动重启（{task_name}）',
@@ -756,7 +785,7 @@ class AzurLaneAutoScript:
         执行指定任务命令，捕获异常并决定后续行为。
 
         根据异常类型自动判断：重启游戏、重启模拟器、请求人工介入或直接终止。
-        敏感任务出错时直接停止，不做任何重启。
+        敏感任务出错时禁止重启；仅 StrictRestart 开启时才停止 AzurPilot。
 
         任务执行前会进行一次截图（除非 skip_first_screenshot=True）。
 
@@ -777,6 +806,11 @@ class AzurLaneAutoScript:
             return True
         except TaskEnd:
             return True
+        except CampaignEnd as e:
+            # 16-4 进图即战斗结算后回到关卡页。这是正常战役结束。
+            logger.hr('战役结束')
+            logger.info(str(e))
+            return True
         except GameNotRunningError as e:
             # 游戏未运行，调度 Restart 任务自动恢复
             logger.error_context(
@@ -789,7 +823,8 @@ class AzurLaneAutoScript:
                 # 预期恢复路径仅保留异常摘要，避免堆栈淹没后续重启日志。
                 with_traceback=False,
             )
-            self._check_sensitive_exit(command, e)
+            if self._check_sensitive_exit(command, e):
+                return 'recoverable'
             handle_notify(
                 self.config.Error_OnePushConfig,
                 title=f"AzurPilot <{self.config_name}> 警告",
@@ -812,7 +847,25 @@ class AzurLaneAutoScript:
                 exc=e,
             )
             self.save_error_log()
-            self._check_sensitive_exit(command, e)
+            if self._check_sensitive_exit(command, e):
+                return 'recoverable'
+
+            # Restart 任务卡在启动闪屏时，立刻再 Restart 会杀掉尚未完成的登录。
+            if command == 'restart':
+                self.consecutive_game_stuck += 1
+                limit = int(self.config.Error_GameStuckThreshold)
+                logger.warning(
+                    f'[Alas] 登录阶段卡住 {self.consecutive_game_stuck}/{limit}，'
+                    f'不立即重启游戏以免循环'
+                )
+                if self.consecutive_game_stuck >= limit:
+                    logger.warning('[Alas] 登录卡住次数过多，正在重启模拟器...')
+                    if self._try_restart_emulator():
+                        self.consecutive_game_stuck = 0
+                        self.config.task_call('Restart')
+                        return 'recoverable'
+                self.config.task_delay(minute=2)
+                return 'recoverable'
 
             if self.config.Error_GameStuckRestart:
                 self.consecutive_game_stuck += 1
@@ -850,7 +903,8 @@ class AzurLaneAutoScript:
                 exc=e,
             )
             self.save_error_log()
-            self._check_sensitive_exit(command, e)
+            if self._check_sensitive_exit(command, e):
+                return 'recoverable'
             logger.warning('[Alas] 碧蓝航线游戏客户端发生错误，AzurPilot 无法处理')
             logger.warning(f'[Alas] 正在重启 {self.device.package} 以修复问题')
             handle_notify(
@@ -879,7 +933,8 @@ class AzurLaneAutoScript:
                     exc=e,
                 )
                 self.save_error_log()
-                self._check_sensitive_exit(command, e)
+                if self._check_sensitive_exit(command, e):
+                    return 'recoverable'
                 logger.warning('[Alas] 无法识别游戏页面，尝试重启游戏恢复')
                 handle_notify(
                     self.config.Error_OnePushConfig,
@@ -906,7 +961,8 @@ class AzurLaneAutoScript:
                 level=50,
             )
             self.save_error_log()
-            self._check_sensitive_exit(command, e)
+            if self._check_sensitive_exit(command, e):
+                return 'recoverable'
 
             if self.script_error_count >= 3:
                 logger.error_context(
@@ -951,7 +1007,8 @@ class AzurLaneAutoScript:
                 exc=e,
             )
             self.save_error_log()
-            self._check_sensitive_exit(command, e)
+            if self._check_sensitive_exit(command, e):
+                return 'recoverable'
             # 始终尝试重启模拟器，即使失败也不退出
             self._try_restart_emulator()
             self.config.task_call('Restart')
@@ -976,7 +1033,8 @@ class AzurLaneAutoScript:
                 level=50,
             )
             self.save_error_log()
-            self._check_sensitive_exit(command, e)
+            if self._check_sensitive_exit(command, e):
+                return 'recoverable'
             # 尝试通过重启模拟器恢复
             logger.warning('[Alas] RequestHumanTakeover: 尝试通过重启模拟器恢复')
             self._try_restart_emulator()
@@ -1002,7 +1060,8 @@ class AzurLaneAutoScript:
                 exc=e,
             )
             self.save_error_log()
-            self._check_sensitive_exit(command, e)
+            if self._check_sensitive_exit(command, e):
+                return 'recoverable'
             logger.warning('[Alas] 自动搜索设置失败，尝试重启游戏恢复')
             self.config.task_call('Restart')
             handle_notify(
@@ -1025,7 +1084,8 @@ class AzurLaneAutoScript:
                 level=50,
             )
             self.save_error_log()
-            self._check_sensitive_exit(command, e)
+            if self._check_sensitive_exit(command, e):
+                return 'recoverable'
 
             self.consecutive_unexpected_error += 1
             limit = int(self.config.Error_GameStuckThreshold)
@@ -1907,7 +1967,25 @@ class AzurLaneAutoScript:
                 self.device.click_record_clear()
                 from module.alas_bridge.sitback import should_skip_wait, wait_leftover_autofight
                 if not should_skip_wait(task):
-                    leftover = wait_leftover_autofight(self.config, self.device)
+                    try:
+                        leftover = wait_leftover_autofight(self.config, self.device)
+                    except TaskEnd:
+                        logger.warning(
+                            '[Alas] Sit-back 船坞已满无法退役，当前任务已推迟'
+                        )
+                        del_cached_property(self, 'config')
+                        continue
+                    except (GameStuckError, GameTooManyClickError) as leftover_e:
+                        logger.warning(
+                            f'[Alas] Leftover AutoFight sit-back {type(leftover_e).__name__}，'
+                            f'不重启模拟器'
+                        )
+                        try:
+                            self.device.click_record_clear()
+                            self.device.stuck_record_clear()
+                        except Exception:
+                            pass
+                        leftover = 'ended'
                     if leftover == 'timeout':
                         logger.warning(
                             '[Alas] 图上仍有未结束的模组自律寻敌，推迟当前任务以免互相打断'
@@ -1960,7 +2038,7 @@ class AzurLaneAutoScript:
                 # 检查失败
                 # 任务失败次数统计：可恢复错误 (success == 'recoverable') 不计入失败次数。
                 # 非敏感任务永不退出，连续失败时强制重启模拟器+游戏恢复；
-                # 敏感任务（StrictRestart=True 且 Sensitive=True）失败后立即退出。
+                # 敏感任务仅在 StrictRestart=True 且 Sensitive=True 时失败后立即退出。
                 failed = deep_get(self.failure_record, keys=task, default=0)
                 if success == True:
                     failed = 0  # 成功，重置计数
@@ -2041,7 +2119,8 @@ class AzurLaneAutoScript:
             # 捕获全局异常并执行重启
             # 说明：调度器永不主动退出，所有未处理异常均通过指数退避重试恢复，
             # 唯一例外是 ScriptError（开发者代码错误），其在 run() 中已限制连续 3 次后退出。
-            # 敏感任务失败由 _check_sensitive_exit 处理，仍会主动退出。
+            # 敏感任务失败由 _check_sensitive_exit 处理：
+            # StrictRestart 开启时退出，否则推迟任务并继续调度。
             except Exception as e:
                 consecutive_global_failures += 1
                 self.is_first_task = False

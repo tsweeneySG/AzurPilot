@@ -206,6 +206,7 @@ class EnemySearchingHandler(InfoHandler):
             # immediately enter submarine combat in W16
             if hasattr(self, 'is_combat_loading') and self.is_combat_loading():
                 logger.warning('[处理器-搜索] 进入地图时出现战斗加载画面')
+                self._enter_map_combat_started = True
                 break
             if self.handle_auto_search_exit(drop=drop):
                 timeout.limit = 10
