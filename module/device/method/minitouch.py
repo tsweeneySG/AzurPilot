@@ -12,7 +12,7 @@ import json
 import socket
 import threading
 import time
-from functools import wraps
+from functools import partial
 from typing import List
 
 import websockets
@@ -23,8 +23,8 @@ from module.base.decorator import Config, cached_property, del_cached_property, 
 from module.base.timer import Timer
 from module.base.utils import *
 from module.device.connection import Connection
-from module.device.method.utils import RETRY_TRIES, handle_adb_error, handle_unknown_host_service, retry_sleep
-from module.exception import EmulatorNotRunningError, RequestHumanTakeover, ScriptError
+from module.device.method.retry import retry_backend, recover_adb, recover_unknown
+from module.exception import EmulatorNotRunningError, ScriptError
 from module.logger import logger
 
 
@@ -379,99 +379,37 @@ class U2Service(_Service):
         self.service_url = self.u2obj.path2url("/services/" + name)
 
 
-def retry(func):
-    @wraps(func)
-    def retry_wrapper(self, *args, **kwargs):
-        """
-        Args:
-            self (Minitouch):
-        """
-        init = None
-        for _ in range(RETRY_TRIES):
-            try:
-                if callable(init):
-                    time.sleep(retry_sleep(_))
-                    init()
-                return func(self, *args, **kwargs)
-            # 无法处理
-            except RequestHumanTakeover:
-                break
-            # ADB 服务被终止时
-            except ConnectionResetError as e:
-                logger.error(e)
+def _retry_recover(self, error, trial):
+    def clear_connection():
+        if self._minitouch_port:
+            self.adb_forward_remove(f'tcp:{self._minitouch_port}')
+        del_cached_property(self, '_minitouch_builder')
 
-                def init():
-                    self.adb_reconnect()
-                    if self._minitouch_port:
-                        self.adb_forward_remove(f'tcp:{self._minitouch_port}')
-                    del_cached_property(self, '_minitouch_builder')
-            # 模拟器关闭
-            except ConnectionAbortedError as e:
-                logger.error(e)
+    def reconnect():
+        self.adb_reconnect()
+        clear_connection()
 
-                def init():
-                    self.adb_reconnect()
-                    if self._minitouch_port:
-                        self.adb_forward_remove(f'tcp:{self._minitouch_port}')
-                    del_cached_property(self, '_minitouch_builder')
-            # MinitouchNotInstalledError: 从 minitouch 收到空数据
-            except MinitouchNotInstalledError as e:
-                logger.error(e)
+    if isinstance(error, (ConnectionResetError, ConnectionAbortedError, AdbError)):
+        return recover_adb(self, error, reconnect=reconnect)
+    if isinstance(error, MinitouchNotInstalledError):
+        logger.error(error)
+        def install():
+            self.install_uiautomator2()
+            clear_connection()
+        return install
+    if isinstance(error, MinitouchOccupiedError):
+        logger.error(error)
+        def restart_atx():
+            self.restart_atx()
+            clear_connection()
+        return restart_atx
+    if isinstance(error, BrokenPipeError):
+        logger.error(error)
+        return lambda: del_cached_property(self, '_minitouch_builder')
+    return recover_unknown(error)
 
-                def init():
-                    self.install_uiautomator2()
-                    if self._minitouch_port:
-                        self.adb_forward_remove(f'tcp:{self._minitouch_port}')
-                    del_cached_property(self, '_minitouch_builder')
-            # MinitouchOccupiedError: 连接 minitouch 超时
-            except MinitouchOccupiedError as e:
-                logger.error(e)
 
-                def init():
-                    self.restart_atx()
-                    if self._minitouch_port:
-                        self.adb_forward_remove(f'tcp:{self._minitouch_port}')
-                    del_cached_property(self, '_minitouch_builder')
-            # ADB 错误
-            except AdbError as e:
-                if handle_adb_error(e):
-                    def init():
-                        self.adb_reconnect()
-                        if self._minitouch_port:
-                            self.adb_forward_remove(f'tcp:{self._minitouch_port}')
-                        del_cached_property(self, '_minitouch_builder')
-                elif handle_unknown_host_service(e):
-                    def init():
-                        self.adb_start_server()
-                        self.adb_reconnect()
-                        if self._minitouch_port:
-                            self.adb_forward_remove(f'tcp:{self._minitouch_port}')
-                        del_cached_property(self, '_minitouch_builder')
-                else:
-                    break
-            except BrokenPipeError as e:
-                logger.error(e)
-
-                def init():
-                    del_cached_property(self, '_minitouch_builder')
-            # 无法处理 - 必须向上抛出以触发模拟器重启
-            except EmulatorNotRunningError:
-                raise
-            # 未知异常，可能是图像损坏
-            except Exception as e:
-                logger.exception(e)
-
-                def init():
-                    pass
-
-        if func.__name__ in ['_minitouch_builder']:
-            logger.critical(f'[设备-MiniTouch] 重试 {func.__name__}() 失败')
-            raise EmulatorNotRunningError
-
-        logger.critical(f'[设备-MiniTouch] 重试 {func.__name__}() 失败')
-        raise RequestHumanTakeover
-
-    return retry_wrapper
+retry = partial(retry_backend, recover=_retry_recover, label='设备-MiniTouch')
 
 
 class Minitouch(Connection):
@@ -484,7 +422,7 @@ class Minitouch(Connection):
     _minitouch_init_thread = None
 
     @cached_property
-    @retry
+    @retry(on_exhausted=EmulatorNotRunningError)
     def _minitouch_builder(self):
         self.minitouch_init()
         return CommandBuilder(self)
@@ -598,6 +536,12 @@ class Minitouch(Connection):
 
     @Config.when(DEVICE_OVER_HTTP=False)
     def minitouch_send(self, builder: CommandBuilder):
+        """
+        通过 Socket 向 minitouch 发送触控指令序列。
+
+        Args:
+            builder: 构建完成的 minitouch 命令构造器。
+        """
         content = builder.to_minitouch()
         # logger.info("send operation: {}".format(content.replace("\n", "\\n")))
         byte_content = content.encode('utf-8')
@@ -668,6 +612,12 @@ class Minitouch(Connection):
 
     @Config.when(DEVICE_OVER_HTTP=True)
     def minitouch_send(self, builder: CommandBuilder):
+        """
+        通过 WebSocket 向 atx-agent 发送 minitouch 触控指令序列。
+
+        Args:
+            builder: 构建完成的 minitouch 命令构造器。
+        """
         content = builder.to_atx_agent()
 
         async def send():
@@ -681,6 +631,13 @@ class Minitouch(Connection):
 
     @retry
     def click_minitouch(self, x, y):
+        """
+        通过 minitouch 执行点击操作。
+
+        Args:
+            x: 点击横坐标。
+            y: 点击纵坐标。
+        """
         builder = self.minitouch_builder
         builder.down(x, y).commit()
         builder.up().commit()
@@ -688,6 +645,14 @@ class Minitouch(Connection):
 
     @retry
     def long_click_minitouch(self, x, y, duration=1.0):
+        """
+        通过 minitouch 执行长按操作。
+
+        Args:
+            x: 长按横坐标。
+            y: 长按纵坐标。
+            duration: 长按持续时间（秒）。
+        """
         duration = int(duration * 1000)
         builder = self.minitouch_builder
         builder.down(x, y).commit().wait(duration)
@@ -696,6 +661,13 @@ class Minitouch(Connection):
 
     @retry
     def swipe_minitouch(self, p1, p2):
+        """
+        通过 minitouch 执行贝塞尔曲线平滑滑动操作。
+
+        Args:
+            p1: 滑动起点坐标 (x, y)。
+            p2: 滑动终点坐标 (x, y)。
+        """
         points = insert_swipe(p0=p1, p3=p2)
         builder = self.minitouch_builder
 
@@ -711,6 +683,15 @@ class Minitouch(Connection):
 
     @retry
     def drag_minitouch(self, p1, p2, point_random=(-10, -10, 10, 10), hold_duration=0.0):
+        """
+        通过 minitouch 执行拖拽操作。
+
+        Args:
+            p1: 拖拽起始坐标 (x, y)。
+            p2: 拖拽释放坐标 (x, y)。
+            point_random: 起始和结束坐标的随机抖动范围 (x_min, y_min, x_max, y_max)。
+            hold_duration: 到达终点后的按住停顿时间（秒）。
+        """
         p1 = np.array(p1) - random_rectangle_point(point_random)
         p2 = np.array(p2) - random_rectangle_point(point_random)
         points = insert_swipe(p0=p1, p3=p2, speed=20)
@@ -737,6 +718,14 @@ class Minitouch(Connection):
         builder.send()
 
     def island_swipe_hold_minitouch(self, p1, p2, hold_time):
+        """
+        通过 minitouch 在无人岛等活动界面执行滑动并保持按住。
+
+        Args:
+            p1: 滑动起点坐标。
+            p2: 滑动终点坐标。
+            hold_time: 到达终点后按住等待的时间（毫秒）。
+        """
         points = insert_swipe(p0=p1, p3=p2)
         builder = self.minitouch_builder
         builder.down(*points[0]).commit().wait(10)

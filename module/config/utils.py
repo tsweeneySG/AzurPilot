@@ -45,6 +45,10 @@ SERVER_TO_TIMEZONE = {
 }
 DEFAULT_TIME = datetime(2023, 1, 1, 0, 0)
 DEFAULT_CONFIG_NAME = 'ap'
+# 实例名会拼进 ./config/<name>.json，含这些字符会越出配置目录或触发 Windows 保留名。
+# 与 module/runtime/deploy_settings.py 的 INVALID_INSTANCE_CHARS 同源，但不拦 `.`：
+# `ap.fpy` 这类模块实例本身就带点，见 filepath_config 的 mod_name。
+INVALID_CONFIG_NAME_CHARS = set('\\/:*?"\'<>|')
 
 
 # https://stackoverflow.com/questions/8640959/how-can-i-control-what-scalar-form-pyyaml-uses-for-my-data/15423007
@@ -98,7 +102,6 @@ def read_file(file):
     Returns:
         dict, list: 解析后的数据。
     """
-    print(f'read: {file}')
     if file.endswith('.json'):
         content = atomic_read_bytes(file)
         if not content:
@@ -113,7 +116,7 @@ def read_file(file):
             data = {}
         return data
     else:
-        print(f'Unsupported config file extension: {file}')
+        logger.warning(f'不支持的配置文件扩展名: {file}')
         return {}
 
 
@@ -125,7 +128,6 @@ def write_file(file, data):
         file (str): 文件路径。
         data (dict, list): 要写入的数据。
     """
-    print(f'write: {file}')
     if file.endswith('.json'):
         content = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=False, default=str)
         atomic_write(file, content)
@@ -138,7 +140,7 @@ def write_file(file, data):
                 data, default_flow_style=False, encoding='utf-8', allow_unicode=True, sort_keys=False)
         atomic_write(file, content)
     else:
-        print(f'Unsupported config file extension: {file}')
+        logger.warning(f'不支持的配置文件扩展名: {file}')
 
 
 def iter_folder(folder, is_dir=False, ext=None):
@@ -195,7 +197,9 @@ def alas_template():
     for file in os.listdir('./config'):
         name, extension = os.path.splitext(file)
         if name == 'template' and extension == '.json':
-            out.append(f'{name}-alas')
+            # 主模块（template.json）在前端以 template-ap 展示，
+            # 实际模块名仍为 alas，由 get_config_mod() 负责映射回去。
+            out.append(f'{name}-{DEFAULT_CONFIG_NAME}')
 
     out.extend(list_mod_template())
 
@@ -223,6 +227,46 @@ def alas_instance():
         out = [DEFAULT_CONFIG_NAME]
 
     return out
+
+
+def parse_config_name(argv):
+    """
+    解析入口参数中的实例名。
+
+    不传参数时回退到 `DEFAULT_CONFIG_NAME`，保持 `python alas.py` 的原有行为；
+    传入实例名时按 `alas_instance()` 校验，使 AUTO-MAS 等外部调度器可以按实例
+    拉起调度器进程，并据 `get_log_file_path()` 定位该实例的运行日志。
+
+    Args:
+        argv (list[str]): 入口脚本参数，不含脚本名本身。
+
+    Returns:
+        str: 实例名。
+
+    Raises:
+        ValueError: 参数多于一个，或实例名非法、不存在。
+    """
+    argv = list(argv)
+
+    if len(argv) > 1:
+        raise ValueError(f'只接受一个实例名，收到 {len(argv)} 个参数：{" ".join(argv)}')
+    if not argv:
+        return DEFAULT_CONFIG_NAME
+
+    name = argv[0].strip()
+    if not name or name in ('.', '..') or set(name) & INVALID_CONFIG_NAME_CHARS:
+        raise ValueError(f'实例名非法：{name!r}')
+
+    try:
+        instances = alas_instance()
+    except OSError:
+        # config 目录尚未创建，交给 OOBE 检查给出首次配置提示
+        return name
+
+    if name not in instances:
+        raise ValueError(f'实例不存在：{name}')
+
+    return name
 
 
 def parse_value(value, data):
@@ -353,10 +397,14 @@ def dict_to_kv(dictionary, allow_none=True):
 
 
 def server_timezone(server=None) -> timedelta:
-    """
+    """获取游戏服务器对应的时区时差。
+
     Args:
         server (str): 包名或服务器键（`en` / `jp` / `cn` / `tw`）。
             None 使用进程全局 `module.config.server.server`。
+
+    Returns:
+        timedelta: 与 UTC 的时间差。
     """
     key = server_.server
     if server:
@@ -365,14 +413,16 @@ def server_timezone(server=None) -> timedelta:
 
 
 def server_time_offset(server=None) -> timedelta:
-    """
-    计算本地时间与服务器时间的偏移量。
+    """计算本地时间与服务器时间的偏移量。
 
-    本地时间转服务器时间：server_time = local_time + server_time_offset()
-    服务器时间转本地时间：local_time = server_time - server_time_offset()
+    本地时间转服务器时间：server_time = local_time - server_time_offset()
+    服务器时间转本地时间：local_time = server_time + server_time_offset()
 
     Args:
         server (str): 包名或服务器键。None 使用进程全局服务器。
+
+    Returns:
+        timedelta: 本地时区与游戏服务器时区的差值。
     """
     return current_time(timezone.utc).astimezone().utcoffset() - server_timezone(server)
 
@@ -449,6 +499,26 @@ def ensure_time(second, n=3, precision=3):
         return second
 
 
+def get_os_next_reset_after(moment, server=None):
+    """获取指定时间之后的下一次大世界重置时间。
+
+    与 get_os_next_reset() 相同，按该服务器本地午夜计算，而不是本机时区。
+
+    Args:
+        moment (datetime.datetime): 基准时间（本地时间）。
+        server (str): 包名或服务器键。None 使用进程全局服务器。
+
+    Returns:
+        datetime.datetime: 该时间之后的下一次重置的本地时间。
+    """
+    server_moment = os_server_now(server=server, now=moment)
+    server_reset = (server_moment.replace(day=1) + timedelta(days=32)) \
+        .replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    server_reset = server_reset.replace(tzinfo=timezone(server_timezone(server)))
+    local_reset = server_reset.astimezone().replace(tzinfo=None)
+    return local_reset
+
+
 def get_os_next_reset(server=None, now=None):
     """
     获取下个月的第一天（大世界重置时间）。
@@ -464,17 +534,15 @@ def get_os_next_reset(server=None, now=None):
     """
     if now is None:
         now = current_time()
-    server_now = os_server_now(server=server, now=now)
-    server_reset = (server_now.replace(day=1) + timedelta(days=32)) \
-        .replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    server_reset = server_reset.replace(tzinfo=timezone(server_timezone(server)))
-    local_reset = server_reset.astimezone().replace(tzinfo=None)
-    return local_reset
+    return get_os_next_reset_after(now, server=server)
 
 
 def get_os_reset_remain(server=None, now=None):
     """
-    获取距离大世界下次重置的剩余天数。
+    获取距离大世界下次重置的剩余整天数（不足一天向下取整）。
+
+    按整 24 小时计算，因此「还剩 1 天」指的是重置前的最后 24 小时。
+    要按自然日判断「距重置还有几天」请用 get_os_reset_remain_days()。
 
     Args:
         server (str): 包名或服务器键。None 使用进程全局服务器。
@@ -503,6 +571,32 @@ def get_os_month_id(server=None, now=None) -> str:
         now (datetime): 朴素本地时间。None 使用当前时间。
     """
     return os_server_now(server=server, now=now).strftime('%Y-%m')
+
+
+def get_os_reset_remain_days(server=None, now=None):
+    """
+    获取距离大世界下次重置的剩余自然天数（按日期计算）。
+
+    用于「距离重置还剩几天」的判断，重置前一天为 1，重置当天已是新月。
+    与 get_os_reset_remain() 的整天数不同，不会因为过了半天就跳动一天。
+
+    Args:
+        server (str): 包名或服务器键。None 使用进程全局服务器。
+        now (datetime): 朴素本地时间。None 使用当前时间。
+
+    Returns:
+        int: 剩余自然天数。
+    """
+    if now is None:
+        now = current_time()
+    next_reset = get_os_next_reset(server=server, now=now)
+    logger.attr('大世界下次重置', next_reset)
+
+    if getattr(now, 'tzinfo', None) is not None:
+        now = now.astimezone().replace(tzinfo=None)
+    remain = (next_reset.date() - now.date()).days
+    logger.attr('重置剩余自然天数', remain)
+    return remain
 
 
 def get_server_next_update(daily_trigger):
@@ -747,9 +841,15 @@ def time_delta(_timedelta):
     return _time_dict
 
 
-def readable_time(before: str, value: str) -> str:
-    """
-    计算两个时间之间的差值，返回人类可读的时间描述。
+def readable_time(before: str, value: str) -> dict:
+    """计算两个时间之间的差值，返回人类可读的时间描述。
+
+    Args:
+        before: 历史时间 ISO 格式字符串。
+        value: 默认展示值。
+
+    Returns:
+        dict: 包含 value、time 与 time_name 键的人类可读描述字典。
     """
     timedata = {
         'value': value,
@@ -787,7 +887,12 @@ def readable_time(before: str, value: str) -> str:
     return timedata
 
 @run_once
-def is_good_gpu():
+def is_good_gpu() -> bool:
+    """检测当前机器是否拥有显存 >= 1GB 的独立/高性能 GPU。
+
+    Returns:
+        bool: Windows 平台且显存 >= 1GB 返回 True，否则返回 False。
+    """
     if os.name != 'nt':
         logger.info("[Config] 当前系统为非 Windows，不使用 GPU")
         return False

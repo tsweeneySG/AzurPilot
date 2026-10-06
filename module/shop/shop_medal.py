@@ -23,7 +23,17 @@ from module.ui.scroll import Scroll
 
 
 class ShopScroll(Scroll):
+    """勋章商店自定义滚动条检测。"""
+
     def match_color(self, main):
+        """匹配并提取滚动条滑块的颜色掩码与长度。
+
+        Args:
+            main: 包含当前截图的 UI 实例。
+
+        Returns:
+            np.ndarray: 表示滑块所在纵向范围的布尔掩码。
+        """
         area = (
             self.area[0] - 3,
             self.area[1],
@@ -227,6 +237,23 @@ class MedalShop2_250814(ShopClerk, ShopStatus):
         logger.info(f'[商店-勋章] 勋章: {self._currency}')
         return self._currency
 
+    @staticmethod
+    def shop_strategy_stock(item):
+        """勋章商店购买弹窗可确认实际库存，策略允许多件候选。"""
+        return 99
+
+    @staticmethod
+    def shop_strategy_max_quantity(item):
+        """获取策略规划中单次购买数量上限。
+
+        Args:
+            item: 待购买商品对象。
+
+        Returns:
+            int: 允许购买的最大数量。
+        """
+        return 99
+
     def shop_has_loaded(self, items):
         """检查商品列表是否已加载完成。
 
@@ -284,7 +311,7 @@ class MedalShop2_250814(ShopClerk, ShopStatus):
         已售罄商品会自动排序到后方，发现售罄时提前终止。
         """
         import time
-        if not self.shop_filter:
+        if not self.shop_filter and not self.shop_strategy_enabled():
             return
 
         logger.hr('[商店-勋章] 勋章商店', level=1)
@@ -304,6 +331,7 @@ class MedalShop2_250814(ShopClerk, ShopStatus):
                 break
             else:
                 MEDAL_SHOP_SCROLL_250814.next_page(main=self, page=0.66)
+                self.shop_strategy_reset_inventory()
                 del_cached_property(self, 'shop_grid')
                 del_cached_property(self, 'shop_medal_items')
                 continue

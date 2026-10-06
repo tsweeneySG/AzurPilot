@@ -13,16 +13,16 @@ import sys
 import threading
 from datetime import datetime, timedelta
 
-import pywebio
 
 from module.base.filter import Filter
 from module.config.config_generated import GeneratedConfig
-from module.config.config_manual import ManualConfig, OutputConfig
+from module.config.config_manual import ManualConfig
 from module.config.config_updater import ConfigUpdater, ensure_time, get_server_last_update, get_server_next_update, nearest_future
 from module.config.deep import deep_get, deep_set
 from module.config.time_source import now as current_time
 from module.config.utils import DEFAULT_TIME, dict_to_kv, filepath_config, get_os_reset_remain, path_to_arg, is_good_gpu, resolve_half_server_update
 from module.config.watcher import ConfigWatcher
+from module.config.transaction import config_transaction
 from module.exception import RequestHumanTakeover, ScriptError
 from module.logger import logger
 from module.map.map_grids import SelectedGrids
@@ -86,6 +86,26 @@ def name_to_function(name):
     return function
 
 
+def resolve_ocr_device(backend, device):
+    """按后端和当前平台解析 OCR 设备选择，不修改配置。"""
+    if device == 'auto':
+        if backend == 'onnxruntime':
+            if sys.platform == 'darwin' and platform.machine() == 'arm64':
+                return 'ane'
+            if sys.platform == 'win32':
+                # Windows ML 自行筛选 NPU、独显和 CPU。
+                return 'auto'
+            return 'gpu' if is_good_gpu() else 'cpu'
+        from module.ocr.ncnn_ocr import has_ncnn_vulkan_gpu
+        return 'gpu' if has_ncnn_vulkan_gpu() else 'cpu'
+
+    if backend == 'ncnn' and device in {
+        'qnn_npu', 'openvino_npu', 'openvino_gpu', 'openvino_cpu',
+    }:
+        return 'cpu'
+    return device
+
+
 class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher):
     """碧蓝航线自动化配置管理器。
 
@@ -121,11 +141,14 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
     is_hoarding_task = True
 
     def __setattr__(self, key, value):
+        overlay = self.__dict__.get('_scheduler_overrides', {})
+        if key in overlay:
+            # 调度卡片的任务参数只属于本次调用；任务自身修改也不回写用户配置。
+            overlay[key] = value
+            super().__setattr__(key, value)
+            return
         if key in self.bound:
-            path = self.bound[key]
-            self.modified[path] = value
-            if self.auto_update:
-                self.update()
+            self.cross_set(self.bound[key], value)
         else:
             super().__setattr__(key, value)
 
@@ -186,9 +209,13 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
         self.task = task
         self.save()
 
-    def load(self):
+    def load(self, *, apply_override=True):
+        """重读磁盘并合并待保存修改；update 会将覆盖检查延后到合并之后。"""
         self.data = self.read_file(self.config_name)
-        self.config_override()
+        self._discard_stale_changes(self.data)
+        self._loaded_data = copy.deepcopy(self.data)
+        if apply_override:
+            self.config_override()
 
         for path, value in self.modified.items():
             deep_set(self.data, keys=path, value=value)
@@ -244,6 +271,8 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
         # 覆盖参数
         for arg, value in self.overridden.items():
             super().__setattr__(arg, value)
+        for arg, value in self.__dict__.get('_scheduler_overrides', {}).items():
+            super().__setattr__(arg, value)
 
 
     @property
@@ -267,28 +296,7 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
 
     @property
     def ocr_device(self) -> str:
-        val = self.Optimization_OcrDevice
-        if val == 'auto':
-            if self.ocr_backend == 'onnxruntime':
-                if sys.platform == 'darwin' and platform.machine() == 'arm64':
-                    return 'ane'
-                if sys.platform == 'win32':
-                    # Windows ML 会自行筛选 NPU、独显和 CPU，不应仅以显存决定是否尝试。
-                    return 'auto'
-                return 'gpu' if is_good_gpu() else 'cpu'
-            else:
-                # ncnn 后端：检查 Vulkan GPU 可用性
-                from module.ocr.ncnn_ocr import has_ncnn_vulkan_gpu
-                return 'gpu' if has_ncnn_vulkan_gpu() else 'cpu'
-
-        if self.ocr_backend == 'ncnn' and val in {
-            'qnn_npu',
-            'openvino_npu',
-            'openvino_gpu',
-            'openvino_cpu',
-        }:
-            return 'cpu'
-        return val
+        return resolve_ocr_device(self.ocr_backend, self.Optimization_OcrDevice)
 
     @property
     def hoarding(self):
@@ -371,22 +379,44 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
             logger.critical("[Config] 请启用至少一个任务")
             raise RequestHumanTakeover
 
+    def _discard_stale_changes(self, current):
+        """保留加载后发生的外部修改，禁止旧任务回写同一字段。"""
+        baseline = getattr(self, '_loaded_data', None)
+        if baseline is None:
+            return
+        missing = object()
+        discarded = set()
+        for path in list(self.modified):
+            if deep_get(current, keys=path, default=missing) != deep_get(baseline, keys=path, default=missing):
+                self.modified.pop(path)
+                discarded.add(path)
+        # 保存也可能发生在 bind() 之后；同步被拒绝的属性，避免继续使用旧值。
+        for attr, path in self.bound.items():
+            if path in discarded and attr not in getattr(self, 'overridden', {}):
+                super().__setattr__(attr, deep_get(current, keys=path))
+
     def save(self, mod_name='alas'):
         if not self.modified:
             return False
-
-        for path, value in self.modified.items():
-            deep_set(self.data, keys=path, value=value)
-
-        logger.info(
-            f"[配置] 保存配置 {filepath_config(self.config_name, mod_name)}, {dict_to_kv(self.modified)}"
-        )
-        # 不要使用 self.modified = {}，那会创建新对象。
-        self.modified.clear()
-        self.write_file(self.config_name, data=self.data)
+        # API 和工作进程共用事务锁。重新读取最新文件，仅合并本次修改，
+        # 避免用户编辑其他参数时被旧的运行器快照覆盖。
+        with config_transaction(filepath_config(self.config_name, mod_name)):
+            current = self.read_file(self.config_name)
+            self._discard_stale_changes(current)
+            for path, value in self.modified.items():
+                deep_set(current, keys=path, value=value)
+            self.write_file(self.config_name, data=current)
+            self.data = current
+            self._loaded_data = copy.deepcopy(current)
+            logger.info(f"[配置] 已保存 {filepath_config(self.config_name, mod_name)}，共 {len(self.modified)} 项修改")
+            # 写入成功后再清理，磁盘错误不会丢失待保存的更改。
+            self.modified.clear()
 
     def update(self):
-        self.load()
+        """显式提交：合并最新磁盘值、检查覆盖、恢复任务绑定，再事务保存。"""
+        # update 原先在 load 内外各检查一次。保留合并后的检查，避免删除
+        # 后一次检查后，让待保存的异常 NextRun 绕过调度夹限。
+        self.load(apply_override=False)
         self.config_override()
         self.bind(getattr(self, '_bind_task_override', self.task))
         self.save()
@@ -408,18 +438,20 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
 
         limit_next_run(["Commission", "Reward"], limit=now + timedelta(hours=12, seconds=-1))
         limit_next_run(["Research"], limit=now + timedelta(hours=24, seconds=-1))
-        limit_next_run(["OpsiExplore", "OpsiCrossMonth", "OpsiVoucher", "OpsiMonthBoss", "OpsiShop"],
+        limit_next_run(["OpsiExplore", "OpsiExploreCleanup", "OpsiCrossMonth", "OpsiVoucher", "OpsiMonthBoss", "OpsiShop"],
                        limit=now + timedelta(days=31, seconds=-1))
         limit_next_run(["OpsiArchive"], limit=now + timedelta(days=7, seconds=-1))
         # 防溢出任务会按当前行动力恢复到 200 的时间延后，最长可能超过 24 小时。
         limit_next_run(["OpsiPreventActionPointOverflow"], limit=now + timedelta(hours=48, seconds=-1))
         # IslandPearlSell 按周调度，合法 NextRun 可能超过 24 小时。
         limit_next_run(["IslandPearlSell"], limit=now + timedelta(days=8, seconds=-1))
-        # 通用兜底保留 24 小时调度的少量误差空间，避免刚好延后一天的任务被重置。
-        limit_next_run(
-            [task for task in self.args.keys() if task != "OpsiPreventActionPointOverflow"],
-            limit=now + timedelta(hours=25, seconds=-1),
-        )
+
+        # 此处刻意不做「所有任务不得超过 N 小时」的通用兜底。
+        # 各任务的合法调度周期差异极大：秘书舰按好感度增长最长 22.5 天
+        # ((90 - 好感度) * 6 小时)、大世界跨月 31 天、珍珠采购按周 8 天。
+        # 通用上限无法区分「任务自己安排的合法长休眠」和「用户手改的远期时间」，
+        # 只会把前者重置成立刻运行，让任务陷入热循环（秘书舰曾因此在 38 分钟
+        # 内被调起 219 次）。确需限制周期的任务，在上面逐个声明。
 
         """
         强制覆盖任意配置项。
@@ -428,6 +460,10 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
         注意：此方法不可逆。
         """
         for arg, value in kwargs.items():
+            if arg in self.__dict__.get('_scheduler_overrides', {}):
+                self._scheduler_overrides[arg] = value
+                super().__setattr__(arg, value)
+                continue
             self.overridden[arg] = value
             super().__setattr__(arg, value)
 
@@ -447,7 +483,7 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
                 self.__setattr__(record, current_time().replace(microsecond=0))
 
     def multi_set(self):
-        """批量设置多个参数，但只保存一次。
+        """批量设置多个参数，最外层退出时保存一次，包括 TaskEnd 或普通异常。
 
         Examples:
             with self.config.multi_set():
@@ -475,7 +511,17 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
             keys (str, list[str]): 配置路径，如 `{task}.Scheduler.Enable`。
             value (Any): 要设置的值。
         """
-        self.modified[keys] = value
+        self.cross_set_many({keys: value})
+
+    def cross_set_many(self, values):
+        """按配置路径批量排队修改；自动更新时提交，multi_set 内留待退出提交。
+
+        Args:
+            values (dict[str, Any]): 配置路径到新值的映射。
+        """
+        overlay = self.__dict__.get('_scheduler_overrides', {})
+        protected = {self.bound[key] for key in overlay if key in self.bound}
+        self.modified.update({path: value for path, value in values.items() if path not in protected})
         if self.auto_update:
             self.update()
 
@@ -556,8 +602,7 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
             if task is None:
                 task = self.task.command
             logger.info(f"[配置] 延迟任务 `{task}` 到 {run} ({kv})")
-            self.modified[f'{task}.Scheduler.NextRun'] = run
-            self.update()
+            self.cross_set(f'{task}.Scheduler.NextRun', run)
         else:
             raise ScriptError(
                 "[配置] delay_next_run 缺少参数，应至少设置一个"
@@ -593,6 +638,8 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
             allow_none=False,
         )
 
+        changes = {}
+
         def delay_tasks(task_list, minutes):
             next_run = current_time().replace(microsecond=0) + timedelta(
                 minutes=minutes
@@ -602,7 +649,7 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
                 current = deep_get(self.data, keys=keys, default=DEFAULT_TIME)
                 if current < next_run:
                     logger.info(f"[配置-大世界] 延迟任务 `{task}` 到 {next_run} ({kv})")
-                    self.modified[keys] = next_run
+                    changes[keys] = next_run
 
         def is_submarine_call(task):
             return (
@@ -657,6 +704,7 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
             tasks = SelectedGrids(
                 [
                     "OpsiExplore",
+                    "OpsiExploreCleanup",
                     "OpsiDaily",
                     "OpsiObscure",
                     "OpsiAbyssal",
@@ -685,7 +733,7 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
             )
             delay_tasks(tasks, minutes=360)
 
-        self.update()
+        self.cross_set_many(changes)
 
     def task_call(self, task, force_call=True):
         """调用另一个任务运行。
@@ -701,17 +749,20 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
         Returns:
             bool: 是否成功调用。
         """
+        runtime = self.__dict__.get('_scheduler_runtime')
+        if runtime is not None and runtime.mode == 'takeover':
+            return runtime.request(task)
+        if runtime is not None and task == 'Restart' and runtime.mode == 'enhance':
+            runtime.request(task)
         if deep_get(self.data, keys=f"{task}.Scheduler.NextRun", default=None) is None:
             raise ScriptError(f"[配置] 要调用的任务: `{task}` 在用户配置中不存在")
 
         if force_call or self.is_task_enabled(task):
             logger.info(f"[配置] 任务调用: {task}")
-            self.modified[f"{task}.Scheduler.NextRun"] = current_time().replace(
-                microsecond=0
-            )
-            self.modified[f"{task}.Scheduler.Enable"] = True
-            if self.auto_update:
-                self.update()
+            self.cross_set_many({
+                f"{task}.Scheduler.NextRun": current_time().replace(microsecond=0),
+                f"{task}.Scheduler.Enable": True,
+            })
             return True
         else:
             logger.info(f"[配置] 任务调用: {task} (因用户禁用而跳过)")
@@ -745,6 +796,9 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
         if self.stop_event is not None:
             if self.stop_event.is_set():
                 return True
+        runtime = self.__dict__.get('_scheduler_runtime')
+        if runtime is not None and runtime.mode != 'native':
+            return runtime.should_yield(self)
         prev = getattr(self, '_task_switch_owner', self.task)
         self.load()
         new = self.get_next()
@@ -877,13 +931,18 @@ class AzurLaneConfig(ConfigUpdater, ManualConfig, GeneratedConfig, ConfigWatcher
         return backup
 
 
-pywebio.output.Output = OutputConfig
-pywebio.pin.Output = OutputConfig
 
 
 class ConfigBackup:
+    """配置临时覆盖备份管理器。
+
+    用于在特定代码块内临时修改配置项并在退出时恢复原始值。
+    支持作为上下文管理器（with 语句）使用。
+    """
+
     def __init__(self, config):
-        """
+        """初始化配置备份管理器。
+
         Args:
             config (AzurLaneConfig): 要备份的配置对象。
         """
@@ -892,39 +951,78 @@ class ConfigBackup:
         self.kwargs = {}
 
     def cover(self, **kwargs):
+        """应用临时配置覆盖并记录原始值。
+
+        Args:
+            **kwargs: 键值对形式的临时配置项。
+        """
         self.kwargs = kwargs
         for key, value in kwargs.items():
             self.backup[key] = self.config.__getattribute__(key)
             self.config.__setattr__(key, value)
 
     def recover(self):
+        """恢复所有已备份的原始配置项。"""
         for key, value in self.backup.items():
             self.config.__setattr__(key, value)
 
     def __enter__(self):
+        """进入上下文管理器。
+
+        Returns:
+            ConfigBackup: 当前备份对象实例。
+        """
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """退出上下文管理器并自动恢复原始配置。
+
+        Args:
+            exc_type: 异常类型。
+            exc_val: 异常值。
+            exc_tb: 异常追踪。
+        """
         self.recover()
 
 
 class MultiSetWrapper:
+    """批量配置设置上下文管理器。
+
+    在上下文内部临时禁用配置的自动保存（auto_update），
+    在退出上下文时统一触发一次保存更新，提高批量修改配置时的性能。
+    """
+
     def __init__(self, main):
-        """
+        """初始化批量配置设置管理器。
+
         Args:
             main (AzurLaneConfig): 配置实例。
         """
         self.main = main
-        self.in_wrapper = False
+        self._previous_auto_update = []
 
     def __enter__(self):
-        if self.main.auto_update:
-            self.main.auto_update = False
-        else:
-            self.in_wrapper = True
+        """进入批量修改模式，暂停自动更新。
+
+        Returns:
+            MultiSetWrapper: 当前包装器实例。
+        """
+        self._previous_auto_update.append(self.main.auto_update)
+        self.main.auto_update = False
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if not self.in_wrapper:
-            self.main.update()
-            self.main.auto_update = True
+        """退出批量修改模式并执行合并保存。
+
+        Args:
+            exc_type: 异常类型。
+            exc_val: 异常值。
+            exc_tb: 异常追踪。
+        """
+        auto_update = self._previous_auto_update.pop()
+        try:
+            if auto_update:
+                self.main.update()
+        finally:
+            # 提交失败仍恢复自动更新，保留 modified 供重试；退出异常不回滚。
+            self.main.auto_update = auto_update

@@ -1,8 +1,8 @@
-import copy
 import sys
 from typing import Optional, Union
 
 from deploy.geo import get_country_code
+from deploy.config_transaction import DeployConfigTransaction
 from deploy.logger import logger
 from deploy.utils import *
 
@@ -17,6 +17,7 @@ class ExecutionError(Exception):
 
 
 class ConfigModel:
+    """部署配置模型，定义所有配置项及其默认值。"""
     # Git 配置
     Repository: str = GITHUB_REPOSITORY
     Branch: str = "master"
@@ -55,6 +56,8 @@ class ConfigModel:
     SSHUser: Optional[str] = None
     SSHServer: Optional[str] = None
     SSHExecutable: Optional[str] = None
+    AllowedRedirectHosts: Optional[str] = None
+    MaxRedirects: int = 2
     SignalingServer: Optional[str] = None
     StunServers: Optional[str] = '["stun:stun.l.google.com:19302"]'
     TurnServers: Optional[str] = None
@@ -70,13 +73,18 @@ class ConfigModel:
     DpiScaling: bool = True
     Password: Optional[str] = None
     CDN: Union[str, bool] = False
+    # --watermark. 关闭未经验证版本的水印。默认 False，即默认显示水印，
+    # 用于提醒当前运行的是未经验证的构建（见 module/webui/app_shell.py）。
+    DisableBranchWatermark: bool = False
     Run: Optional[str] = None
 
     # 动态配置
     GitOverCdn: bool = False
 
 
-class DeployConfig(ConfigModel):
+class DeployConfig(DeployConfigTransaction, ConfigModel):
+    """部署配置管理器，负责配置的读取、保存、重定向与执行环境管理。"""
+
     def __init__(self, file=DEPLOY_CONFIG):
         """初始化部署配置。
 
@@ -93,6 +101,7 @@ class DeployConfig(ConfigModel):
         self.show_config()
 
     def show_config(self):
+        """打印与默认模板不同的配置项。"""
         logger.hr("Show deploy config", 1)
         for k, v in self.config.items():
             if k in ("Password", "SSHUser"):
@@ -102,25 +111,6 @@ class DeployConfig(ConfigModel):
             logger.info(f"{k}: {v}")
 
         logger.info(f"Rest of the configs are the same as default")
-
-    def read(self):
-        """读取并更新部署配置，将配置值复制到属性。"""
-        self.config = poor_yaml_read(self.template_file)
-        self.config_template = copy.deepcopy(self.config)
-        origin = poor_yaml_read(self.file)
-        self.config.update(origin)
-
-        for key, value in self.config.items():
-            if hasattr(self, key):
-                super().__setattr__(key, value)
-
-        self.config_redirect()
-
-        if self.config != origin:
-            self.write()
-
-    def write(self):
-        poor_yaml_write(self.config, self.file, template_file=self.template_file)
 
     def config_redirect(self):
         """部署配置重定向，处理旧配置到新配置的迁移。
@@ -144,12 +134,12 @@ class DeployConfig(ConfigModel):
             'https://git.nanoda.work/git/AzurPilot',
             'https://git.nanoda.work',
         ]:
-            self.Repository = GIT_OVER_CDN_REPOSITORY
+            object.__setattr__(self, 'Repository', GIT_OVER_CDN_REPOSITORY)
             self.config['Repository'] = GIT_OVER_CDN_REPOSITORY
         if self.PypiMirror in [
             'https://pypi.tuna.tsinghua.edu.cn/simple'
         ]:
-            self.PypiMirror = 'https://mirrors.aliyun.com/pypi/simple'
+            object.__setattr__(self, 'PypiMirror', 'https://mirrors.aliyun.com/pypi/simple')
             self.config['PypiMirror'] = 'https://mirrors.aliyun.com/pypi/simple'
 
         # 绕过 webui.config.DeployConfig.__setattr__()，不写入 deploy.yaml
@@ -173,7 +163,7 @@ class DeployConfig(ConfigModel):
         country_code = get_country_code()
         if country_code == 'cn':
             logger.info('检测到中国大陆网络，切换至国内 Git 更新源')
-            self.Repository = GIT_OVER_CDN_REPOSITORY
+            object.__setattr__(self, 'Repository', GIT_OVER_CDN_REPOSITORY)
             self.config['Repository'] = GIT_OVER_CDN_REPOSITORY
         elif country_code is None:
             logger.warning('无法检测网络所在国家，保留 GitHub 更新源')
@@ -198,6 +188,11 @@ class DeployConfig(ConfigModel):
 
     @cached_property
     def root_filepath(self):
+        """获取项目根目录绝对路径。
+
+        Returns:
+            str: 格式化为斜杠分隔的根目录绝对路径。
+        """
         return (
             os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
             .replace(r"\\", "/")
@@ -234,6 +229,11 @@ class DeployConfig(ConfigModel):
             return True
 
     def show_error(self, command=None):
+        """展示更新失败信息及排查指引。
+
+        Args:
+            command (str, optional): 导致失败的命令。
+        """
         logger.hr("Update failed", 0)
         self.show_config()
         logger.info("")

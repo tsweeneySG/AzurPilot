@@ -345,7 +345,8 @@
           "DroidCast",
           "DroidCast_raw",
           "nemu_ipc",
-          "ldopengl"
+          "ldopengl",
+          "azurpilot_android"
         ]
       },
       "ControlMethod": {
@@ -356,8 +357,11 @@
           "uiautomator2",
           "minitouch",
           "Hermit",
-          "MaaTouch"
-        ]
+          "MaaTouch",
+          "nemu_ipc",
+          "azurpilot_android"
+        ],
+        "help": "nemu_ipc 需与截图方式配套使用（截图选 nemu_ipc 时启动会自动联动）。注意：nemu_ipc 触控走模拟器内部 RPC，低性能电脑上滑动易丢步、拖拽易变形，调用偶发挂死会丢失点击；滑动或拖拽异常时请改回 minitouch / MaaTouch。"
       },
       "GameSettings": {
         "type": "checkbox",
@@ -455,14 +459,53 @@
         "type": "checkbox",
         "value": false
       },
-      "SaveErrorCount": {
+      "TaskRestartLimit": {
         "type": "input",
-        "value": 30
+        "value": 3,
+        "validate": [
+          0,
+          999
+        ]
+      },
+      "SaveErrorRetentionDays": {
+        "type": "input",
+        "value": 30,
+        "validate": [
+          0,
+          3650
+        ]
+      },
+      "SaveErrorBackUpMethod": {
+        "type": "select",
+        "value": "zip",
+        "option": [
+          "delete",
+          "zip",
+          "copy"
+        ]
+      },
+      "SaveErrorZipMethod": {
+        "type": "select",
+        "value": "zip",
+        "option": [
+          "bz2",
+          "gzip",
+          "xz",
+          "zip"
+        ]
       },
       "OnePushConfig": {
         "type": "textarea",
         "value": "provider: null",
         "mode": "yaml"
+      },
+      "LowPushMode": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
       },
       "ScreenshotLength": {
         "type": "input",
@@ -522,7 +565,7 @@
       },
       "LlmAnalysis": {
         "type": "checkbox",
-        "value": true
+        "value": false
       },
       "LlmApiKey": {
         "type": "textarea",
@@ -641,7 +684,7 @@
       },
       "CloseEmulatorDuringLongWait": {
         "type": "checkbox",
-        "value": true,
+        "value": false,
         "option": [
           true,
           false
@@ -679,12 +722,55 @@
         "type": "input",
         "value": "",
         "valuetype": "str"
+      },
+      "WarmupEnable": {
+        "type": "checkbox",
+        "value": true,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "WarmupMinutes": {
+        "type": "input",
+        "value": 15,
+        "validate": [
+          1,
+          1440
+        ]
       }
     },
     "DropRecord": {
       "SaveFolder": {
         "type": "input",
         "value": "./screenshots"
+      },
+      "RetentionDays": {
+        "type": "input",
+        "value": 0,
+        "validate": [
+          0,
+          3650
+        ]
+      },
+      "BackUpMethod": {
+        "type": "select",
+        "value": "zip",
+        "option": [
+          "delete",
+          "zip",
+          "copy"
+        ]
+      },
+      "ZipMethod": {
+        "type": "select",
+        "value": "zip",
+        "option": [
+          "bz2",
+          "gzip",
+          "xz",
+          "zip"
+        ]
       },
       "AzurStatsID": {
         "type": "input",
@@ -718,6 +804,14 @@
           "save_and_upload"
         ]
       },
+      "CommissionIncomeScreenshot": {
+        "type": "select",
+        "value": "save",
+        "option": [
+          "do_not",
+          "save"
+        ]
+      },
       "CombatRecord": {
         "type": "select",
         "value": "do_not",
@@ -726,7 +820,77 @@
           "save"
         ]
       },
-      "OpsiRecord": {
+      "OpsiHazard1Leveling": {
+        "type": "select",
+        "value": "upload",
+        "option": [
+          "do_not",
+          "save",
+          "upload",
+          "save_and_upload"
+        ]
+      },
+      "OpsiMeowfficerFarming": {
+        "type": "select",
+        "value": "upload",
+        "option": [
+          "do_not",
+          "save",
+          "upload",
+          "save_and_upload"
+        ]
+      },
+      "OpsiDaily": {
+        "type": "select",
+        "value": "upload",
+        "option": [
+          "do_not",
+          "save",
+          "upload",
+          "save_and_upload"
+        ]
+      },
+      "OpsiObscure": {
+        "type": "select",
+        "value": "upload",
+        "option": [
+          "do_not",
+          "save",
+          "upload",
+          "save_and_upload"
+        ]
+      },
+      "OpsiAbyssal": {
+        "type": "select",
+        "value": "upload",
+        "option": [
+          "do_not",
+          "save",
+          "upload",
+          "save_and_upload"
+        ]
+      },
+      "OpsiStronghold": {
+        "type": "select",
+        "value": "upload",
+        "option": [
+          "do_not",
+          "save",
+          "upload",
+          "save_and_upload"
+        ]
+      },
+      "OpsiExplore": {
+        "type": "select",
+        "value": "upload",
+        "option": [
+          "do_not",
+          "save",
+          "upload",
+          "save_and_upload"
+        ]
+      },
+      "OpsiOther": {
         "type": "select",
         "value": "upload",
         "option": [
@@ -763,6 +927,20 @@
         "value": true
       }
     },
+    "Backup": {
+      "Enable": {
+        "type": "checkbox",
+        "value": true
+      },
+      "KeepDays": {
+        "type": "input",
+        "value": 7,
+        "validate": [
+          1,
+          3650
+        ]
+      }
+    },
     "EmulatorManagement": {
       "ScheduledEmulatorRestart": {
         "type": "checkbox",
@@ -778,6 +956,14 @@
         "validate": [
           1,
           24
+        ]
+      },
+      "DeepRestartAfterFailures": {
+        "type": "input",
+        "value": 0,
+        "validate": [
+          0,
+          10
         ]
       }
     },
@@ -853,6 +1039,10 @@
       "CheckPerCategory": {
         "type": "input",
         "value": 5
+      },
+      "KeepCommonCV": {
+        "type": "checkbox",
+        "value": true
       }
     },
     "OldRetire": {
@@ -931,7 +1121,7 @@
     "YukikazeTaskManager": {
       "TaskPriorityAdjustment": {
         "type": "task_priority",
-        "value": "Restart\n> OpsiCrossMonth\n> Commission > Tactical > Research\n> Exercise\n> Dorm > Meowfficer > Guild > Gacha\n> Reward\n> ShopFrequent > ShopOnce > Shipyard > Freebies\n> PrivateQuarters\n> OpsiExplore\n> OpsiPreventActionPointOverflow\n> Minigame > Awaken\n> OpsiAshBeacon\n> OpsiDaily > OpsiShop > OpsiVoucher > EventShop\n> OpsiAbyssal > OpsiStronghold > OpsiObscure > OpsiArchive\n> Daily > Hard > OpsiAshBeacon > OpsiAshAssist > OpsiMonthBoss\n> Sos > EventSp > EventA > EventB > EventC > EventD\n> RaidDaily > CoalitionSp > WarArchives > WarArchivesCatchup > MaritimeEscort\n> IslandJuuEatery > IslandJuuCoffee > IslandGrill > IslandTeahouse > IslandRestaurant\n> IslandFarm > IslandRancher > IslandMineForest > IslandDailyGather > IslandManufacture\n> IslandAirDrop > IslandBusiness > IslandDailyOrder > IslandDailyInteract > IslandPearlSell > IslandCargoPreparation\n> Event > Event2 > Event3 > Raid > Hospital > HospitalEvent > Coalition > RaidScuttle > Main > Main2 > Main3\n> OpsiScheduling\n> OpsiMeowfficerFarming\n> GemsFarming\n> Ambush11\n> OpsiHazard1Leveling\n> ThreeOilLowCost"
+        "value": "Restart\n> OpsiCrossMonth\n> Commission > Tactical > Research\n> Exercise\n> Dorm > Meowfficer > Guild > Gacha\n> Reward > StorageStatistics\n> ShopFrequent > ShopOnce > Shipyard > Freebies\n> PrivateQuarters\n> OpsiExplore > OpsiExploreCleanup\n> OpsiPreventActionPointOverflow\n> Minigame > Awaken\n> OpsiAshBeacon\n> OpsiDaily > OpsiShop > OpsiVoucher > EventShop\n> OpsiAbyssal > OpsiStronghold > OpsiObscure > OpsiArchive\n> Daily > Hard > OpsiAshBeacon > OpsiAshAssist > OpsiMonthBoss\n> Sos > EventSp > EventA > EventB > EventC > EventD\n> RaidDaily > CoalitionSp > WarArchives > WarArchivesCatchup > MaritimeEscort\n> IslandJuuEatery > IslandJuuCoffee > IslandGrill > IslandTeahouse > IslandRestaurant\n> IslandFarm > IslandRancher > IslandMineForest > IslandDailyGather > IslandManufacture\n> IslandAirDrop > IslandBusiness > IslandDailyOrder > IslandDailyInteract > IslandPearlSell > IslandCargoPreparation\n> Event > Event2 > Event3 > Raid > Hospital > HospitalEvent > Coalition > RaidScuttle > Main > Main2 > Main3\n> OpsiScheduling\n> OpsiMeowfficerFarming\n> GemsFarming\n> Ambush11\n> OpsiHazard1Leveling\n> ThreeOilLowCost\n> OperationHandover"
       }
     },
     "Storage": {
@@ -1016,6 +1206,14 @@
         "validate": [
           1,
           3600
+        ]
+      },
+      "MoveChannelFloat": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
         ]
       }
     },
@@ -1139,6 +1337,10 @@
       "OilLimit": {
         "type": "input",
         "value": 1000
+      },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
       },
       "CoinLimit": {
         "type": "input",
@@ -1296,7 +1498,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -1316,6 +1519,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -1327,6 +1535,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -1569,6 +1781,10 @@
         "type": "input",
         "value": 1000
       },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
+      },
       "CoinLimit": {
         "type": "input",
         "value": 0
@@ -1725,7 +1941,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -1745,6 +1962,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -1756,6 +1978,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -1998,6 +2224,10 @@
         "type": "input",
         "value": 1000
       },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
+      },
       "CoinLimit": {
         "type": "input",
         "value": 0
@@ -2154,7 +2384,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -2174,6 +2405,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -2185,6 +2421,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -2368,6 +2608,10 @@
       }
     },
     "GemsFarming": {
+      "EventFallbackStage": {
+        "type": "input",
+        "value": "2-4"
+      },
       "ChangeFlagship": {
         "type": "select",
         "value": "ship_equip",
@@ -2482,22 +2726,22 @@
         "type": "select",
         "value": "campaign_main",
         "option": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_cn": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_en": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_jp": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_tw": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_bold": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ]
       },
       "Mode": {
@@ -2551,6 +2795,10 @@
       "OilLimit": {
         "type": "input",
         "value": 1000
+      },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
       },
       "CoinLimit": {
         "type": "input",
@@ -2709,9 +2957,12 @@
         "value": "do_not_use",
         "option": [
           "do_not_use",
-          "hunt_only"
-        ],
-        "display": "display"
+          "hunt_only",
+          "boss_only",
+          "hunt_and_boss",
+          "every_combat",
+          "advanced"
+        ]
       },
       "AutoSearchMode": {
         "type": "select",
@@ -2719,19 +2970,22 @@
         "option": [
           "sub_standby",
           "sub_auto_call"
-        ],
-        "display": "hide"
+        ]
       },
       "DistanceToBoss": {
         "type": "select",
-        "value": "use_open_ocean_support",
+        "value": "2_grid_to_boss",
         "option": [
           "to_boss_position",
           "1_grid_to_boss",
           "2_grid_to_boss",
           "use_open_ocean_support"
-        ],
-        "display": "hide"
+        ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -2744,6 +2998,10 @@
           "calculate_ignore"
         ],
         "display": "hide"
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -2787,14 +3045,13 @@
       },
       "Fleet2Value": {
         "type": "input",
-        "value": 119,
-        "display": "hide"
+        "value": 119
       },
       "Fleet2Record": {
         "type": "datetime",
         "value": "2020-01-01 00:00:00",
         "validate": "datetime",
-        "display": "hide"
+        "display": "disabled"
       },
       "Fleet2Control": {
         "type": "select",
@@ -2825,6 +3082,17 @@
       "Fleet2Onsen": {
         "type": "checkbox",
         "value": false
+      }
+    },
+    "EnemyPriority": {
+      "EnemyScaleBalanceWeight": {
+        "type": "select",
+        "value": "S1_enemy_first",
+        "option": [
+          "default_mode",
+          "S3_enemy_first",
+          "S1_enemy_first"
+        ]
       }
     },
     "Storage": {
@@ -2889,6 +3157,10 @@
       }
     },
     "GemsFarming": {
+      "EventFallbackStage": {
+        "type": "input",
+        "value": "2-4"
+      },
       "ChangeFlagship": {
         "type": "select",
         "value": "ship_equip",
@@ -3003,23 +3275,22 @@
         "type": "select",
         "value": "campaign_main",
         "option": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
-        "display": "hide",
         "option_cn": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_en": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_jp": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_tw": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_bold": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ]
       },
       "Mode": {
@@ -3073,6 +3344,10 @@
       "OilLimit": {
         "type": "input",
         "value": 1000
+      },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
       },
       "CoinLimit": {
         "type": "input",
@@ -3231,9 +3506,12 @@
         "value": "do_not_use",
         "option": [
           "do_not_use",
-          "hunt_only"
-        ],
-        "display": "display"
+          "hunt_only",
+          "boss_only",
+          "hunt_and_boss",
+          "every_combat",
+          "advanced"
+        ]
       },
       "AutoSearchMode": {
         "type": "select",
@@ -3241,19 +3519,22 @@
         "option": [
           "sub_standby",
           "sub_auto_call"
-        ],
-        "display": "hide"
+        ]
       },
       "DistanceToBoss": {
         "type": "select",
-        "value": "use_open_ocean_support",
+        "value": "2_grid_to_boss",
         "option": [
           "to_boss_position",
           "1_grid_to_boss",
           "2_grid_to_boss",
           "use_open_ocean_support"
-        ],
-        "display": "hide"
+        ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -3266,6 +3547,10 @@
           "calculate_ignore"
         ],
         "display": "hide"
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -3348,6 +3633,17 @@
         "value": false
       }
     },
+    "EnemyPriority": {
+      "EnemyScaleBalanceWeight": {
+        "type": "select",
+        "value": "S1_enemy_first",
+        "option": [
+          "default_mode",
+          "S3_enemy_first",
+          "S1_enemy_first"
+        ]
+      }
+    },
     "Storage": {
       "Storage": {
         "type": "storage",
@@ -3410,6 +3706,11 @@
       }
     },
     "GemsFarming": {
+      "EventFallbackStage": {
+        "type": "input",
+        "value": "0",
+        "display": "hide"
+      },
       "ChangeFlagship": {
         "type": "select",
         "value": "ship_equip",
@@ -3583,6 +3884,10 @@
         "type": "input",
         "value": 1000
       },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
+      },
       "CoinLimit": {
         "type": "input",
         "value": 0
@@ -3763,6 +4068,11 @@
           "use_open_ocean_support"
         ],
         "display": "hide"
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -3774,6 +4084,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -3867,7 +4181,7 @@
       },
       "TimeLimit": {
         "type": "datetime",
-        "value": "2020-01-01 00:00:00",
+        "value": "2023-01-01 00:00:00",
         "validate": "datetime"
       }
     },
@@ -3962,22 +4276,22 @@
         "type": "select",
         "value": "campaign_main",
         "option": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_cn": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_en": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_jp": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_tw": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_bold": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ]
       },
       "Mode": {
@@ -4028,6 +4342,10 @@
       "OilLimit": {
         "type": "input",
         "value": 1000
+      },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
       },
       "CoinLimit": {
         "type": "input",
@@ -4185,7 +4503,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -4205,6 +4524,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -4216,6 +4540,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -4407,22 +4735,22 @@
         "type": "select",
         "value": "campaign_main",
         "option": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_cn": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_en": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_jp": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_tw": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_bold": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ]
       },
       "Mode": {
@@ -4473,6 +4801,10 @@
       "OilLimit": {
         "type": "input",
         "value": 1000
+      },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
       },
       "CoinLimit": {
         "type": "input",
@@ -4630,7 +4962,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -4650,6 +4983,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -4661,6 +4999,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -4852,22 +5194,22 @@
         "type": "select",
         "value": "campaign_main",
         "option": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_cn": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_en": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_jp": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_tw": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_bold": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ]
       },
       "Mode": {
@@ -4917,6 +5259,10 @@
       "OilLimit": {
         "type": "input",
         "value": 1000
+      },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
       },
       "CoinLimit": {
         "type": "input",
@@ -5074,7 +5420,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -5094,6 +5441,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -5105,6 +5457,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -5313,7 +5669,6 @@
         "type": "select",
         "value": "campaign_main",
         "option": [
-          "raid_20260212",
           "raid_20260827"
         ],
         "option_cn": [
@@ -5326,10 +5681,9 @@
           "raid_20260827"
         ],
         "option_tw": [
-          "raid_20260212"
+          "raid_20260827"
         ],
         "option_bold": [
-          "raid_20260212",
           "raid_20260827"
         ]
       },
@@ -5386,6 +5740,10 @@
         "type": "input",
         "value": 1000
       },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
+      },
       "CoinLimit": {
         "type": "input",
         "value": 0
@@ -5437,6 +5795,10 @@
           "calculate_ignore"
         ]
       },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
+      },
       "Fleet1Value": {
         "type": "input",
         "value": 119
@@ -5476,12 +5838,12 @@
         "value": false
       },
       "Fleet2Value": {
-        "type": "input",
+        "type": "stored",
         "value": 119,
         "display": "hide"
       },
       "Fleet2Record": {
-        "type": "datetime",
+        "type": "stored",
         "value": "2020-01-01 00:00:00",
         "validate": "datetime",
         "display": "hide"
@@ -5604,7 +5966,6 @@
         "type": "state",
         "value": "campaign_main",
         "option": [
-          "raid_20260212",
           "raid_20260827"
         ],
         "option_cn": [
@@ -5617,10 +5978,9 @@
           "raid_20260827"
         ],
         "option_tw": [
-          "raid_20260212"
+          "raid_20260827"
         ],
         "option_bold": [
-          "raid_20260212",
           "raid_20260827"
         ]
       },
@@ -5671,6 +6031,10 @@
       "OilLimit": {
         "type": "input",
         "value": 1000
+      },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
       },
       "CoinLimit": {
         "type": "input",
@@ -5828,7 +6192,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -5848,6 +6213,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -5859,6 +6229,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -6007,6 +6381,10 @@
         "type": "input",
         "value": 1000
       },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
+      },
       "CoinLimit": {
         "type": "input",
         "value": 0
@@ -6059,6 +6437,10 @@
           "calculate_ignore"
         ]
       },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
+      },
       "Fleet1Value": {
         "type": "input",
         "value": 119
@@ -6101,12 +6483,12 @@
         "display": "hide"
       },
       "Fleet2Value": {
-        "type": "input",
+        "type": "stored",
         "value": 119,
         "display": "hide"
       },
       "Fleet2Record": {
-        "type": "datetime",
+        "type": "stored",
         "value": "2020-01-01 00:00:00",
         "validate": "datetime",
         "display": "hide"
@@ -6306,6 +6688,10 @@
         "type": "input",
         "value": 1000
       },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
+      },
       "CoinLimit": {
         "type": "input",
         "value": 0
@@ -6357,6 +6743,10 @@
           "calculate_ignore"
         ]
       },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
+      },
       "Fleet1Value": {
         "type": "input",
         "value": 119
@@ -6395,12 +6785,12 @@
         "value": false
       },
       "Fleet2Value": {
-        "type": "input",
+        "type": "stored",
         "value": 119,
         "display": "hide"
       },
       "Fleet2Record": {
-        "type": "datetime",
+        "type": "stored",
         "value": "2020-01-01 00:00:00",
         "validate": "datetime",
         "display": "hide"
@@ -6610,6 +7000,10 @@
         "type": "input",
         "value": 1000
       },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
+      },
       "CoinLimit": {
         "type": "input",
         "value": 0
@@ -6660,6 +7054,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -6889,6 +7287,22 @@
       "CustomFilter": {
         "type": "textarea",
         "value": "EquipUR > EquipSSR > Cube > GachaTicket\n> Array > Chip > CatT3 \n> Meta > SkinBox\n> Oil > Coin > Medal > ExpBookT1 > FoodT1\n> DR > PR\n> AugmentCore > AugmentEnhanceT2 > AugmentChangeT2 > AugmentChangeT1\n> CatT2 > CatT1 > PlateGeneralT3 > PlateT3 > BoxT4\n> ShipSSR"
+      }
+    },
+    "ShopAdvanced": {
+      "Mode": {
+        "type": "select",
+        "value": "legacy",
+        "option": [
+          "legacy",
+          "advanced"
+        ]
+      },
+      "Script": {
+        "type": "textarea",
+        "value": "",
+        "mode": "restricted_lua",
+        "preserve_empty": true
       }
     },
     "Storage": {
@@ -7310,6 +7724,10 @@
         "type": "input",
         "value": 1000
       },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
+      },
       "CoinLimit": {
         "type": "input",
         "value": 0
@@ -7351,6 +7769,28 @@
       "DailyRunCount": {
         "type": "input",
         "value": 0
+      },
+      "AutoClear": {
+        "type": "checkbox",
+        "value": false
+      },
+      "AutoSelectEvent": {
+        "type": "checkbox",
+        "value": false
+      },
+      "AutoClearTarget": {
+        "type": "select",
+        "value": "three_star",
+        "option": [
+          "normal_3_star",
+          "three_star",
+          "clear_100"
+        ]
+      },
+      "AutoClearProgress": {
+        "type": "stored",
+        "value": null,
+        "display": "hide"
       },
       "DailyRunCountRemain": {
         "type": "stored",
@@ -7488,7 +7928,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -7508,6 +7949,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -7519,6 +7965,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -7706,6 +8156,10 @@
         "type": "input",
         "value": 1000
       },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
+      },
       "CoinLimit": {
         "type": "input",
         "value": 0
@@ -7758,6 +8212,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -7915,22 +8373,22 @@
         "type": "select",
         "value": "campaign_main",
         "option": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_cn": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_en": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_jp": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_tw": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_bold": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ]
       },
       "Mode": {
@@ -7982,6 +8440,10 @@
       "OilLimit": {
         "type": "input",
         "value": 1000
+      },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
       },
       "CoinLimit": {
         "type": "input",
@@ -8144,7 +8606,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -8164,6 +8627,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -8175,6 +8643,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -8377,22 +8849,22 @@
         "type": "select",
         "value": "campaign_main",
         "option": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_cn": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_en": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_jp": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_tw": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_bold": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ]
       },
       "Mode": {
@@ -8444,6 +8916,10 @@
       "OilLimit": {
         "type": "input",
         "value": 1000
+      },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
       },
       "CoinLimit": {
         "type": "input",
@@ -8606,7 +9082,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -8626,6 +9103,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -8637,6 +9119,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -8839,22 +9325,22 @@
         "type": "select",
         "value": "campaign_main",
         "option": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_cn": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_en": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_jp": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_tw": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_bold": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ]
       },
       "Mode": {
@@ -8906,6 +9392,10 @@
       "OilLimit": {
         "type": "input",
         "value": 1000
+      },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
       },
       "CoinLimit": {
         "type": "input",
@@ -9068,7 +9558,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -9088,6 +9579,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -9099,6 +9595,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -9301,22 +9801,22 @@
         "type": "select",
         "value": "campaign_main",
         "option": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_cn": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_en": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_jp": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_tw": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_bold": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ]
       },
       "Mode": {
@@ -9368,6 +9868,10 @@
       "OilLimit": {
         "type": "input",
         "value": 1000
+      },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
       },
       "CoinLimit": {
         "type": "input",
@@ -9530,7 +10034,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -9550,6 +10055,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -9561,6 +10071,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -9753,22 +10267,22 @@
         "type": "select",
         "value": "campaign_main",
         "option": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_cn": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_en": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_jp": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_tw": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ],
         "option_bold": [
-          "event_20260813_cn"
+          "event_20260908_cn"
         ]
       },
       "Mode": {
@@ -9820,6 +10334,10 @@
       "OilLimit": {
         "type": "input",
         "value": 1000
+      },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
       },
       "CoinLimit": {
         "type": "input",
@@ -9982,7 +10500,8 @@
           "hunt_only",
           "boss_only",
           "hunt_and_boss",
-          "every_combat"
+          "every_combat",
+          "advanced"
         ]
       },
       "AutoSearchMode": {
@@ -10003,6 +10522,11 @@
           "2_grid_to_boss",
           "use_open_ocean_support"
         ]
+      },
+      "AdvancedConfig": {
+        "type": "textarea",
+        "value": "# 弹药数\nammo: 7\n\n# 远洋支援数\nsupport: 1\n\n# 松鲷的狩猎范围\nrange:\n  - \"ONONOOO\"\n  - \"ONNNNOO\"\n  - \"NNNNNNO\"\n  - \"ONNHNNN\"\n  - \"NNNNNNO\"\n  - \"ONOONOO\"\n  - \"OOOOOOO\"\n\n# 规则\nrules:\n  battle_0: # 所有战斗\n    type: hunt  # 出击类型为狩猎\n    condition:  # 出击条件\n      ammo: \">2\"  # 弹药数大于2\n      enemy:  # 敌人类型为\n        - \"2C\"  # 中航\n        - \"3T\"  # 大运\n        - \"0E\"  # 未知敌人\n      in_range: true  # 在狩猎范围里\n    move: false # 不移动\n  battle_2: # 第二场战斗\n    type: call  # 出击类型为召唤\n    condition:  # 出击条件\n      ammo: \">=2\" # 弹药数大于等于2\n      support: \"!=0\" # 远洋支援数不等于0\n      enemy:  # 敌人类型为\n        - \"3*\"  # 所有大型舰队\n      in_range: false  # 不要求在狩猎范围里\n    move: false # 不移动\n  battle_-1:  # 最后一场战斗\n    type: call  # 出击类型为召唤\n    # 这里没写条件所以是必定出击\n    support: true # 远洋支援\n    move: true # 移动\n",
+        "mode": "yaml"
       }
     },
     "Emotion": {
@@ -10014,6 +10538,10 @@
           "ignore",
           "calculate_ignore"
         ]
+      },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
       },
       "Fleet1Value": {
         "type": "input",
@@ -10212,7 +10740,6 @@
         "type": "select",
         "value": "campaign_main",
         "option": [
-          "raid_20260212",
           "raid_20260827"
         ],
         "option_cn": [
@@ -10225,10 +10752,9 @@
           "raid_20260827"
         ],
         "option_tw": [
-          "raid_20260212"
+          "raid_20260827"
         ],
         "option_bold": [
-          "raid_20260212",
           "raid_20260827"
         ]
       },
@@ -10285,6 +10811,10 @@
         "type": "input",
         "value": 1000
       },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
+      },
       "CoinLimit": {
         "type": "input",
         "value": 0
@@ -10337,6 +10867,10 @@
           "calculate_ignore"
         ]
       },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
+      },
       "Fleet1Value": {
         "type": "input",
         "value": 119
@@ -10375,12 +10909,12 @@
         "value": false
       },
       "Fleet2Value": {
-        "type": "input",
+        "type": "stored",
         "value": 119,
         "display": "hide"
       },
       "Fleet2Record": {
-        "type": "datetime",
+        "type": "stored",
         "value": "2020-01-01 00:00:00",
         "validate": "datetime",
         "display": "hide"
@@ -10581,6 +11115,10 @@
         "type": "input",
         "value": 1000
       },
+      "OilLimitHardFloor": {
+        "type": "input",
+        "value": 500
+      },
       "CoinLimit": {
         "type": "input",
         "value": 0
@@ -10632,6 +11170,10 @@
           "calculate_ignore"
         ]
       },
+      "IgnoreShipwreck": {
+        "type": "checkbox",
+        "value": false
+      },
       "Fleet1Value": {
         "type": "input",
         "value": 119
@@ -10670,12 +11212,12 @@
         "value": false
       },
       "Fleet2Value": {
-        "type": "input",
+        "type": "stored",
         "value": 119,
         "display": "hide"
       },
       "Fleet2Record": {
-        "type": "datetime",
+        "type": "stored",
         "value": "2020-01-01 00:00:00",
         "validate": "datetime",
         "display": "hide"
@@ -10724,7 +11266,7 @@
     "Scheduler": {
       "Enable": {
         "type": "checkbox",
-        "value": false,
+        "value": true,
         "option": [
           true,
           false
@@ -10828,6 +11370,31 @@
       "CommissionNotifyRewardStatistics": {
         "type": "checkbox",
         "value": true
+      },
+      "DetectShipDrop": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "GemNotify": {
+        "type": "checkbox",
+        "value": true
+      },
+      "GemStatistics": {
+        "type": "checkbox",
+        "value": false
+      },
+      "GemStatisticsPeriod": {
+        "type": "select",
+        "value": "month",
+        "option": [
+          "today",
+          "week",
+          "month"
+        ]
       }
     },
     "Storage": {
@@ -10949,7 +11516,19 @@
       },
       "MinLevel": {
         "type": "input",
-        "value": 50
+        "value": 50,
+        "validate": [
+          0,
+          125
+        ]
+      },
+      "MaxLevel": {
+        "type": "input",
+        "value": 0,
+        "validate": [
+          0,
+          125
+        ]
       }
     },
     "Storage": {
@@ -10965,7 +11544,7 @@
     "Scheduler": {
       "Enable": {
         "type": "checkbox",
-        "value": false,
+        "value": true,
         "option": [
           true,
           false
@@ -11067,6 +11646,7 @@
           "series_8_blueprint_305",
           "series_8_blueprint_only",
           "series_8_305_only",
+          "series_8_305_e_first",
           "series_7_blueprint_la9",
           "series_7_blueprint_only",
           "series_7_la9_only",
@@ -11091,6 +11671,67 @@
       "CustomFilter": {
         "type": "textarea",
         "value": "S9-DR0.5 > S9-PRY0.5 > S9-Q0.5 > S9-H0.5 > Q0.5 > S9-DR2.5\n> S9-G1.5 > S9-Q1 > S9-DR5 > 0.5 > S9-G4 > S9-Q2 > S9-PRY2.5 > reset\n> S9-DR8 > Q1 > 1 > S9-E-315 > S9-G2.5 > G1.5 > 1.5 > S9-E-031\n> S9-Q4 > Q2 > E2 > 2 > DR2.5 > PRY2.5 > G2.5 > 2.5 > S9-PRY5\n> S9-PRY8 > Q4 > G4 > 4 > S9-C6 > DR5 > PRY5 > 5 > C6 > 6 > S9-C8\n> S9-C12 > DR8 > PRY8 > C8 > 8 > C12 > 12"
+      }
+    },
+    "Storage": {
+      "Storage": {
+        "type": "storage",
+        "value": {},
+        "valuetype": "ignore",
+        "display": "disabled"
+      }
+    }
+  },
+  "StorageStatistics": {
+    "Scheduler": {
+      "Enable": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "PushNotification": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "NextRun": {
+        "type": "datetime",
+        "value": "2020-01-01 00:00:00",
+        "validate": "datetime"
+      },
+      "Command": {
+        "type": "input",
+        "value": "StorageStatistics",
+        "display": "hide"
+      },
+      "SuccessInterval": {
+        "type": "input",
+        "value": 1440,
+        "display": "hide"
+      },
+      "FailureInterval": {
+        "type": "input",
+        "value": 60,
+        "display": "hide"
+      },
+      "ServerUpdate": {
+        "type": "input",
+        "value": "04:00",
+        "display": "hide"
+      },
+      "Sensitive": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
       }
     },
     "Storage": {
@@ -11284,6 +11925,18 @@
         "type": "checkbox",
         "value": true
       },
+      "ScoreTalents": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ScoreThreshold": {
+        "type": "input",
+        "value": 0,
+        "validate": [
+          0,
+          100
+        ]
+      },
       "EnhanceIndex": {
         "type": "input",
         "value": 1
@@ -11407,7 +12060,7 @@
     "Scheduler": {
       "Enable": {
         "type": "checkbox",
-        "value": false,
+        "value": true,
         "option": [
           true,
           false
@@ -11550,6 +12203,291 @@
       "Favourite": {
         "type": "checkbox",
         "value": false
+      }
+    },
+    "Storage": {
+      "Storage": {
+        "type": "storage",
+        "value": {},
+        "valuetype": "ignore",
+        "display": "disabled"
+      }
+    }
+  },
+  "Secretary": {
+    "Scheduler": {
+      "Enable": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "PushNotification": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "NextRun": {
+        "type": "datetime",
+        "value": "2020-01-01 00:00:00",
+        "validate": "datetime"
+      },
+      "Command": {
+        "type": "input",
+        "value": "Secretary",
+        "display": "hide"
+      },
+      "SuccessInterval": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
+      "FailureInterval": {
+        "type": "input",
+        "value": 120,
+        "display": "hide"
+      },
+      "ServerUpdate": {
+        "type": "input",
+        "value": "00:00",
+        "display": "hide"
+      },
+      "Sensitive": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      }
+    },
+    "Secretary": {
+      "CustomFilter": {
+        "type": "textarea",
+        "value": "ultra > super_rare > elite > rare > common"
+      },
+      "LowFavorabilityPriority": {
+        "type": "checkbox",
+        "value": false
+      },
+      "FavouriteOnly": {
+        "type": "checkbox",
+        "value": true
+      },
+      "BackupEnable": {
+        "type": "checkbox",
+        "value": true
+      },
+      "CheckInterval": {
+        "type": "input",
+        "value": 0
+      },
+      "Notify": {
+        "type": "checkbox",
+        "value": true
+      },
+      "OnePushConfig": {
+        "type": "textarea",
+        "value": "provider: null",
+        "mode": "yaml"
+      }
+    },
+    "Storage": {
+      "Storage": {
+        "type": "storage",
+        "value": {},
+        "valuetype": "ignore",
+        "display": "disabled"
+      }
+    }
+  },
+  "OperationHandover": {
+    "Scheduler": {
+      "Enable": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "PushNotification": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "NextRun": {
+        "type": "datetime",
+        "value": "2020-01-01 00:00:00",
+        "validate": "datetime"
+      },
+      "Command": {
+        "type": "input",
+        "value": "OperationHandover",
+        "display": "hide"
+      },
+      "SuccessInterval": {
+        "type": "input",
+        "value": 30,
+        "display": "hide"
+      },
+      "FailureInterval": {
+        "type": "input",
+        "value": 30,
+        "display": "hide"
+      },
+      "ServerUpdate": {
+        "type": "input",
+        "value": "00:00",
+        "display": "hide"
+      },
+      "Sensitive": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      }
+    },
+    "Campaign": {
+      "Name": {
+        "type": "input",
+        "value": "12-4"
+      },
+      "Event": {
+        "type": "select",
+        "value": "campaign_main",
+        "option": [
+          "campaign_main"
+        ]
+      },
+      "Mode": {
+        "type": "select",
+        "value": "normal",
+        "option": [
+          "normal",
+          "hard"
+        ],
+        "display": "hide"
+      },
+      "UseClearMode": {
+        "type": "checkbox",
+        "value": true,
+        "display": "hide"
+      },
+      "UseFleetLock": {
+        "type": "checkbox",
+        "value": true,
+        "display": "hide"
+      },
+      "UseAutoSearch": {
+        "type": "checkbox",
+        "value": true,
+        "display": "hide"
+      },
+      "Use2xBook": {
+        "type": "checkbox",
+        "value": false,
+        "display": "hide"
+      },
+      "AmbushEvade": {
+        "type": "checkbox",
+        "value": true,
+        "display": "hide"
+      },
+      "UseRecommendFleet": {
+        "type": "checkbox",
+        "value": false,
+        "display": "hide"
+      },
+      "DefeatWithdraw": {
+        "type": "select",
+        "value": "withdraw_stop",
+        "option": [
+          "withdraw_continue",
+          "switch_fleet",
+          "withdraw_stop"
+        ],
+        "display": "hide"
+      }
+    },
+    "OperationHandover": {
+      "Count": {
+        "type": "input",
+        "value": 1,
+        "validate": [
+          0,
+          999
+        ]
+      },
+      "AutoSupplementTime": {
+        "type": "checkbox",
+        "value": false
+      },
+      "UseHandoverBook": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ConsumeAllBook": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "ConsumeAllBookWeekday": {
+        "type": "select",
+        "value": "sun",
+        "option": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri",
+          "sat",
+          "sun"
+        ]
+      },
+      "ConsumeAllBookTime": {
+        "type": "input",
+        "value": "00:00",
+        "valuetype": "str"
+      },
+      "MaintainOverride": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "OilLimit": {
+        "type": "input",
+        "value": 1000,
+        "validate": [
+          0,
+          999999
+        ]
+      },
+      "ConsumeAllBookRecord": {
+        "type": "datetime",
+        "value": "2020-01-01 00:00:00",
+        "validate": "datetime"
+      },
+      "CommissionEnd": {
+        "type": "stored",
+        "value": "2020-01-01 00:00:00",
+        "display": "hide"
       }
     },
     "Storage": {
@@ -12045,6 +12983,22 @@
         "value": "BookRedT3 > BookYellowT3 > BookBlueT3 > BookRedT2\n> Cube\n> FoodT6 > FoodT5"
       }
     },
+    "ShopAdvanced": {
+      "Mode": {
+        "type": "select",
+        "value": "legacy",
+        "option": [
+          "legacy",
+          "advanced"
+        ]
+      },
+      "Script": {
+        "type": "textarea",
+        "value": "",
+        "mode": "restricted_lua",
+        "preserve_empty": true
+      }
+    },
     "Storage": {
       "Storage": {
         "type": "storage",
@@ -12325,6 +13279,10 @@
         "type": "checkbox",
         "value": false
       },
+      "BuyUnobtainedShip": {
+        "type": "checkbox",
+        "value": false
+      },
       "Filter": {
         "type": "textarea",
         "value": "Cube"
@@ -12338,6 +13296,22 @@
       "Filter": {
         "type": "textarea",
         "value": "Array"
+      }
+    },
+    "ShopAdvanced": {
+      "Mode": {
+        "type": "select",
+        "value": "legacy",
+        "option": [
+          "legacy",
+          "advanced"
+        ]
+      },
+      "Script": {
+        "type": "textarea",
+        "value": "",
+        "mode": "restricted_lua",
+        "preserve_empty": true
       }
     },
     "Storage": {
@@ -12829,8 +13803,25 @@
           "new_jersey",
           "taihou",
           "aegir",
-          "nakhimov"
+          "nakhimov",
+          "implacable"
         ]
+      }
+    },
+    "ShopAdvanced": {
+      "Mode": {
+        "type": "select",
+        "value": "legacy",
+        "option": [
+          "legacy",
+          "advanced"
+        ]
+      },
+      "Script": {
+        "type": "textarea",
+        "value": "",
+        "mode": "restricted_lua",
+        "preserve_empty": true
       }
     },
     "Storage": {
@@ -12892,6 +13883,10 @@
         "type": "textarea",
         "value": "ActionPoint"
       },
+      "DebugClipRetentionDays": {
+        "type": "input",
+        "value": 7
+      },
       "NotifyOpsiMail": {
         "type": "checkbox",
         "value": true
@@ -12916,6 +13911,10 @@
           1,
           240
         ]
+      },
+      "SkipStrategicSearchCheck": {
+        "type": "checkbox",
+        "value": false
       }
     },
     "Storage": {
@@ -13155,10 +14154,109 @@
         "type": "checkbox",
         "value": false
       },
+      "MeowfficerCleanup": {
+        "type": "checkbox",
+        "value": false,
+        "display": "hide"
+      },
+      "MeowfficerCleanupState": {
+        "type": "stored",
+        "value": null,
+        "display": "hide"
+      },
       "ExploreProgress": {
         "type": "textarea",
         "value": "",
         "display": "disabled"
+      }
+    },
+    "OpsiFleet": {
+      "Fleet": {
+        "type": "select",
+        "value": 1,
+        "option": [
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "Submarine": {
+        "type": "checkbox",
+        "value": false
+      }
+    },
+    "Storage": {
+      "Storage": {
+        "type": "storage",
+        "value": {},
+        "valuetype": "ignore",
+        "display": "disabled"
+      }
+    }
+  },
+  "OpsiExploreCleanup": {
+    "Scheduler": {
+      "Enable": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "PushNotification": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "NextRun": {
+        "type": "datetime",
+        "value": "2020-01-01 00:00:00",
+        "validate": "datetime"
+      },
+      "Command": {
+        "type": "input",
+        "value": "OpsiExploreCleanup",
+        "display": "hide"
+      },
+      "SuccessInterval": {
+        "type": "input",
+        "value": 0,
+        "display": "hide"
+      },
+      "FailureInterval": {
+        "type": "input",
+        "value": 30,
+        "display": "hide"
+      },
+      "ServerUpdate": {
+        "type": "input",
+        "value": "00:00",
+        "display": "hide"
+      },
+      "Sensitive": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      }
+    },
+    "OpsiExploreCleanup": {
+      "Progress": {
+        "type": "textarea",
+        "value": "",
+        "display": "disabled"
+      },
+      "State": {
+        "type": "stored",
+        "value": null,
+        "display": "hide"
       }
     },
     "OpsiFleet": {
@@ -13259,6 +14357,22 @@
         "value": 0
       }
     },
+    "ShopAdvanced": {
+      "Mode": {
+        "type": "select",
+        "value": "legacy",
+        "option": [
+          "legacy",
+          "advanced"
+        ]
+      },
+      "Script": {
+        "type": "textarea",
+        "value": "",
+        "mode": "restricted_lua",
+        "preserve_empty": true
+      }
+    },
     "Storage": {
       "Storage": {
         "type": "storage",
@@ -13324,6 +14438,22 @@
       "Filter": {
         "type": "textarea",
         "value": "LoggerAbyssal > LoggerObscure > Book > Coin > Fragment"
+      }
+    },
+    "ShopAdvanced": {
+      "Mode": {
+        "type": "select",
+        "value": "legacy",
+        "option": [
+          "legacy",
+          "advanced"
+        ]
+      },
+      "Script": {
+        "type": "textarea",
+        "value": "",
+        "mode": "restricted_lua",
+        "preserve_empty": true
       }
     },
     "Storage": {
@@ -13405,6 +14535,11 @@
         "value": false
       },
       "MissionZones": {
+        "type": "stored",
+        "value": null,
+        "display": "hide"
+      },
+      "DeferredMissions": {
         "type": "stored",
         "value": null,
         "display": "hide"
@@ -13914,9 +15049,18 @@
       },
       "TargetZone": {
         "type": "input",
-        "value": 0
+        "value": "0",
+        "mode": "text"
       },
       "StayInZone": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ExecuteFixedPatrolScan": {
+        "type": "checkbox",
+        "value": false
+      },
+      "DebugClip": {
         "type": "checkbox",
         "value": false
       }
@@ -14058,7 +15202,7 @@
       },
       "ExecuteFixedPatrolScan": {
         "type": "checkbox",
-        "value": true
+        "value": false
       },
       "SkipHpCheck": {
         "type": "checkbox",
@@ -14083,6 +15227,10 @@
           true,
           false
         ]
+      },
+      "DebugClip": {
+        "type": "checkbox",
+        "value": false
       }
     },
     "OpsiSirenBug": {
@@ -14245,6 +15393,10 @@
       }
     },
     "OpsiScheduling": {
+      "BuyActionPoint": {
+        "type": "checkbox",
+        "value": false
+      },
       "UseSmartSchedulingOperationCoinsPreserve": {
         "type": "checkbox",
         "value": true,
@@ -14301,6 +15453,10 @@
         "type": "textarea",
         "value": "OpsiStronghold > OpsiObscure > OpsiAbyssal > OpsiMeowfficerFarming"
       },
+      "ObscureAbyssalCheckDelayDays": {
+        "type": "input",
+        "value": 0
+      },
       "MonthEndActionPointCleanupEnable": {
         "type": "checkbox",
         "value": false,
@@ -14317,6 +15473,11 @@
         "type": "input",
         "value": 0
       },
+      "MonthEndMeowTargetZone": {
+        "type": "input",
+        "value": "0",
+        "mode": "text"
+      },
       "MonthEndShopPurchase": {
         "type": "checkbox",
         "value": true,
@@ -14324,6 +15485,25 @@
           true,
           false
         ]
+      }
+    },
+    "OpsiSmartExplore": {
+      "Enable": {
+        "type": "checkbox",
+        "value": false
+      },
+      "EventCleanup": {
+        "type": "checkbox",
+        "value": false
+      },
+      "ForceRun": {
+        "type": "checkbox",
+        "value": false
+      },
+      "Progress": {
+        "type": "textarea",
+        "value": "",
+        "display": "disabled"
       }
     },
     "Storage": {
@@ -14514,10 +15694,10 @@
       "MeowHazardLevel": {
         "type": "select",
         "value": "level5",
-        "option": {
-          "level3": 3,
-          "level5": 5
-        }
+        "option": [
+          "level3",
+          "level5"
+        ]
       },
       "CrossWeek": {
         "type": "checkbox",
@@ -14733,7 +15913,8 @@
           "ChangFeng",
           "Mogador",
           "RoyalFortune",
-          "DaVinci"
+          "DaVinci",
+          "Taihou"
         ]
       },
       "Char2": {
@@ -14774,7 +15955,8 @@
           "ChangFeng",
           "Mogador",
           "RoyalFortune",
-          "DaVinci"
+          "DaVinci",
+          "Taihou"
         ]
       },
       "Product1": {
@@ -14911,7 +16093,8 @@
           "ChangFeng",
           "Mogador",
           "RoyalFortune",
-          "DaVinci"
+          "DaVinci",
+          "Taihou"
         ]
       },
       "Char2": {
@@ -14952,7 +16135,8 @@
           "ChangFeng",
           "Mogador",
           "RoyalFortune",
-          "DaVinci"
+          "DaVinci",
+          "Taihou"
         ]
       },
       "Product1": {
@@ -15101,7 +16285,8 @@
           "ChangFeng",
           "Mogador",
           "RoyalFortune",
-          "DaVinci"
+          "DaVinci",
+          "Taihou"
         ]
       },
       "Char2": {
@@ -15142,7 +16327,8 @@
           "ChangFeng",
           "Mogador",
           "RoyalFortune",
-          "DaVinci"
+          "DaVinci",
+          "Taihou"
         ]
       },
       "Product1": {
@@ -15249,7 +16435,8 @@
           "ChangFeng",
           "Mogador",
           "RoyalFortune",
-          "DaVinci"
+          "DaVinci",
+          "Taihou"
         ]
       },
       "Char2": {
@@ -15290,7 +16477,8 @@
           "ChangFeng",
           "Mogador",
           "RoyalFortune",
-          "DaVinci"
+          "DaVinci",
+          "Taihou"
         ]
       },
       "Product1": {
@@ -15402,7 +16590,8 @@
           "ChangFeng",
           "Mogador",
           "RoyalFortune",
-          "DaVinci"
+          "DaVinci",
+          "Taihou"
         ]
       },
       "Char2": {
@@ -15443,7 +16632,8 @@
           "ChangFeng",
           "Mogador",
           "RoyalFortune",
-          "DaVinci"
+          "DaVinci",
+          "Taihou"
         ]
       },
       "Product1": {
@@ -17878,16 +19068,6 @@
       }
     }
   },
-  "FleetScan": {
-    "Storage": {
-      "Storage": {
-        "type": "storage",
-        "value": {},
-        "valuetype": "ignore",
-        "display": "disabled"
-      }
-    }
-  },
   "FleetInfo": {
     "FleetInfo": {
       "Result": {
@@ -17902,6 +19082,16 @@
         "display": "hide"
       }
     },
+    "Storage": {
+      "Storage": {
+        "type": "storage",
+        "value": {},
+        "valuetype": "ignore",
+        "display": "disabled"
+      }
+    }
+  },
+  "FleetScan": {
     "Storage": {
       "Storage": {
         "type": "storage",
@@ -18173,6 +19363,75 @@
       "RemoteStopCommand": {
         "type": "input",
         "value": ""
+      }
+    },
+    "Storage": {
+      "Storage": {
+        "type": "storage",
+        "value": {},
+        "valuetype": "ignore",
+        "display": "disabled"
+      }
+    }
+  },
+  "MeowfficerScore": {
+    "MeowfficerScore": {
+      "Source": {
+        "type": "select",
+        "value": "screenshot",
+        "option": [
+          "screenshot",
+          "device",
+          "scan"
+        ]
+      },
+      "Folder": {
+        "type": "input",
+        "value": "./screenshots/meowfficer_talent"
+      },
+      "MaxImages": {
+        "type": "input",
+        "value": 50,
+        "validate": [
+          1,
+          999
+        ]
+      },
+      "ReportPath": {
+        "type": "input",
+        "value": "./log/meowfficer_score.md"
+      },
+      "DeviceShots": {
+        "type": "input",
+        "value": 1,
+        "validate": [
+          1,
+          99
+        ]
+      },
+      "DeviceInterval": {
+        "type": "input",
+        "value": 2,
+        "validate": [
+          0,
+          60
+        ]
+      },
+      "ScanLimit": {
+        "type": "input",
+        "value": 0,
+        "validate": [
+          0,
+          999
+        ]
+      },
+      "ScanPasses": {
+        "type": "input",
+        "value": 12,
+        "validate": [
+          1,
+          60
+        ]
       }
     },
     "Storage": {

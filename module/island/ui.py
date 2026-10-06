@@ -55,7 +55,7 @@ class IslandUI(UI):
         """
         return self.appear(ISLAND_MANAGEMENT_CHECK, offset=(20, 20), interval=interval)
 
-    #@cached_property
+    # @cached_property（保留备用）
     def _island_season_bottom_navbar(self):
         """
         创建季节活动底部导航栏实例。
@@ -206,7 +206,7 @@ class IslandUI(UI):
         if self.appear(MAINTENANCE_ANNOUNCE, offset=(100, 50)):
             for _ in self.loop():
                 enabled = self.image_color_count(
-                    USE_DATA_KEY_NOTIFIED, color=(140, 207, 66), threshold=180, count=10)
+                    USE_DATA_KEY_NOTIFIED, color=(140, 207, 66), threshold=75, count=10)
                 if enabled:
                     break
 

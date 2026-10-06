@@ -44,6 +44,10 @@ class VoucherShop(ShopClerk, ShopStatus):
         """
         return voucher_redirect(self.config.OpsiVoucher_Filter.strip())
 
+    def shop_strategy_domain(self):
+        """凭证商店使用独立策略域，避免与普通商店混用预算。"""
+        return 'opsi_voucher'
+
     def _get_vouchers(self):
         """检测截图中的凭证图标位置。
 
@@ -66,7 +70,7 @@ class VoucherShop(ShopClerk, ShopStatus):
         此方法等待任意凭证图标出现。
 
         Args:
-            skip_first_screenshot: 是否跳过首次截图
+            skip_first_screenshot (bool): 是否跳过首次截图。默认 True。
         """
         timeout = Timer(1, count=3).start()
         while 1:
@@ -176,6 +180,23 @@ class VoucherShop(ShopClerk, ShopStatus):
         logger.info(f'凭证: {self._currency}')
         return self._currency
 
+    @staticmethod
+    def shop_strategy_stock(item):
+        """凭证商店会在购买弹窗复核库存，策略允许多件计划。"""
+        return 99
+
+    @staticmethod
+    def shop_strategy_max_quantity(item):
+        """获取商品单次允许购买的最大数量。
+
+        Args:
+            item: 待购买商品对象。
+
+        Returns:
+            int: 允许购买的最大数量（凭证商店固定返回 99）。
+        """
+        return 99
+
     def shop_interval_clear(self):
         """清除购买界面相关按钮的点击间隔。
 
@@ -198,6 +219,7 @@ class VoucherShop(ShopClerk, ShopStatus):
 
         Args:
             item: 待购买的商品对象
+            skip_first_screenshot: 是否跳过首次截图
 
         Returns:
             bool: 是否检测到购买界面并进行了处理
@@ -226,10 +248,19 @@ class VoucherShop(ShopClerk, ShopStatus):
         处理退役、遮挡、信息栏等意外情况。
 
         Args:
-            item: 待购买的商品对象
-            skip_first_screenshot: 是否跳过首次截图
+            item: 待购买的商品对象。
+            skip_first_screenshot (bool): 是否跳过首次截图。默认 True。
+
+        Returns:
+            bool: 购买是否成功。
         """
         success = False
+        confirmed_purchase = False
+        if self.shop_strategy_enabled():
+            # 未出现数量选择框时，游戏只会执行一次兑换确认。
+            item._shop_strategy_executed_quantity = min(
+                getattr(item, '_shop_strategy_quantity', 1), 1,
+            )
         self.shop_interval_clear()
 
         while 1:
@@ -250,6 +281,11 @@ class VoucherShop(ShopClerk, ShopStatus):
             if self.handle_retirement():
                 self.interval_reset(BACK_ARROW)
                 continue
+            if self.shop_purchase_result_handle():
+                self.interval_reset(BACK_ARROW)
+                success = True
+                confirmed_purchase = True
+                continue
             if self.shop_obstruct_handle():
                 self.interval_reset(BACK_ARROW)
                 success = True
@@ -261,7 +297,7 @@ class VoucherShop(ShopClerk, ShopStatus):
 
             # 结束条件
             if success and self.appear(BACK_ARROW, offset=(30, 30)):
-                break
+                return confirmed_purchase if self.shop_strategy_enabled() else True
 
     def run(self):
         """运行凭证商店购买流程。
@@ -271,7 +307,7 @@ class VoucherShop(ShopClerk, ShopStatus):
         按照过滤器配置购买凭证商店商品，自动翻页直到列表底部。
         """
         # 过滤器为空时直接退出
-        if not self.shop_filter:
+        if not self.shop_filter and not self.shop_strategy_enabled():
             return
 
         # 调用时应已在凭证商店界面
@@ -287,6 +323,7 @@ class VoucherShop(ShopClerk, ShopStatus):
                 break
             else:
                 VOUCHER_SHOP_SCROLL.next_page(main=self)
+                self.shop_strategy_reset_inventory()
                 del_cached_property(self, 'shop_grid')
                 del_cached_property(self, 'shop_voucher_items')
                 continue

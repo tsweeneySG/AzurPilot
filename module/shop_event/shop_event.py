@@ -52,30 +52,34 @@ class EventShop(EventShopClerk):
     pt_preserved = 0
 
     def get_current_pts(self):
+        """刷新并更新当前 PT 和 URpt 余额。"""
         self.pt = self.event_shop_get_pt()
         if self.event_shop_has_urpt:
             self.urpt = self.event_shop_get_urpt()
 
     def preserve_pt(self, amount: int):
-        """
-        Preserve pt for future use.
+        """为后续购买预留指定数量的活动 PT。
+
+        Args:
+            amount (int): 需预留的 PT 数量。
         """
         self.pt_preserved += amount
         logger.info(f"[活动商店] 保留 {amount} PT点数供后续使用。总保留PT: {self.pt_preserved}")
 
     def handle_items_related_with_urpt(self, items: List[EventShopItem], num_of_ships_to_buy: int = 2) \
             -> Tuple[List[EventShopItem], List[EventShopItem]]:
-        """
-        Buy items (currently only ships) with URpt and buy URpt if necessary.
+        """使用 URpt 购买相关商品（主要是 UR 舰船），必要时兑换 URpt。
 
-        Should be called first before buying other items, and should not be called again after buying other items.
+        应在购买普通物品前优先调用。
+
+        Args:
+            items (List[EventShopItem]): 扫描到的所有商品列表。
+            num_of_ships_to_buy (int): 计划购买的舰船数量。默认为 2。
 
         Returns:
-            Tuple[List[EventShopItem], List[EventShopItem]]:
-            A tuple of two lists:
-            - The first list contains other normal items that are not related to URpt.
-            - The second list contains special items that are related to URpt (URpt, coins),
-            that should be dealt with at last.
+            Tuple[List[EventShopItem], List[EventShopItem]]: 包含两个列表的元组：
+                - 第一个列表为与 URpt 无关的普通物品；
+                - 第二个列表为与 URpt 相关的特殊物品（URpt、金币等），留在最后处理。
         """
         if not self.event_shop_has_urpt:
             logger.info("[活动商店] 活动商店没有UR点数，跳过UR点数相关物品处理")
@@ -96,7 +100,7 @@ class EventShop(EventShopClerk):
             else:
                 other_items.append(item)
 
-        # Buy ships first.
+        # 优先购买舰船
         urpt_preserve = False
         ship_items.sort(key=lambda item: item.price)
         if ship_items and num_of_ships_to_buy > 0:
@@ -160,17 +164,19 @@ class EventShop(EventShopClerk):
 
     def handle_unobtained_items(self, items: List[EventShopItem], buy_unobtained_items=False) \
             -> Tuple[List[EventShopItem], List[EventShopItem]]:
-        """
-        Buy all items (ships) with tag "unobtained" in the event shop.
-        This should be done after handling URpt-related items but before buying other items.
+        """购买活动商店中带有 'unobtained'（未获得）角标的物品（通常为舰船）。
 
-        For items with stock more than 1, should buy only one and let filter string decide whether to buy more.
-        The second return value will contain items with stock more than 1 that have been bought once,
-        so that the caller can (and maybe should) rescan the shop.
+        在处理完 URpt 相关物品后、购买其他物品之前执行。
+        对于库存大于 1 的商品仅购买 1 件，后续由过滤器决定是否继续购买。
 
         Args:
-            items (List[EventShopItem]): List of items to buy.
-            buy_unobtained_items (bool): Whether to buy unobtained items. Default is False.
+            items (List[EventShopItem]): 待筛选的商品列表。
+            buy_unobtained_items (bool): 是否启用未获得商品购买。默认为 False。
+
+        Returns:
+            Tuple[List[EventShopItem], List[EventShopItem]]: 包含两个列表的元组：
+                - 第一个列表为保留给后续过滤器处理的商品；
+                - 第二个列表为已购 1 件且仍有剩余库存的商品列表。
         """
         if not buy_unobtained_items:
             return items, []
@@ -197,12 +203,22 @@ class EventShop(EventShopClerk):
                 item.count -= 1
                 multiple_items.append(item)
             else:
-                # If the item has stock 1, it won't appear in the rescan.
+                # 若商品库存仅为 1，重新扫描时不会再次出现
                 pass
 
         return items, multiple_items
 
     def calculate_affordable_amount(self, item: EventShopItem) -> int:
+        """计算在当前货币余额和预留限制下该商品的最大可购买数量。
+
+        针对石油等有上限的资源会额外检查容量限制。
+
+        Args:
+            item (EventShopItem): 待计算商品。
+
+        Returns:
+            int: 可购买的数量。
+        """
         if item.name == "Oil":
             current_oil = self.get_oil()
             return min(item.count, (self.pt - self.pt_preserved) // item.price, (25000 - current_oil) // 1000)
@@ -214,12 +230,148 @@ class EventShop(EventShopClerk):
             logger.error(f"[活动商店] 未知的消耗类型: {item.cost}，物品: {str(item)}")
             return 0
 
+    def _advanced_strategy_ready(self):
+        """在活动商店执行任何强制购买前验证高级策略源码。"""
+        task = getattr(getattr(self.config, 'task', None), 'command', None)
+        if task != 'EventShop' or getattr(self.config, 'ShopAdvanced_Mode', 'legacy') != 'advanced':
+            return False
+        script = self.config.ShopAdvanced_Script
+        if not isinstance(script, str) or not script.strip():
+            logger.warning('[高级商店策略] 高级模式需要非空策略脚本；本轮不购买')
+            return None
+
+        from module.shop_strategy import validate_strategy
+
+        validation = validate_strategy(script)
+        if validation['valid']:
+            return True
+        diagnostic = validation['diagnostics'][0] if validation['diagnostics'] else {}
+        line = diagnostic.get('line')
+        column = diagnostic.get('column')
+        location = f'（第 {line} 行，第 {column or 1} 列）' if line is not None else ''
+        logger.warning(f'[高级商店策略] {diagnostic.get("message", "脚本无效")}{location}；本轮不购买')
+        return None
+
+    def _advanced_strategy_state(self):
+        """保存同一活动商店标签重试间的预算、库存和分类配额。"""
+        state = getattr(self, '_advanced_strategy_session', None)
+        if state is None:
+            state = {'spent': {}, 'purchased': {}, 'inventory_purchased': {}, 'cap_usage': {}}
+            self._advanced_strategy_session = state
+        return state
+
+    def _advanced_strategy_actions(self, items, state=None):
+        """为高级模式可控的普通活动商品生成购买计划。"""
+        from module.shop_strategy.adapter import run_shop_strategy
+
+        if state is None:
+            state = self._advanced_strategy_state()
+        result = run_shop_strategy(
+            self.config.ShopAdvanced_Script,
+            items,
+            domain='event',
+            currency={'pt': max(0, self.pt - self.pt_preserved), 'URpt': max(0, self.urpt)},
+            eligible=lambda item: (
+                getattr(item, 'count', 0) >= 1
+                and getattr(item, 'price', 0) > 0
+                and self.calculate_affordable_amount(item) > 0
+            ),
+            stock=lambda item: max(0, int(getattr(item, 'count', 0))),
+            max_quantity=self.calculate_affordable_amount,
+            spent=state['spent'],
+            purchased=state['purchased'],
+            # EventShop 的 count 已是当前剩余库存，不能重复扣减旧扫描的库存。
+            inventory_purchased={},
+            cap_usage=state['cap_usage'],
+        )
+        if result.success:
+            for action in result.actions:
+                action.item._shop_strategy_candidate_id = action.candidate.id
+                action.item._shop_strategy_quantity = action.quantity
+                action.item._shop_strategy_cost = action.cost
+                action.item._shop_strategy_cap_usage_keys = action.cap_usage_keys
+            logger.attr('高级策略计划', ' > '.join(
+                f'{action.candidate.name} x{action.quantity}' for action in result.actions
+            ))
+            return result.actions
+
+        diagnostic = result.diagnostic
+        location = ''
+        if diagnostic is not None and diagnostic.line is not None:
+            location = f'（第 {diagnostic.line} 行，第 {diagnostic.column or 1} 列）'
+        message = diagnostic.message if diagnostic is not None else '未知策略错误'
+        logger.warning(f'[高级商店策略] {message}{location}；本轮不购买')
+        return None
+
+    def _advanced_strategy_record_purchase(self, item, quantity):
+        """记录普通活动商品的实际购买量，供同一标签重试重新规划。"""
+        candidate_id = getattr(item, '_shop_strategy_candidate_id', None)
+        cost = getattr(item, '_shop_strategy_cost', None)
+        if not isinstance(candidate_id, str) or not isinstance(cost, str):
+            return
+        if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity <= 0:
+            return
+        state = self._advanced_strategy_state()
+        state['spent'][cost] = state['spent'].get(cost, 0) + item.price * quantity
+        state['purchased'][candidate_id] = state['purchased'].get(candidate_id, 0) + quantity
+        for key in getattr(item, '_shop_strategy_cap_usage_keys', ()):
+            state['cap_usage'][key] = state['cap_usage'].get(key, 0) + quantity
+
+    def _advanced_strategy_buy_item(self, item, quantity):
+        """购买后以 PT 实际变化确认数量，避免失败提示污染策略会话。"""
+        if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity <= 0:
+            return False
+        price = getattr(item, 'price', None)
+        if not isinstance(price, int) or isinstance(price, bool) or price <= 0:
+            return False
+
+        before_pt = self.pt
+        self.event_shop_buy_item(item, amount=quantity)
+        self.get_current_pts()
+        spent = before_pt - self.pt
+        actual_quantity = spent // price if spent > 0 and spent % price == 0 else 0
+        if actual_quantity <= 0 or actual_quantity > quantity:
+            logger.warning(
+                f'[高级商店策略] 未确认 {item} 的实际购买数量，PT 变化: {spent}；停止本轮以避免错误记账',
+            )
+            return False
+
+        self._advanced_strategy_record_purchase(item, actual_quantity)
+        if actual_quantity != quantity:
+            logger.warning(
+                f'[高级商店策略] {item} 实际购买 {actual_quantity} 个，计划为 {quantity} 个；停止本轮重新规划',
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _advanced_strategy_candidates(items):
+        """仅保留普通 PT 商品，避免旧 UR 流程绕过脚本预算。"""
+        return [item for item in items if item.cost == 'pt' and item.name != 'URpt']
+
     @staticmethod
     def item_filter_key(item: EventShopItem) -> str:
+        """获取商品的完整过滤器匹配键（group + sub_genre + tier）。
+
+        Args:
+            item (EventShopItem): 商品对象。
+
+        Returns:
+            str: 拼接后的键名。
+        """
         return ''.join(str(value or '') for value in (item.group, item.sub_genre, item.tier))
 
     @staticmethod
     def item_filter_amount_key(item: EventShopItem, filter_amount: dict) -> str:
+        """从高精度到低精度查找商品在数量过滤器中的匹配键。
+
+        Args:
+            item (EventShopItem): 商品对象。
+            filter_amount (dict): 数量过滤器字典。
+
+        Returns:
+            str: 匹配到的键名；未匹配则返回空字符串。
+        """
         keys = [
             ''.join(str(value or '') for value in (item.group, item.sub_genre, item.tier)),
             ''.join(str(value or '') for value in (item.group, item.sub_genre)),
@@ -240,33 +392,53 @@ class EventShop(EventShopClerk):
         if not len(items):
             logger.warning("[活动商店] 活动商店中未找到物品")
             return True
+        advanced = self._advanced_strategy_ready()
+        if advanced is None:
+            return True
         logger.hr("活动商店购买", level=2)
         self.get_current_pts()
-        items, urpt_related_items = self.handle_items_related_with_urpt(items, self.config.EventShop_BuyURShip)
-        self.get_current_pts()
-        items, unobtained_multiple_stock_items = self.handle_unobtained_items(items, self.config.EventShop_UnlockSSRShip)
-        items += unobtained_multiple_stock_items
-
-        if self.config.EventShop_PresetFilter == 'custom':
-            filter = self.config.EventShop_CustomFilter
-        else:
-            filter = EVENT_SHOP_PRESET_FILTER[self.config.EventShop_PresetFilter]
-        filter_amount = parse_filter_amount(filter)
-        filter_tokens = parse_filter_tokens(filter)
-        FILTER.load(strip_filter_amount(filter))
-        items = FILTER.apply(items)
-        items += urpt_related_items
-        if not len(items):
-            logger.info("[活动商店] 筛选后无可购买物品")
-            return True
-        logger.attr('物品排序', ' > '.join([str(item) for item in items]))
-        self.get_current_pts()
-        logger.attr("保留PT点数", self.pt_preserved)
+        filter_tokens = []
         bought_amount = {}
-        for item in items:
+        filter_amount = {}
+        if advanced:
+            logger.attr("保留PT点数", self.pt_preserved)
+            actions = self._advanced_strategy_actions(self._advanced_strategy_candidates(items))
+            if actions is None:
+                return True
+            planned_items = [(action.item, action.quantity) for action in actions]
+            if not planned_items:
+                logger.info('[高级商店策略] 当前没有符合计划的活动商店物品')
+                return True
+        else:
+            items, urpt_related_items = self.handle_items_related_with_urpt(
+                items, self.config.EventShop_BuyURShip,
+            )
+            self.get_current_pts()
+            items, unobtained_multiple_stock_items = self.handle_unobtained_items(
+                items, self.config.EventShop_UnlockSSRShip,
+            )
+            items += unobtained_multiple_stock_items
+            if self.config.EventShop_PresetFilter == 'custom':
+                filter = self.config.EventShop_CustomFilter
+            else:
+                filter = EVENT_SHOP_PRESET_FILTER[self.config.EventShop_PresetFilter]
+            filter_amount = parse_filter_amount(filter)
+            filter_tokens = parse_filter_tokens(filter)
+            FILTER.load(strip_filter_amount(filter))
+            items = FILTER.apply(items)
+            items += urpt_related_items
+            if not len(items):
+                logger.info("[活动商店] 筛选后无可购买物品")
+                return True
+            logger.attr('物品排序', ' > '.join([str(item) for item in items]))
+            self.get_current_pts()
+            logger.attr("保留PT点数", self.pt_preserved)
+            planned_items = [(item, None) for item in items]
+
+        for item, planned_quantity in planned_items:
             logger.hr(f"尝试购买物品: {str(item)}", level=3)
-            filter_amount_key = self.item_filter_amount_key(item, filter_amount)
-            amount_limit = filter_amount.get(filter_amount_key)
+            filter_amount_key = self.item_filter_amount_key(item, filter_amount) if not advanced else ''
+            amount_limit = filter_amount.get(filter_amount_key) if not advanced else None
             already_bought = bought_amount.get(filter_amount_key, 0) if filter_amount_key else 0
             remaining_limit = (
                 None
@@ -279,7 +451,18 @@ class EventShop(EventShopClerk):
 
             affordable_amount = self.calculate_affordable_amount(item)
             target_amount = item.count if remaining_limit is None else min(item.count, remaining_limit)
+            if planned_quantity is not None:
+                target_amount = min(target_amount, planned_quantity)
             buy_amount = min(affordable_amount, target_amount)
+            if advanced:
+                if buy_amount <= 0:
+                    logger.warning(f"[活动商店] 无法购买物品: {str(item)}")
+                    break
+                if not self._advanced_strategy_buy_item(item, buy_amount):
+                    break
+                logger.info(f"[活动商店] 成功购买物品: {str(item)}")
+                continue
+
             if buy_amount <= 0:
                 logger.warning(f"[活动商店] 无法购买物品: {str(item)}")
                 if self.is_event_ended:
@@ -310,8 +493,8 @@ class EventShop(EventShopClerk):
                 logger.info(f"[活动商店] 成功购买物品: {str(item)}")
                 self.get_current_pts()
 
-        # Consume custom filter amounts based on actual purchased quantities.
-        if self.config.EventShop_PresetFilter == 'custom' and filter_tokens:
+        # 根据实际购买数量消耗自定义过滤器的数量后缀
+        if not advanced and self.config.EventShop_PresetFilter == 'custom' and filter_tokens:
             changed = False
             for token in filter_tokens:
                 amount = token.get('amount')
@@ -334,9 +517,9 @@ class EventShop(EventShopClerk):
         return True
 
     def run(self):
-        """
-        There may be multiple event shops.
-        This function will iterate through all of them and perform the necessary operations.
+        """运行活动商店购买主流程。
+
+        支持多活动标签页切换，依次扫描并执行购买策略。
         """
         self.ui_goto_main()
         self.ui_ensure(page_shop)
@@ -360,6 +543,11 @@ class EventShop(EventShopClerk):
         logger.info(f"[活动商店] 检测到 {count} 个活动商店，开始处理")
         for i in range(count):
             navbar.set(main=self, left=i + 1)
+            task = getattr(getattr(self.config, 'task', None), 'command', None)
+            if task == 'EventShop' and getattr(self.config, 'ShopAdvanced_Mode', 'legacy') == 'advanced':
+                self._advanced_strategy_session = {
+                    'spent': {}, 'purchased': {}, 'inventory_purchased': {}, 'cap_usage': {},
+                }
             for _ in range(7):  # Refresh up to 7 times to deal with buying failures
                 try:
                     self.pt_preserved = 0

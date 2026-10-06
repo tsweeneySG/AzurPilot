@@ -15,9 +15,10 @@ from module.ui_white.assets import MISSION_NOTICE_WHITE
 
 
 class Reward(UI):
+    """资源与任务奖励收取处理器。"""
+
     def reward_receive(self, oil, coin, exp):
-        """
-        领取资源奖励（石油、金币、经验）。
+        """领取资源奖励（石油、金币、经验）。
 
         Args:
             oil (bool): 是否领取石油。
@@ -69,7 +70,7 @@ class Reward(UI):
                 click_timer.reset()
                 continue
 
-            # End
+            # 结束
             if confirm_timer.reached():
                 break
 
@@ -77,6 +78,11 @@ class Reward(UI):
         return True
 
     def _reward_get_state(self):
+        """获取当前任务页面的奖励领取状态。
+
+        Returns:
+            Button | None: 匹配到的任务状态按钮，未识别到则返回 None。
+        """
         if self.appear(MISSION_MULTI, offset=(20, 20)):
             return MISSION_MULTI
         if self.match_template_color(MISSION_SINGLE, offset=(50, 200)):
@@ -88,8 +94,7 @@ class Reward(UI):
         return None
 
     def _reward_mission_claim_click(self):
-        """
-        点击领取任务奖励。
+        """点击领取任务奖励。
 
         Returns:
             bool: 是否已点击领取。
@@ -145,7 +150,7 @@ class Reward(UI):
                 continue
             if self.appear_then_click(GET_ITEMS_2, offset=(30, 30), interval=1):
                 continue
-            if self.appear_then_click(GET_SHIP, interval=1):
+            if self.appear_then_click(GET_SHIP, offset=(20, 20), interval=1):
                 continue
             if self.handle_mission_popup_ack():
                 continue
@@ -218,7 +223,7 @@ class Reward(UI):
         Returns:
             bool: 是否已处理。
         """
-        if not self.image_color_count(MISSION_WEEKLY_RED_DOT, color=(206, 81, 66), threshold=221, count=20):
+        if not self.image_color_count(MISSION_WEEKLY_RED_DOT, color=(206, 81, 66), threshold=30, count=20):
             logger.info('[奖励-任务] 没有每周任务红点')
             return False
 
@@ -238,7 +243,7 @@ class Reward(UI):
         if self.appear(MISSION_NOTICE):
             logger.info('[奖励-任务] 发现任务提示 MISSION_NOTICE')
             return True
-        if self.image_color_count(MISSION_NOTICE_WHITE, color=(214, 117, 99), threshold=221, count=20):
+        if self.image_color_count(MISSION_NOTICE_WHITE, color=(214, 117, 99), threshold=30, count=20):
             logger.info('[奖励-任务] 发现任务提示 MISSION_NOTICE_WHITE')
             return True
 
@@ -321,7 +326,8 @@ class Reward(UI):
         return False
 
     def run(self):
-        """
+        """执行奖励与任务收取任务的主入口。
+
         Pages:
             in: 任意页面
             out: page_main 或 page_mission，可能带有 info_bar

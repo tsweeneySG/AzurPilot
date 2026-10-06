@@ -22,24 +22,23 @@
 from module.base.decorator import cached_property
 from module.campaign.assets import CHAPTER_NEXT, CHAPTER_PREV
 from module.campaign.campaign_base import CampaignBase
+from module.campaign.fleet_selection import FleetSelectionMixin
 from module.campaign.run import CampaignRun
 from module.combat.assets import BATTLE_PREPARATION, EXP_INFO_C, EXP_INFO_D, OPTS_INFO_D
 from module.combat.emotion import Emotion
-from module.equipment.assets import (
-    EMPTY_SHIP_R,
-    FLEET_DETAIL, FLEET_DETAIL_CHECK, FLEET_DETAIL_ENTER, FLEET_DETAIL_ENTER_FLAGSHIP,
-    FLEET_DETAIL_ENTER_FLAGSHIP_HARD_1, FLEET_DETAIL_ENTER_FLAGSHIP_HARD_2,
-    FLEET_DETAIL_ENTER_HARD_1, FLEET_DETAIL_ENTER_HARD_2,
-    FLEET_ENTER, FLEET_ENTER_FLAGSHIP,
-    FLEET_ENTER_FLAGSHIP_HARD_1, FLEET_ENTER_FLAGSHIP_HARD_2,
-    FLEET_ENTER_HARD_1, FLEET_ENTER_HARD_2,
-    FLEET_NEXT, FLEET_PREV
-)
+from module.equipment.assets import EMPTY_SHIP_R, FLEET_DETAIL, FLEET_DETAIL_CHECK, FLEET_NEXT, FLEET_PREV
 from module.equipment.equipment_code import EquipmentCodeHandler
 from module.equipment.fleet_equipment import FleetEquipment, OCR_FLEET_INDEX
 from module.exception import CampaignEnd, HardNotSatisfied, ScriptError, RequestHumanTakeover
-from module.retire.retirement import Retirement, TEMPLATE_COMMON_CV, TEMPLATE_COMMON_DD
-from module.retire.assets import DOCK_CHECK, DOCK_SHIP_DOWN, TEMPLATE_BOGUE, TEMPLATE_HERMES, TEMPLATE_LANGLEY, TEMPLATE_RANGER, TEMPLATE_CASSIN_1, TEMPLATE_CASSIN_2, TEMPLATE_DOWNES_1, TEMPLATE_DOWNES_2, TEMPLATE_AULICK, TEMPLATE_FOOTE
+from module.retire.retirement import Retirement
+from module.retire.assets import (
+    DOCK_CHECK,
+    DOCK_SHIP_DOWN,
+    TEMPLATE_BOGUE,
+    TEMPLATE_HERMES,
+    TEMPLATE_LANGLEY,
+    TEMPLATE_RANGER
+)
 from module.handler.assets import AUTO_SEARCH_MAP_OPTION_OFF
 from module.logger import logger
 from module.map.assets import FLEET_PREPARATION, MAP_PREPARATION, MAP_PREPARATION_HARD
@@ -55,14 +54,12 @@ class GemsEmotion(Emotion):
 
     重写情绪检查逻辑：当检测到低情绪时抛出 CampaignEnd 异常
     而不是等待恢复，以便触发舰船更换流程。
-
-    Attributes:
-        继承自 Emotion 的所有属性。
     """
+
     def check_reduce(self, battle):
-        """
+        """进入战役前检查情绪值。
+
         重写 emotion.check_reduce()。
-        进入战役前检查情绪值。
 
         Args:
             battle (int): 本战役中的战斗次数。
@@ -80,6 +77,11 @@ class GemsEmotion(Emotion):
             raise CampaignEnd('Emotion control')
 
     def wait(self, fleet_index):
+        """等待情绪恢复（通过换船替代等待）。
+
+        Args:
+            fleet_index (int): 舰队编号。
+        """
         pass
 
 
@@ -90,10 +92,18 @@ class GemsCampaignOverride(CampaignBase):
     - 低情绪时根据配置选择忽略警告或撤退换船
     - 支持多种经验结算弹窗的点击处理
     """
+
     def handle_combat_low_emotion(self):
-        """
+        """处理低情绪警告弹窗。
+
         重写 info_handler.handle_combat_low_emotion()。
         如果启用了更换先锋，撤出战斗并更换旗舰和先锋。
+
+        Returns:
+            bool: 是否处理了弹窗。
+
+        Raises:
+            CampaignEnd: 触发情绪撤退时抛出。
         """
         if self.config.GemsFarming_IgnoreEmotionWarning or self.config.GemsFarming_ChangeVanguard == 'disabled':
             result = self.handle_popup_confirm('IGNORE_LOW_EMOTION')
@@ -143,6 +153,11 @@ class GemsCampaignOverride(CampaignBase):
             raise CampaignEnd('Emotion withdraw')
 
     def handle_exp_info(self):
+        """处理战后经验结算弹窗。
+
+        Returns:
+            bool: 是否检测并点击了结算弹窗。
+        """
         if self.is_combat_executing():
             return False
         if super().handle_exp_info():
@@ -164,13 +179,16 @@ class GemsEquipmentHandler(EquipmentCodeHandler):
 
     继承 EquipmentCodeHandler，提供装备码的导入导出功能。
     根据当前旗舰类型（航母/驱逐舰）自动识别装备码配置路径。
-
-    Attributes:
-        继承自 EquipmentCodeHandler 的所有属性。
     """
 
-
     def __init__(self, config, device=None, task=None):
+        """初始化装备处理器。
+
+        Args:
+            config: 配置对象。
+            device: 设备对象。
+            task: 任务标识。
+        """
         super().__init__(config=config, device=device, task=task)
 
     @property
@@ -184,8 +202,15 @@ class GemsEquipmentHandler(EquipmentCodeHandler):
         return f"{command}.GemsFarming.EquipmentCode"
 
     def current_ship(self, skip_first_screenshot=True):
-        """
-        复用 module.retire.assets 中的模板，需要不同的缩放比例来匹配当前旗舰。
+        """识别当前旗舰舰船类型。
+
+        复用 module.retire.assets 中的模板，使用不同缩放比例匹配当前旗舰。
+
+        Args:
+            skip_first_screenshot (bool): 是否跳过首次截图。默认 True。
+
+        Returns:
+            str: 舰船标识名称（如 'bogue'、'hermes'、'ranger'、'langley' 或 'DD'）。
 
         Pages:
             in: gear_code
@@ -201,7 +226,7 @@ class GemsEquipmentHandler(EquipmentCodeHandler):
             else:
                 logger.info('[战役-紧急委托] 等待舰船图标加载。')
 
-        if TEMPLATE_BOGUE.match(self.device.image, scaling=1.46):  # image has rotation
+        if TEMPLATE_BOGUE.match(self.device.image, scaling=1.46):  # 图像带旋转
             return 'bogue'
         if TEMPLATE_HERMES.match(self.device.image, scaling=124 / 89):
             return 'hermes'
@@ -226,7 +251,7 @@ class GemsEquipmentHandler(EquipmentCodeHandler):
         success = self.code_clear()
         if not success:
             logger.warning('[战役-紧急委托] 装备码导出失败，停止换船以避免装备状态丢失。')
-            raise RequestHumanTakeover
+            raise RequestHumanTakeover('装备码备份或卸装失败')
         return success
 
     def apply_equip_code(self, code=None):
@@ -249,11 +274,11 @@ class GemsEquipmentHandler(EquipmentCodeHandler):
             success = self._code_apply(code=code)
         if not success:
             logger.warning('[战役-紧急委托] 装备码应用失败，请人工检查当前舰队装备。')
-            raise RequestHumanTakeover
+            raise RequestHumanTakeover('装备码应用失败，当前舰船装备尚未恢复')
         return success
 
 
-class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement):
+class GemsFarming(FleetSelectionMixin, CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement):
     """钻石 farming 任务主类。
 
     组合战役运行、装备管理、装备码处理和退役管理的能力，
@@ -267,7 +292,6 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
     5. 通过装备码自动装卸旗舰/先锋装备
 
     Attributes:
-        _initial_flagship_check_done (bool): 是否已完成初始旗舰等级检查。
         _trigger_lv32 (bool): 是否触发了等级 32 限制。
         _trigger_emotion (bool): 是否触发了情绪限制。
         hard_mode (bool): 是否处于困难模式（影响舰队进入方式）。
@@ -277,46 +301,14 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
         fleet_enter_flagship (Button): 从船坞进入旗舰位的按钮。
         fleet_enter (Button): 从船坞进入先锋位的按钮。
     """
-    _initial_flagship_check_done = False
 
-    def hard_mode_override(self):
-        """根据当前战役模式切换舰队进入方式。
-
-        困难模式下使用不同的按钮进入舰队编辑页面（通过战役准备界面），
-        普通模式下直接通过 page_fleet 进入。根据舰队顺序配置选择
-        对应的旗舰/先锋进入按钮。
-        """
-        if self.campaign.config.Campaign_Mode == 'hard':
-            logger.info('[钻石打捞] 在困难模式，切换换船方式')
-            self.hard_mode = True
-            self._ship_detail_enter = self._ship_detail_enter_hard
-            self._fleet_detail_enter = self._fleet_detail_enter_hard
-            self._fleet_back = self._fleet_back_hard
-            self.page_fleet_check_button = FLEET_PREPARATION
-            if self.config.Fleet_FleetOrder == 'fleet1_standby_fleet2_all':
-                self.fleet_detail_enter_flagship = FLEET_DETAIL_ENTER_FLAGSHIP_HARD_2
-                self.fleet_enter_flagship = FLEET_ENTER_FLAGSHIP_HARD_2
-                self.fleet_detail_enter = FLEET_DETAIL_ENTER_HARD_2
-                self.fleet_enter = FLEET_ENTER_HARD_2
-            else:
-                self.fleet_detail_enter_flagship = FLEET_DETAIL_ENTER_FLAGSHIP_HARD_1
-                self.fleet_enter_flagship = FLEET_ENTER_FLAGSHIP_HARD_1
-                self.fleet_detail_enter = FLEET_DETAIL_ENTER_HARD_1
-                self.fleet_enter = FLEET_ENTER_HARD_1
-        else:
-            self.hard_mode = False
-            self.page_fleet_check_button = page_fleet.check_button
-            self.fleet_detail_enter_flagship = FLEET_DETAIL_ENTER_FLAGSHIP
-            self.fleet_detail_enter = FLEET_DETAIL_ENTER
-            self.fleet_enter_flagship = FLEET_ENTER_FLAGSHIP
-            self.fleet_enter = FLEET_ENTER
 
     def load_campaign(self, name, folder='campaign_main'):
         """加载战役地图模块并注入钻石 farming 专用覆写。
 
         在父类 load_campaign() 基础上，将 Campaign 替换为继承了
         GemsCampaignOverride 的子类，注入 GemsEmotion 情绪管理。
-        根据是否更换先锋舰船设置情绪管理模式。
+        根据是否更换先锋舰船设置情绪管理模式，索敌优先级保持任务配置。
 
         Args:
             name (str): 地图文件名。
@@ -334,7 +326,6 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
         self.campaign = GemsCampaign(device=self.campaign.device, config=self.campaign.config)
         if self.change_vanguard:
             self.campaign.config.override(Emotion_Mode='ignore_calculate')
-            self.campaign.config.override(EnemyPriority_EnemyScaleBalanceWeight='S1_enemy_first')
         else:
             self.campaign.config.override(Emotion_Mode='ignore')
 
@@ -425,50 +416,6 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
                       check_button=FLEET_DETAIL_CHECK, skip_first_screenshot=True)
         self.equip_enter(button, long_click=False)
 
-    def _fleet_detail_enter_hard(self, fleet):
-        """进入指定舰队的编辑页面（困难模式）。
-
-        困难模式下通过战役准备界面进入舰队编辑，
-        需要先导航到关卡入口并进入准备界面。
-
-        Args:
-            fleet (int): 舰队编号（困难模式下未使用，固定通过准备界面进入）。
-        """
-        if self.appear(FLEET_PREPARATION, offset=(20, 50)):
-            return
-        self.campaign.ensure_campaign_ui(self.stage)
-        self.ui_click(
-            click_button=self.campaign.ENTRANCE,
-            appear_button=BACK_ARROW,
-            check_button=lambda: self.appear(MAP_PREPARATION, offset=(20, 20))
-            or self.appear(MAP_PREPARATION_HARD, offset=(20, 20)),
-        )
-        while 1:
-            self.device.screenshot()
-
-            if self.appear(MAP_PREPARATION, interval=1) or self.appear(MAP_PREPARATION_HARD, interval=1):
-                tracked = False
-                try:
-                    from module.alas_bridge.actions import bridge_enabled, chapter_track
-                    if bridge_enabled(self.config):
-                        result = chapter_track(
-                            self.config, auto_fight=False, loop=True, open_fleet=True)
-                        tracked = isinstance(result, dict)
-                except Exception:
-                    tracked = False
-                if not tracked:
-                    if self.appear_then_click(MAP_PREPARATION, interval=1):
-                        continue
-                    if self.appear_then_click(MAP_PREPARATION_HARD, interval=1):
-                        continue
-                continue
-
-            if self.handle_retirement():
-                continue
-
-            if self.appear(FLEET_PREPARATION, offset=(20, 50)):
-                break
-
     def _ship_detail_enter_hard(self, button):
         """进入指定舰船的装备详情页面（困难模式）。
 
@@ -488,61 +435,6 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
         """从装备详情返回到准备页面（困难模式）。"""
         self.ui_back(self.page_fleet_check_button)
 
-    def flagship_change(self):
-        """
-        更换旗舰并使用装备码更换旗舰装备。
-
-        Returns:
-            bool: 是否成功更换旗舰。
-        """
-
-        logger.hr('更换旗舰', level=1)
-        logger.attr('更换旗舰', self.config.GemsFarming_ChangeFlagship)
-        self._fleet_detail_enter(self.fleet_to_attack)
-        if self.change_flagship_equip:
-            logger.hr('卸下旗舰装备', level=2)
-            self._ship_detail_enter(self.fleet_detail_enter_flagship)
-            self.clear_all_equip()
-            self._fleet_back()
-
-        logger.hr('更换旗舰', level=2)
-        success = self.flagship_change_execute()
-
-        if self.change_flagship_equip:
-            logger.hr('装备旗舰装备', level=2)
-            self._ship_detail_enter(self.fleet_detail_enter_flagship)
-            self.apply_equip_code()
-            self._fleet_back()
-
-        return success
-
-    def vanguard_change(self):
-        """
-        更换先锋并使用装备码更换先锋装备。
-
-        Returns:
-            bool: 是否成功更换先锋。
-        """
-        logger.hr('更换前排', level=1)
-        logger.attr('更换前排', self.config.GemsFarming_ChangeVanguard)
-        self._fleet_detail_enter(self.fleet_to_attack)
-        if self.change_vanguard_equip:
-            logger.hr('卸下前排装备', level=2)
-            self._ship_detail_enter(self.fleet_detail_enter)
-            self.clear_all_equip()
-            self._fleet_back()
-
-        logger.hr('更换前排', level=2)
-        success = self.vanguard_change_execute()
-
-        if self.change_vanguard_equip:
-            logger.hr('装备前排装备', level=2)
-            self._ship_detail_enter(self.fleet_detail_enter)
-            self.apply_equip_code()
-            self._fleet_back()
-
-
-        return success
 
     def _dock_reset(self):
         """重置船坞筛选和排序状态。"""
@@ -560,121 +452,20 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
         self._dock_reset()
         self.dock_select_confirm(check_button=self.page_fleet_check_button)
 
-    def get_common_rarity_cv(self, lv=31, emotion=16):
-        """
-        根据 config.GemsFarming_CommonCV 获取普通稀有度航母。
-        如果 config.GemsFarming_CommonCV == 'any'，返回等级 1~33 的普通航母。
-
-        调用后需要调用 _dock_reset()。
-
-        Args:
-            lv (int): 普通航母的最大等级。
-            emotion (int): 普通航母的最低情绪值。
-
-        Returns:
-            Ship: 匹配的舰船。
-        """
-        faction = 'eagle' if self.config.GemsFarming_CommonCV == 'eagle' else 'all'
-        extra = 'can_limit_break' if self.config.GemsFarming_AllowHighFlagshipLevel else 'enhanceable'
-        self.dock_favourite_set(False, wait_loading=False)
-        self.dock_sort_method_dsc_set(False, wait_loading=False)
-        self.dock_filter_set(
-            index='cv', rarity='common', faction=faction, extra=extra, sort='total')
-
-        logger.hr('[战役-紧急委托] 查找旗舰')
-
-        if self.config.GemsFarming_AllowHighFlagshipLevel:
-            if self.config.SERVER in ['cn']:
-                max_level = 100
-            else:
-                max_level = 70
-            min_level = max_level
-        else:
-            max_level = lv
-            min_level = 1
-        emotion_lower_bound = 0 if emotion == 0 else self.emotion_lower_bound
-        fleet = [0, self.fleet_to_attack] if self.config.GemsFarming_AllowHighFlagshipLevel else self.fleet_to_attack
-
-        if self.config.GemsFarming_UseEmotionFirst:
-            scanner = ShipScanner(
-                level=(min_level, max_level), emotion=(emotion_lower_bound, 150), fleet=[0, self.fleet_to_attack], status='free')
-            scanner.disable('rarity')
-
-            if self.config.GemsFarming_CommonCV in ['custom', 'any', 'eagle']:
-                if self.config.GemsFarming_CommonCV == 'custom':
-                    filter_string = self.config.GemsFarming_CommonCVFilter
-                else:
-                    filter_string = self.config.COMMON_CV_FILTER
-                common_ship = self.get_common_ship_filter(filter_string, ship_type='cv')
-            else:
-                common_ship = [self.config.GemsFarming_CommonCV]
-
-            if common_ship is not None:
-                candidates = self.find_all_backline_candidates(scanner, common_ship)
-                if candidates:
-                    return [candidates[0]]
-
-                logger.info('[战役-紧急委托] 未找到指定航母，尝试倒序排列。')
-                self.dock_sort_method_dsc_set(True)
-                candidates = self.find_all_backline_candidates(scanner, common_ship)
-                if candidates:
-                    return [candidates[0]]
-
-                # 恢复排序方式，因为已更改但未找到结果
-                self.dock_sort_method_dsc_set(False)
-            logger.info('[战役-紧急委托] UseEmotionFirst 未找到候选舰船，回退到原始选择方法')
-
-        scanner = ShipScanner(
-            level=(min_level, max_level), emotion=(emotion_lower_bound, 150), fleet=fleet, status='free')
-        scanner.disable('rarity')
-
-        if not self.config.GemsFarming_AllowHighFlagshipLevel:
-            ships = scanner.scan(self.device.image)
-            if ships:
-                # 不需要更换当前舰船
-                return ships
-
-            # 更换为任意舰船
-            scanner.set_limitation(fleet=0)
-
-        if self.config.GemsFarming_CommonCV in ['custom', 'any', 'eagle']:
-            candidates = self.find_custom_candidates(scanner, ship_type='cv')
-
-            if candidates:
-                # 更换为指定舰船
-                return candidates
-
-            return scanner.scan(self.device.image, output=False)
-
-        else:
-            template = TEMPLATE_COMMON_CV[f'{self.config.GemsFarming_CommonCV.upper()}']
-
-            candidates = [ship for ship in scanner.scan(self.device.image, output=False)
-                          if template.match(self.image_crop(ship.button, copy=False), similarity=SIM_VALUE)]
-
-            if candidates:
-                # 更换为指定舰船
-                return candidates
-
-            logger.info('[战役-紧急委托] 未找到指定航母，尝试倒序排列。')
-            self.dock_sort_method_dsc_set(True)
-
-            candidates = [ship for ship in scanner.scan(self.device.image)
-                          if template.match(self.image_crop(ship.button, copy=False), similarity=SIM_VALUE)]
-
-            return candidates
 
     def get_common_rarity_dd(self, emotion=16):
-        """
-        获取等级为 100（非 CN 服务器为 70）且情绪值 >= self.emotion_lower_bound 的普通稀有度驱逐舰。
+        """获取符合等级限制与情绪值要求的普通稀有度驱逐舰。
 
         调用后需要调用 _dock_reset()。
 
         Args:
-            emotion (int): 普通驱逐舰的最低情绪值。
+            emotion (int): 普通驱逐舰的最低情绪值。默认 16。
 
         Returns:
-            Ship: 匹配的舰船。
+            list[Ship]: 匹配的舰船列表。
+
+        Raises:
+            ScriptError: 无效的通用驱逐舰设置时抛出。
         """
         rarity = 'common'
         extra = 'can_limit_break'
@@ -783,144 +574,6 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
             candidates = self.find_candidates(self.get_templates(self.config.GemsFarming_CommonDD), scanner)
             return candidates
 
-    def match_ship_to_template(self, ship, template):
-        """检查舰船图标是否匹配给定模板。
-
-        Args:
-            ship (Ship): 舰船对象。
-            template: 模板对象或模板列表。
-
-        Returns:
-            bool: 是否匹配。
-        """
-        if isinstance(template, list):
-            return any(item.match(self.image_crop(ship.button, copy=False), similarity=SIM_VALUE) for item in template)
-        else:
-            return template.match(self.image_crop(ship.button, copy=False), similarity=SIM_VALUE)
-
-    def find_all_vanguard_candidates(self, scanner, common_ship):
-        """
-        扫描并查找 common_ship 列表的所有匹配候选舰船，按 (情绪值, -优先级索引) 降序返回。
-        """
-        templates_list = [TEMPLATE_COMMON_DD[name.upper()] for name in common_ship]
-        all_ships = scanner.scan(self.device.image, output=False)
-        matched_candidates = []
-        for ship in all_ships:
-            for i, template in enumerate(templates_list):
-                if self.match_ship_to_template(ship, template):
-                    matched_candidates.append((ship, i))
-                    break
-        # 按情绪值（降序）和优先级索引（升序）排序
-        matched_candidates.sort(key=lambda x: (x[0].emotion, -x[1]), reverse=True)
-        return [x[0] for x in matched_candidates]
-
-    def find_all_backline_candidates(self, scanner, common_ship):
-        """
-        扫描并查找 common_ship 列表的所有匹配候选舰船，按以下顺序排序：
-        1. 情绪值（降序）
-        2. 等级（升序）
-        3. 优先级索引（升序）
-        """
-        templates_list = [TEMPLATE_COMMON_CV[name.upper()] for name in common_ship]
-        all_ships = scanner.scan(self.device.image, output=False)
-        matched_candidates = []
-        for ship in all_ships:
-            for i, template in enumerate(templates_list):
-                if self.match_ship_to_template(ship, template):
-                    matched_candidates.append((ship, i))
-                    break
-        # 按情绪值（降序）、等级（升序）和优先级索引（升序）排序
-        matched_candidates.sort(key=lambda x: (x[0].emotion, -x[0].level, -x[1]), reverse=True)
-        return [x[0] for x in matched_candidates]
-
-    def find_custom_candidates(self, scanner, ship_type='cv'):
-        """
-        获取普通稀有度航母/驱逐舰的候选舰船，仅用于 'custom' GemsFarming_CommonCV/DD 设置。
-
-        Args:
-            scanner (ShipScanner): 舰船扫描器。
-            ship_type (str): 'cv' 或 'dd'。
-        """
-        if ship_type.lower() not in ['cv', 'dd']:
-            logger.warning(f'[钻石打捞] 无效的舰船类型: {ship_type}')
-            return []
-
-        ship_type = ship_type.upper()
-        logger.info(f'[战役-紧急委托] 搜索普通 {ship_type}。')
-        if ship_type.lower() == 'cv' and self.config.GemsFarming_CommonCV != 'custom':
-            filter_string = self.config.COMMON_CV_FILTER
-        else:
-            filter_string =  self.config.__getattribute__(f'GemsFarming_Common{ship_type}Filter')
-        sort_dsc_first = ship_type.lower() == 'dd'
-    
-        common_ship = self.get_common_ship_filter(filter_string, ship_type=ship_type)
-        templates = globals()[f'TEMPLATE_COMMON_{ship_type}']
-        find_first = True
-        common_ship_candidates = {}
-        for name in common_ship:
-            template = templates[name.upper()]
-            candidates = self.find_candidates(template, scanner)
-
-            if find_first:
-                find_first = False
-                if candidates:
-                    logger.info(f'[钻石打捞] 找到通用 {ship_type} {name}')
-                    return candidates
-
-            common_ship_candidates[name] = candidates
-
-        logger.info(f'[战役-紧急委托] 未找到合适的 {ship_type}，尝试倒序排列。')
-        self.dock_sort_method_dsc_set(not sort_dsc_first)
-
-        for name in common_ship:
-            template = templates[name.upper()]
-            candidates = self.find_candidates(template, scanner)
-
-            if candidates:
-                logger.info(f'[钻石打捞] 找到通用驱逐舰 {name}')
-                return candidates
-            elif common_ship_candidates[name]:
-                logger.info(f'[钻石打捞] 找到通用驱逐舰 {name}')
-                self.dock_sort_method_dsc_set(sort_dsc_first, wait_loading=False)
-                return common_ship_candidates[name]
-
-        return []
-
-    def find_candidates(self, template, scanner):
-        """
-        基于模板匹配查找候选舰船。
-        """
-        candidates = []
-        if isinstance(template, list):
-            for item in template:
-                candidates = [ship for ship in scanner.scan(self.device.image, output=False)
-                            if item.match(self.image_crop(ship.button, copy=False), similarity=SIM_VALUE)]
-                if candidates:
-                    break
-        else:
-            candidates = [ship for ship in scanner.scan(self.device.image, output=False)
-                          if template.match(self.image_crop(ship.button, copy=False), similarity=SIM_VALUE)]
-        return candidates
-
-    @staticmethod
-    def get_templates(common_dd):
-        """
-        根据 CommonDD 设置返回对应的模板列表。
-        """
-        if common_dd == 'aulick_or_foote':
-            return [
-                TEMPLATE_AULICK,
-                TEMPLATE_FOOTE
-            ]
-        elif common_dd == 'cassin_or_downes':
-            return [
-                TEMPLATE_CASSIN_1, TEMPLATE_CASSIN_2,
-                TEMPLATE_DOWNES_1, TEMPLATE_DOWNES_2
-            ]
-        else:
-            logger.error(f'[钻石打捞] 无效的通用驱逐舰设置: {common_dd}')
-            raise ScriptError(f'Invalid CommonDD setting: {common_dd}')
-
     def ship_down_hard(self):
         """困难模式下将舰船从舰队中移除。
 
@@ -932,31 +585,11 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
         else:
             self.ui_back(check_button=FLEET_PREPARATION)
 
-    def dock_enter(self, button):
-        """进入船坞页面。
-
-        从舰队页面点击指定位置的按钮进入船坞。
+    def flagship_change_with_emotion(self, ship):
+        """更换旗舰并同步更新情绪值。
 
         Args:
-            button (Button): 要点击的按钮。
-
-        Returns:
-            bool: True 表示成功进入，False 表示遇到游戏提示未进入。
-        """
-        for _ in self.loop():
-            if self.appear(DOCK_CHECK, offset=(20, 20)):
-                break
-            if self.appear(self.page_fleet_check_button, offset=(30, 30), interval=5):
-                self.device.click(button)
-                continue
-            # 2025.05.29 进入船坞时游戏会弹出皮肤功能提示
-            if self.handle_game_tips():
-                return False
-        return True
-
-    def flagship_change_with_emotion(self, ship):
-        """
-        更换旗舰并计算情绪值。
+            ship (list[Ship]): 候选舰船列表。
         """
         target_ship = max(ship, key=lambda s: (s.level, s.emotion))
         if self.change_vanguard:
@@ -966,11 +599,13 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
         self._ship_change_confirm(target_ship.button)
 
     def flagship_change_execute(self):
-        """
-        执行旗舰更换。
+        """执行旗舰更换。
 
         Returns:
             bool: 是否成功。
+
+        Raises:
+            RequestHumanTakeover: 进出船坞失败或困难模式无补位舰船时抛出。
 
         Pages:
             in: page_fleet
@@ -978,10 +613,10 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
         """
         if self.hard_mode:
             if not self.dock_enter(self.fleet_detail_enter_flagship):
-                return True
+                raise RequestHumanTakeover('进入换船船坞超时，无法确认舰队状态')
             self.ship_down_hard()  
         if not self.dock_enter(self.fleet_enter_flagship):
-            return True
+            raise RequestHumanTakeover('进入换船船坞超时，无法确认舰队状态')
 
         ship = self.get_common_rarity_cv()
         if ship:
@@ -1000,14 +635,16 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
                 self.flagship_change_with_emotion(ship)
             else:
                 if self.hard_mode:
-                    raise RequestHumanTakeover
+                    raise RequestHumanTakeover('困难舰队已卸下舰船，但没有可用舰船补位')
                 self._dock_reset()
                 self.ui_back(check_button=self.page_fleet_check_button)
             return False
 
     def vanguard_change_with_emotion(self, ship):
-        """
-        更换先锋并计算情绪值。
+        """更换先锋并同步更新情绪值。
+
+        Args:
+            ship (list[Ship]): 候选舰船列表。
         """
         target_ship = max(ship, key=lambda s: s.emotion)
         if self.change_vanguard:
@@ -1015,11 +652,13 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
         self._ship_change_confirm(target_ship.button)
 
     def vanguard_change_execute(self):
-        """
-        执行先锋更换。
+        """执行先锋更换。
 
         Returns:
             bool: 是否成功。
+
+        Raises:
+            RequestHumanTakeover: 进出船坞失败或困难模式无补位舰船时抛出。
 
         Pages:
             in: page_fleet
@@ -1027,10 +666,10 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
         """
         if self.hard_mode:
             if not self.dock_enter(self.fleet_detail_enter):
-                return True
+                raise RequestHumanTakeover('进入换船船坞超时，无法确认舰队状态')
             self.ship_down_hard()  
         if not self.dock_enter(self.fleet_enter):
-            return True
+            raise RequestHumanTakeover('进入换船船坞超时，无法确认舰队状态')
 
         ship = self.get_common_rarity_dd()
         if ship:
@@ -1044,45 +683,23 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
                 self.vanguard_change_with_emotion(ship)
             else:
                 if self.hard_mode:
-                    raise RequestHumanTakeover
+                    raise RequestHumanTakeover('困难舰队已卸下舰船，但没有可用舰船补位')
                 self._dock_reset()
                 self.ui_back(check_button=self.page_fleet_check_button)
             return False
 
     _trigger_lv32 = False
     _trigger_emotion = False
-
-    def triggered_stop_condition(self, oil_check=True):
-        """检查钻石 farming 的停止条件。
-
-        在父类停止条件基础上增加了：
-        - 等级 32 限制：旗舰达到 32 级时触发（需要更换旗舰）
-        - 情绪限制：情绪值过低时触发（需要更换舰船）
-
-        Args:
-            oil_check (bool): 是否检查石油限制。
-
-        Returns:
-            bool: 是否触发停止条件。
-        """
-        # 等级 32 限制
-        if self._trigger_lv32 or (
-                self.change_flagship and self.campaign.config.LV32_TRIGGERED
-                and not self.config.GemsFarming_AllowHighFlagshipLevel):
-            self._trigger_lv32 = True
-            logger.hr('[战役-打捞] 触发等级32限制')
-            return True
-
-        if self.campaign.config.GEMS_EMOTION_TRIGGERED:
-            self._trigger_emotion = True
-            logger.hr('[战役-打捞] 触发情绪限制')
-            return True
-
-        return super().triggered_stop_condition(oil_check=oil_check)
+    # 初始旗舰等级检查是否已完成。
+    # 使用类属性做进程内持久化：任务实例与 config 实例会随调度器切换或配置重载而重建，
+    # 类属性在进程生命周期内保持不变，确保初始检查只在进程内执行一次。
+    _initial_flagship_check_done = False
 
     def get_emotion(self):
-        """
-        从配置中获取舰队情绪值。
+        """从配置中获取舰队情绪值。
+
+        Returns:
+            int: 记录的情绪值。
         """
         if self.config.Fleet_FleetOrder == 'fleet1_standby_fleet2_all':
             return self.campaign.config.Emotion_Fleet2Value
@@ -1090,8 +707,10 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
             return self.campaign.config.Emotion_Fleet1Value
 
     def set_emotion(self, emotion):
-        """
-        设置舰队情绪值。
+        """设置舰队情绪值。
+
+        Args:
+            emotion (int): 需记录的情绪值。
         """
         if self.config.Fleet_FleetOrder == 'fleet1_standby_fleet2_all':
             self.campaign.config.set_record(Emotion_Fleet2Value=emotion)
@@ -1099,14 +718,13 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
             self.campaign.config.set_record(Emotion_Fleet1Value=emotion)
 
     def run(self, name, folder='campaign_main', mode='normal', total=0):
-        """
-        运行钻石 farming 任务。
+        """运行钻石 farming 任务主循环。
 
         Args:
             name (str): .py 文件名称。
-            folder (str): campaign 下的文件夹名称。
-            mode (str): `normal` 或 `hard`。
-            total (int): 总运行次数限制。
+            folder (str): campaign 下的文件夹名称。默认 'campaign_main'。
+            mode (str): 战役模式，如 `normal` 或 `hard`。默认 'normal'。
+            total (int): 总运行次数限制。默认 0。
         """
         self.config.STOP_IF_REACH_LV32 = self.change_flagship and not self.config.GemsFarming_AllowHighFlagshipLevel
         # 初始检查旗舰等级。
@@ -1115,15 +733,14 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
         initial_check = (
             self.change_flagship
             and not self.config.GemsFarming_AllowHighFlagshipLevel
-            and not self._initial_flagship_check_done
+            and not GemsFarming._initial_flagship_check_done
         )
-        self._initial_flagship_check_done = True
         while 1:
             self._trigger_lv32 = initial_check
             initial_check = False
             is_limit = self.config.StopCondition_RunCount
             try:
-                super().run(name=name, folder=folder, total=total)
+                super().run(name=name, folder=folder, mode=mode, total=total)
             except CampaignEnd as e:
                 if e.args[0] == 'Emotion control':
                     self._trigger_emotion = True
@@ -1132,32 +749,20 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
                     self.set_emotion(0)
                 else:
                     raise e
-            except HardNotSatisfied:
-                try:
-                    if self.change_flagship and self.change_vanguard:
-                        self.hard_mode_override()
-                        self.vanguard_change()
-                        self.flagship_change()
-                    else:
-                        raise RequestHumanTakeover
-                except RequestHumanTakeover:
+            except RequestHumanTakeover as exc:
+                hard_unsatisfied = isinstance(exc, HardNotSatisfied) or (
+                    exc.args and exc.args[0] == 'Hard not satisfied')
+                if not (hard_unsatisfied and self.change_flagship and self.change_vanguard):
                     raise
-                except Exception:
-                    from module.exception import GameStuckError
-                    raise GameStuckError
-            except RequestHumanTakeover as e:
-                try:
-                    if e.args and e.args[0] == 'Hard not satisfied' and self.change_flagship and self.change_vanguard:
-                        self.hard_mode_override()
-                        self.vanguard_change()
-                        self.flagship_change()
-                    else:
-                        raise
-                except RequestHumanTakeover:
-                    raise
-                except Exception:
-                    from module.exception import GameStuckError
-                    raise GameStuckError
+                self.hard_mode_override()
+                vanguard_success = self.vanguard_change()
+                flagship_success = self.flagship_change()
+                if not self.config.GemsFarming_AllowHighFlagshipLevel:
+                    GemsFarming._initial_flagship_check_done = flagship_success
+                if not (vanguard_success and flagship_success):
+                    self.campaign.ensure_auto_search_exit()
+                    self.config.task_delay(minute=60)
+                    self.config.task_stop()
 
             # 结束条件
             if self._trigger_lv32 or self._trigger_emotion:
@@ -1170,6 +775,9 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
                     vanguard_success = self.vanguard_change()
                 if self.change_flagship and (vanguard_success or self._trigger_lv32):
                     flagship_success = self.flagship_change()
+                    # 未找到替换舰船时，下次调度仍需检查；本次是否继续由推迟任务开关决定。
+                    if not self.config.GemsFarming_AllowHighFlagshipLevel:
+                        GemsFarming._initial_flagship_check_done = flagship_success
                     if not flagship_success and self.config.GemsFarming_AllowHighFlagshipLevel:
                         self.set_emotion(emotion)
                 success = vanguard_success and flagship_success
@@ -1189,12 +797,13 @@ class GemsFarming(CampaignRun, FleetEquipment, GemsEquipmentHandler, Retirement)
                     self._trigger_emotion = False
                     self.campaign.ensure_auto_search_exit()
                     self.config.task_stop()
-                elif not success and (self.config.GemsFarming_DelayTaskIFNoFlagship \
-                        or self._trigger_emotion):
+                elif not success and (self.config.GemsFarming_DelayTaskIFNoFlagship or self._trigger_emotion):
                     self._trigger_emotion = False
                     self.campaign.ensure_auto_search_exit()
                     self.config.task_delay(minute=60)
                     self.config.task_stop()
+                elif not success:
+                    logger.info('没有符合条件的替换舰船，按配置使用当前舰队继续出击')
 
                 self._trigger_emotion = False
                 continue

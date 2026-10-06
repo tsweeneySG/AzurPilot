@@ -26,29 +26,14 @@ from module.device.control import Control
 from module.device.input import Input
 from module.device.platform import Platform
 from module.device.screenshot import Screenshot
-from module.exception import (EmulatorNotRunningError, GameNotRunningError, GameStuckError, GameTooManyClickError,
-                              RequestHumanTakeover)
+from module.exception import (EmulatorNotRunningError, EmulatorOpBusy, GameNotRunningError, GameStuckError,
+                              GameTooManyClickError, RequestHumanTakeover)
 from module.handler.assets import GET_MISSION
 from module.logger import logger
 
 
 def show_function_call():
-    """
-    INFO     21:07:31.554 │ Function calls:
-                       <string>   L1 <module>
-                   spawn.py L116 spawn_main()
-                   spawn.py L129 _main()
-                 process.py L314 _bootstrap()
-                 process.py L108 run()
-         process_manager.py L149 run_process()
-                    alas.py L285 loop()
-                    alas.py  L69 run()
-                     src.py  L55 rogue()
-                   rogue.py  L36 run()
-                   rogue.py  L18 rogue_once()
-                   entry.py L335 rogue_world_enter()
-                    path.py L193 rogue_path_select()
-    """
+    """打印当前调用栈回溯信息，用于诊断卡死或点击异常来源。"""
     import os
     import traceback
     stack = traceback.extract_stack()
@@ -108,11 +93,22 @@ class Device(Screenshot, Control, AppControl, Input):
                 if not auto_start_emulator:
                     raise
                 if trial >= 3:
-                    logger.critical('[Device] 错误 3 次尝试后未能启动模拟器')
-                    raise RequestHumanTakeover
+                    logger.error('[Device] 3 次启动尝试后设备仍离线，交由调用方恢复')
+                    # 有限启动尝试耗尽不代表配置错误，保留离线异常供上层决定。
+                    raise
                 # 尝试启动模拟器
                 if self.emulator_instance is not None:
-                    self.emulator_start()
+                    try:
+                        # 传 trial 让等待时间随重试次数逐级放宽（60 → 90 → …），
+                        # 与调度器侧的 _try_restart_emulator 同一套阶梯
+                        self.emulator_start(failures=trial)
+                    except EmulatorOpBusy as e:
+                        # 已有其它恢复流程在操作模拟器（通常是正在冷启动它）。
+                        # 这不是本设备启动失败，而是"暂时不可用"：直接冒泡成
+                        # EmulatorNotRunningError 交给调度器的恢复路径，
+                        # 否则会白跑 4 次尝试并把调度器以 RequestHumanTakeover 停掉。
+                        logger.warning(f'[Device] {e}')
+                        raise EmulatorNotRunningError(str(e)) from e
                 else:
                     logger.critical(
                         f'错误 未找到序列号为 "{self.config.Emulator_Serial}" 的模拟器，'
@@ -204,11 +200,17 @@ class Device(Screenshot, Control, AppControl, Input):
         """
         return self.platform.emulator_instance
 
-    def emulator_start(self):
+    def emulator_start(self, deep=False, failures=0):
         """
         启动模拟器，委托给平台特定实现。
+
+        Args:
+            deep (bool): 深度重启标志（结束 MuMu 全部进程再启动）。
+                仅 MuMu12 有对应实现，其它平台忽略该参数。
+            failures (int): 本次之前已连续失败几次，平台据此选取启动监视的
+                等待时长（越长越有耐心）；其它平台忽略。
         """
-        return self.platform.emulator_start()
+        return self.platform.emulator_start(deep=deep, failures=failures)
 
     def emulator_stop(self):
         """
@@ -227,11 +229,9 @@ class Device(Screenshot, Control, AppControl, Input):
         from module.daemon.benchmark import Benchmark
         bench = Benchmark(config=self.config, device=self)
         method = bench.run_simple_screenshot_benchmark()
-        # 写入配置
+        # 写入配置（控制方式不做联动改写，尊重用户手动选择）
         with self.config.multi_set():
             self.config.Emulator_ScreenshotMethod = method
-            # if method == 'nemu_ipc':
-            #     self.config.Emulator_ControlMethod = 'nemu_ipc'
 
     def run_simple_ocr_benchmark(self):
         """
@@ -256,13 +256,11 @@ class Device(Screenshot, Control, AppControl, Input):
         """
         检查截图方式和控制方式的组合是否合法。
         """
-        # nemu_ipc 截图和控制必须配套使用
-        # if self.config.Emulator_ScreenshotMethod == 'nemu_ipc' and self.config.Emulator_ControlMethod != 'nemu_ipc':
-        #     logger.warning('When using nemu_ipc, both screenshot and control should use nemu_ipc')
-        #     self.config.Emulator_ControlMethod = 'nemu_ipc'
-        # if self.config.Emulator_ScreenshotMethod != 'nemu_ipc' and self.config.Emulator_ControlMethod == 'nemu_ipc':
-        #     logger.warning('When not using nemu_ipc, both screenshot and control should not use nemu_ipc')
-        #     self.config.Emulator_ControlMethod = 'minitouch'
+        if self.serial == 'azurpilot_android':
+            if self.config.Emulator_ScreenshotMethod != 'azurpilot_android' \
+                    or self.config.Emulator_ControlMethod != 'azurpilot_android':
+                raise RequestHumanTakeover('Android 虚拟屏必须同时选择 azurpilot_android 截图和控制方式')
+            return
         # Hermit 仅允许在 VMOS 上使用
         if self.config.Emulator_ControlMethod == 'Hermit' and not self.is_vmos:
             logger.warning('[设备-方法] 控制方式Hermit仅允许在VMOS上使用')
@@ -275,7 +273,7 @@ class Device(Screenshot, Control, AppControl, Input):
         # nemu_ipc 和 ldopengl 在非对应模拟器上回退到 auto
         if self.config.Emulator_ScreenshotMethod == 'nemu_ipc':
             if not (self.is_emulator and self.is_mumu_family):
-                logger.warning('[设备-方法] 截图方式nemu_ipc仅支持MuMu模拟器12，回退到auto')
+                logger.warning('[设备-方法] 截图方式nemu_ipc仅支持MuMu模拟器，回退到auto')
                 self.config.Emulator_ScreenshotMethod = 'auto'
         if self.config.Emulator_ScreenshotMethod == 'ldopengl':
             if not (self.is_emulator and self.is_ldplayer_bluestacks_family):
@@ -292,6 +290,15 @@ class Device(Screenshot, Control, AppControl, Input):
             logger.warning(f'[设备-方法] 截图方式{self.config.Emulator_ScreenshotMethod}仅支持Windows，'
                            f'回退到auto')
             self.config.Emulator_ScreenshotMethod = 'auto'
+
+        # nemu_ipc 控制不做强制配套，截图与控制通路相互独立，混搭（nemu_ipc 截图 +
+        # MaaTouch/minitouch 控制）完全可用且为推荐形态。
+        # 历史说明：上游 2024-04 曾加入强制配套（2a74c338a），三天后因「慢 PC 上
+        # nemu_ipc 滑动丢步（bad swipes on slow PC，76da1ce13）」注释弃用。本仓库
+        # 短暂恢复过强制联动，实测会静默覆盖用户手动选择的 MaaTouch，故再次取消。
+        # nemu_ipc 控制保留为 ControlMethod 可选项（帮助文本含警告）：其触控走模拟器
+        # 内部 RPC，低性能电脑上滑动易丢步、拖拽易变形，调用偶发挂死会丢失点击；
+        # 是否使用由用户自行决定，出现滑动/拖拽异常时换回 minitouch/MaaTouch 即可。
 
     def handle_night_commission(self, daily_trigger='21:00', threshold=30):
         """
@@ -329,6 +336,8 @@ class Device(Screenshot, Control, AppControl, Input):
         try:
             super().screenshot()
         except RequestHumanTakeover:
+            if self.serial == 'azurpilot_android':
+                raise
             if not self.ascreencap_available:
                 logger.error('[设备-截图] 当前设备aScreenCap不可用，回退到auto')
                 self.run_simple_screenshot_benchmark()
@@ -343,13 +352,16 @@ class Device(Screenshot, Control, AppControl, Input):
         return self.image
 
     def dump_hierarchy(self) -> etree._Element:
+        """导出当前界面 UI 控件树层次结构。
+
+        Returns:
+            界面控件树的根节点 Element 对象。
+        """
         self.stuck_record_check()
         return super().dump_hierarchy()
 
     def release_during_wait(self):
-        """
-        等待期间释放截图资源，避免后台持续占用。
-        """
+        """等待期间释放截图资源，避免后台持续占用。"""
         # Scrcpy 服务端持续发送视频流，等待期间需要停止
         if self.config.Emulator_ScreenshotMethod == 'scrcpy':
             self._scrcpy_server_stop()
@@ -357,19 +369,28 @@ class Device(Screenshot, Control, AppControl, Input):
             self.nemu_ipc_release()
 
     def get_orientation(self):
-        """
-        获取屏幕方向，方向变化时触发回调。
+        """获取屏幕方向，方向变化时触发底层控制回调。
+
+        Returns:
+            int: 屏幕方向角度（0, 90, 180, 270）。
         """
         o = super().get_orientation()
 
-        self.on_orientation_change_maatouch()
+        if self.serial != 'azurpilot_android':
+            self.on_orientation_change_maatouch()
 
         return o
 
     def stuck_record_add(self, button):
+        """记录检测到的界面按钮或元素标识。
+
+        Args:
+            button: 按钮实例或名称标识。
+        """
         self.detect_record.add(str(button))
 
     def stuck_record_clear(self):
+        """清除卡死检测记录并重置所有防卡死定时器。"""
         self.detect_record = set()
         self.stuck_timer.reset()
         self.stuck_timer_long.reset()
@@ -377,15 +398,14 @@ class Device(Screenshot, Control, AppControl, Input):
 
     @contextmanager
     def stuck_timeout_override(self, image_stuck=None, long_wait=None):
-        """
-        临时覆盖卡死检测的超时阈值，退出上下文后自动恢复。
+        """临时覆盖卡死检测的超时阈值，退出上下文后自动恢复。
 
         用于登录等待等已知会长时间保持静态画面的场景（如后台模拟器慢启动），
         避免 _stuck_image_timer 过早触发 GameStuckError 造成重启死循环。
 
         Args:
-            image_stuck (int | float): 截图无变化判卡死的时间上限，None 表示不修改。
-            long_wait (int | float): 长等待判卡死的时间上限，None 表示不修改。
+            image_stuck (int | float, optional): 截图无变化判卡死的时间上限，None 表示不修改。
+            long_wait (int | float, optional): 长等待判卡死的时间上限，None 表示不修改。
 
         Yields:
             None
@@ -404,6 +424,12 @@ class Device(Screenshot, Control, AppControl, Input):
                 timer_obj.limit = limit
 
     def _check_image_stuck(self):
+        """检查截图是否长时间处于静止未变化状态。
+
+        Raises:
+            GameStuckError: 截图长时间未发生变化且游戏仍在运行。
+            GameNotRunningError: 截图未发生变化且游戏进程已退出。
+        """
         if self.image is None:
             return
 
@@ -425,8 +451,7 @@ class Device(Screenshot, Control, AppControl, Input):
             self._stuck_image_timer.clear()
 
     def stuck_record_check(self):
-        """
-        检查是否卡死（操作超时或长时间无有效截图操作）。
+        """检查是否卡死（操作超时或长时间无有效截图操作）。
 
         Raises:
             GameStuckError: 游戏卡死。
@@ -453,25 +478,35 @@ class Device(Screenshot, Control, AppControl, Input):
             raise GameNotRunningError('[设备-卡死] 游戏已退出')
 
     def handle_control_check(self, button):
+        """控制前置检查，重置卡死记录并检测点击频率是否异常。
+
+        Args:
+            button: 即将点击或操作的按钮对象或操作名。
+        """
         self.stuck_record_clear()
         self.click_record_add(button)
         self.click_record_check()
 
     def click_record_add(self, button):
+        """将操作记录追加到最近点击队列中。
+
+        Args:
+            button: 按钮实例或操作标识。
+        """
         self.click_record.append(str(button))
 
     def click_record_clear(self):
+        """清空最近点击记录队列。"""
         self.click_record.clear()
 
     def click_record_remove(self, button):
-        """
-        从点击记录中移除指定按钮的所有记录。
+        """从点击记录中移除指定按钮的所有记录。
 
         Args:
             button: 要移除的按钮对象。
 
         Returns:
-            移除的记录数量。
+            int: 移除的记录数量。
         """
         removed = 0
         for _ in range(self.click_record.maxlen):
@@ -485,8 +520,7 @@ class Device(Screenshot, Control, AppControl, Input):
         return removed
 
     def click_record_check(self):
-        """
-        检查点击频率是否异常（同一按钮被点击过多或两个按钮交替点击过多）。
+        """检查点击频率是否异常（同一按钮被点击过多或两个按钮交替点击过多）。
 
         Raises:
             GameTooManyClickError: 点击频率异常。
@@ -506,9 +540,7 @@ class Device(Screenshot, Control, AppControl, Input):
             raise GameTooManyClickError(f'[设备-点击] 两个按钮交替点击次数过多: {count[0][0]}, {count[1][0]}')
 
     def disable_stuck_detection(self):
-        """
-        禁用卡死检测，用于半自动模式和调试场景。
-        """
+        """禁用卡死检测，用于半自动模式和调试场景。"""
         logger.info('[设备-检测] 禁用卡死检测')
 
         def empty_function(*arg, **kwargs):
@@ -518,10 +550,20 @@ class Device(Screenshot, Control, AppControl, Input):
         self.stuck_record_check = empty_function
 
     def app_start(self):
+        """启动游戏应用。
+
+        检查配置是否允许自动处理错误，执行账号恢复与画质设置同步后启动游戏并清空卡死记录。
+
+        Raises:
+            RequestHumanTakeover: 当未启用错误处理配置时抛出。
+        """
         if not self.config.Error_HandleError:
             logger.critical('[Device] 错误 没有启动/停止应用，因为 HandleError 已禁用')
             logger.critical('[Device] 请启用 Alas.Error.HandleError 或手动登录碧蓝航线')
             raise RequestHumanTakeover
+        # 与推荐配置共用启动前流程：设备已连接，先恢复账号，再写配置，最后启动游戏。
+        from module.api.account_service import restore_worker
+        restore_worker(self.config.config_name, device=self)
         if getattr(self.config, 'Emulator_GameSettings', False):
             from module.game_setting.player_prefs import apply_recommended_game_settings
 
@@ -533,6 +575,13 @@ class Device(Screenshot, Control, AppControl, Input):
         self.click_record_clear()
 
     def app_stop(self):
+        """停止游戏应用。
+
+        检查配置是否允许自动处理错误，停止应用并清空卡死和点击记录。
+
+        Raises:
+            RequestHumanTakeover: 当未启用错误处理配置时抛出。
+        """
         if not self.config.Error_HandleError:
             logger.critical('[Device] 错误 没有启动/停止应用，因为 HandleError 已禁用')
             logger.critical('[Device] 请启用 Alas.Error.HandleError 或手动登录碧蓝航线')

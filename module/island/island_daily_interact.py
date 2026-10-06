@@ -3,9 +3,7 @@
 处理岛屿低频互动任务的自动化执行，包括摸猫、JUU 速运、商区外送服务和每周照相。
 结合开发计划任务列表区域检测，按顺序执行所有已启用的互动任务。
 """
-from datetime import timedelta
-
-from module.config.time_source import now as current_time
+from module.config.utils import get_server_next_update
 
 from module.base.timer import Timer
 from module.island.island import Island
@@ -541,6 +539,16 @@ class IslandDailyInteract(Island):
         self.device.click(button)
 
     def _click_optional_interact(self, button, label, timeout=8):
+        """点击可选的交互按钮，超时则返回 False。
+
+        Args:
+            button: 待点击的交互按钮。
+            label: 按钮名称（日志展示）。
+            timeout: 超时时间（秒）。
+
+        Returns:
+            bool: 是否成功点击。
+        """
         for _ in self.loop(timeout=timeout):
             if self.appear_then_click(button, interval=2):
                 logger.info(f'[岛屿-每日周任务] 点击{label}')
@@ -551,6 +559,17 @@ class IslandDailyInteract(Island):
         return False
 
     def _click_optional_interact_or_complete(self, interact_button, complete_button, label, timeout=8):
+        """检测并点击交互按钮或检测已完成状态。
+
+        Args:
+            interact_button: 交互按钮。
+            complete_button: 已完成图标。
+            label: 任务标识。
+            timeout: 超时时间（秒）。
+
+        Returns:
+            str: 状态结果（'clicked', 'complete', 'missing'）。
+        """
         for _ in self.loop(timeout=timeout):
             # 交互按钮用模板匹配而非纯颜色检测：已完成状态下同一区域可能被
             # “管理苗圃”等浅色选项行占据，颜色检测会误判为未完成并误点卡住。
@@ -566,6 +585,14 @@ class IslandDailyInteract(Island):
         return 'missing'
 
     def _handle_island_reward_optional(self, timeout=6):
+        """循环处理并关闭可能弹出的岛屿奖励界面。
+
+        Args:
+            timeout: 超时时间（秒）。
+
+        Returns:
+            bool: 是否处理过至少一次奖励弹窗。
+        """
         handled = False
         for _ in self.loop(timeout=timeout):
             if self._handle_island_reward_once():
@@ -574,6 +601,11 @@ class IslandDailyInteract(Island):
         return handled
 
     def _handle_island_reward_once(self):
+        """单次检测并关闭岛屿奖励界面。
+
+        Returns:
+            bool: 检测到并点击关闭返回 True，未检测到返回 False。
+        """
         if self.appear(GET_ITEMS_ISLAND, offset=(20, 20)):
             logger.info('[岛屿-每日周任务] 检测到岛屿奖励页面，点击安全区域关闭')
             self.device.click(ISLAND_CLICK_SAFE_AREA)
@@ -585,6 +617,7 @@ class IslandDailyInteract(Island):
         return False
 
     def _click_safe_area_twice(self):
+        """连续点击两次安全区域，确保关闭所有悬浮弹窗。"""
         for _ in range(2):
             self.device.screenshot()
             self.device.click(ISLAND_CLICK_SAFE_AREA)
@@ -614,8 +647,6 @@ class IslandDailyInteract(Island):
         return False
 
     def _delay_to_next_day(self):
-        target = current_time().replace(hour=3, minute=0, second=0, microsecond=0)
-        if target <= current_time():
-            target += timedelta(days=1)
+        target = get_server_next_update('03:00')
         self.config.task_delay(target=target)
         logger.info(f'[岛屿-每日周任务] 下次岛屿每日互动运行时间: {target}')

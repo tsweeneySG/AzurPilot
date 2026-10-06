@@ -31,6 +31,10 @@ _ = get_distribution
 
 import module.config.server as server
 from module.base.button import Button
+from module.handler.channel_float import (
+    CHANNEL_FLOAT_SWIPE_END, CHANNEL_FLOAT_HOLD_DURATION, CHANNEL_FLOAT_MAX_ATTEMPTS,
+    channel_float_position, hide_button,
+)
 from module.base.timer import Timer
 from module.base.utils import color_similarity_2d, crop
 from module.config.deep import deep_get
@@ -65,6 +69,9 @@ LOGIN_WAIT_TIMEOUT_DEFAULT = 180.0
 # 与 Device._stuck_image_timer.limit 对齐；配置值不大于此则按默认 180 处理。
 LOGIN_WAIT_STUCK_TIMER = 30.0
 
+# 4399 渠道服悬浮球处理的坐标与常量统一定义在 module/handler/channel_float.py，
+# 此处仅导入使用（见文件头部 import），避免两处定义不同步。
+
 
 class LoginHandler(UI):
     """登录和游戏重启处理器。
@@ -79,10 +86,14 @@ class LoginHandler(UI):
     """
 
     def _handle_app_login(self):
-        """
+        """执行应用登录的主循环逻辑。
+
         Pages:
             in: 任意页面
             out: page_main
+
+        Returns:
+            bool: 是否成功登录并到达主界面。
 
         Raises:
             GameStuckError: 游戏卡死。
@@ -97,6 +108,10 @@ class LoginHandler(UI):
         login_taps = 0
         self.device.stuck_record_clear()
         self.device.click_record_clear()
+        # 渠道服悬浮球拖拽剩余尝试次数、「隐藏」待点击标志与重试计数
+        self._channel_float_attempts = 0
+        self._channel_float_hide_pending = False
+        self._channel_float_hide_tries = 0
 
         while 1:
             # 监测设备屏幕旋转
@@ -106,6 +121,20 @@ class LoginHandler(UI):
                 orientation_timer.reset()
 
             self.device.screenshot()
+
+            # 渠道服启动悬浮球处理：先像素检测再拖拽，无球时不产生任何输入
+            if self._channel_float_enabled() and (
+                    self._channel_float_attempts < CHANNEL_FLOAT_MAX_ATTEMPTS
+                    and self._channel_float_timer.reached()):
+                self._channel_float_attempts += 1
+                self._channel_float_timer.reset()
+                if self.handle_channel_float():
+                    self._channel_float_hide_pending = True
+            # 拖拽后仅在「隐藏悬浮球」对话框可见时点击「隐藏」（重试上限 300 次）
+            if self._channel_float_hide_pending:
+                self._channel_float_hide_tries += 1
+                if self.handle_channel_float_hide() or self._channel_float_hide_tries > 300:
+                    self._channel_float_hide_pending = False
 
             # 结束条件
             if self.is_in_main():
@@ -175,15 +204,23 @@ class LoginHandler(UI):
 
         return True
 
+    # 渠道服悬浮窗拖拽计时器：5 秒间隔，每次登录流程最多尝试 4 次
+    _channel_float_timer = Timer(5, count=3)
+
     _user_agreement_timer = Timer(1, count=2)
 
     def handle_cn_user_agreement(self):
+        """处理国服用户协议与登录确认弹窗。
+
+        Returns:
+            bool: 是否检测并处理了协议或登录确认。
+        """
         if not self._user_agreement_timer.reached():
             return False
 
         right = self.image_color_button(
             area=(640, 360, 1280, 720), color=(78, 189, 234),
-            color_threshold=245, encourage=25, name='AGREEMENT_CONFIRM')
+            threshold=10, encourage=25, name='AGREEMENT_CONFIRM')
         if right is None:
             return False
         # 2026.04.17 不再需要滚动，只需在点击确认前简单滑动
@@ -191,7 +228,7 @@ class LoginHandler(UI):
         # 如果两侧都有，则是中间的登录确认按钮
         left = self.image_color_button(
             area=(0, 360, 640, 720), color=(78, 189, 234),
-            color_threshold=245, encourage=25, name='AGREEMENT_CONFIRM')
+            threshold=10, encourage=25, name='AGREEMENT_CONFIRM')
         if left is None:
             # 用户协议
             # 在屏幕中间某处进行滑动
@@ -206,6 +243,62 @@ class LoginHandler(UI):
             self.device.click(right)
             self._user_agreement_timer.reset()
             return True
+
+    def _channel_float_enabled(self) -> bool:
+        """渠道服悬浮窗消除是否启用。
+
+        对应配置项 Restart.MoveChannelFloat；渠道服（如 4399）客户端启动后
+        屏幕左上角会出现 SDK 悬浮窗，需要拖拽到屏幕中下方才能消除。
+
+        Returns:
+            bool: True 表示登录流程启动后会自动拖拽悬浮窗。
+        """
+        if not bool(deep_get(self.config.data, 'Restart.Restart.MoveChannelFloat', default=False)):
+            return False
+        package = str(deep_get(self.config.data, 'Alas.Emulator.PackageName', default=''))
+        server_name = str(deep_get(self.config.data, 'Alas.Emulator.ServerName', default=''))
+        return (package == 'com.bilibili.blhx.m4399'
+                and server_name.startswith('cn_channel-'))
+
+    def handle_channel_float(self) -> bool:
+        """识别到悬浮球时将其拖拽到屏幕中下方。
+
+        通过绿色标志动态定位悬浮球中心（停靠位置每次启动不固定），
+        未识别到返回 False，不产生任何输入操作，避免干扰登录界面控件。
+
+        Returns:
+            bool: True 表示已执行拖拽操作；False 表示未识别到悬浮球。
+        """
+        ball_pos = channel_float_position(self.device.image)
+        if ball_pos is None:
+            logger.info('[登录] 未识别到渠道服悬浮球，跳过拖拽')
+            return False
+        height, width = self.device.image.shape[:2]
+        swipe_end = (int(CHANNEL_FLOAT_SWIPE_END[0] * width / 1280),
+                     int(CHANNEL_FLOAT_SWIPE_END[1] * height / 720))
+        logger.info(f'[登录] 拖动渠道服悬浮球 {ball_pos} 至屏幕中下')
+        self.device.drag(
+            ball_pos, swipe_end,
+            point_random=(0, 0, 0, 0), hold_duration=CHANNEL_FLOAT_HOLD_DURATION,
+            name='CHANNEL_FLOAT_DRAG')
+        return True
+
+    def handle_channel_float_hide(self) -> bool:
+        """「隐藏悬浮球」对话框可见时点击「隐藏」按钮。
+
+        悬浮球被拖拽到屏幕中下后会弹出「隐藏悬浮球」对话框；
+        通过白色对话框+区内底部绿字动态定位「隐藏」按钮（位置随
+        分辨率变化），不可见时返回 False，等待下一轮截图再试。
+
+        Returns:
+            bool: True 表示已点击隐藏；False 表示按钮暂不可见。
+        """
+        button = hide_button(self.device.image)
+        if button is None:
+            return False
+        logger.info('[登录] 点击隐藏悬浮球')
+        self.device.click(button)
+        return True
 
     def _login_wait_timeout(self):
         """
@@ -293,11 +386,10 @@ class LoginHandler(UI):
         return timeout
 
     def handle_app_login(self):
-        """
-        处理应用登录流程。
+        """处理应用登录流程入口。
 
         Returns:
-            是否登录成功。
+            bool: 是否登录成功。
 
         Raises:
             GameStuckError: 游戏卡死。
@@ -322,10 +414,12 @@ class LoginHandler(UI):
             self.device.screenshot_interval_set()
 
     def app_stop(self):
+        """停止游戏应用。"""
         logger.hr('应用停止')
         self.device.app_stop()
 
     def app_start(self):
+        """启动游戏应用并处理登录。"""
         logger.hr('应用启动')
         self.device.app_start()
         self.handle_app_login()
@@ -394,6 +488,11 @@ class LoginHandler(UI):
         return result[0]
 
     def app_restart(self):
+        """重启游戏应用并重新登录。
+
+        Raises:
+            EmulatorNotRunningError: 重启操作超时或多次重启仍无法恢复时抛出。
+        """
         logger.hr('应用重启')
         is_restart_success = False
 
@@ -481,12 +580,14 @@ class LoginHandler(UI):
         # self.ensure_no_unfinished_campaign()
 
     def ensure_no_unfinished_campaign(self, confirm_wait=3):
-        """
+        """确保没有未完成的战役，如有则撤退。
+
         Pages:
             in: page_main
             out: page_main
 
-        确保没有未完成的战役，如有则撤退。
+        Args:
+            confirm_wait (int): 确认等待秒数。默认为 3。
         """
 
         def ensure_campaign_retreat():
@@ -521,14 +622,17 @@ class LoginHandler(UI):
         self.ui_goto_main()
 
     def handle_user_agreement(self, xp, hierarchy):
-        """
-        处理用户协议弹窗（仅限国服）。
+        """处理用户协议弹窗（仅限国服）。
 
         国服客户端存在 bug，用户协议和隐私政策可能在已同意后再次弹出。
         此方法滑动到底部并点击同意按钮。
 
+        Args:
+            xp: XPath 实例。
+            hierarchy: 界面层级 dump 结果。
+
         Returns:
-            是否处理了用户协议弹窗。
+            bool: 是否处理了用户协议弹窗。
         """
 
         if server.server == 'cn':
@@ -573,7 +677,15 @@ class LoginHandler(UI):
             return True
 
     def handle_user_login(self, xp, hierarchy) -> bool:
-        """处理用户登录按钮点击。"""
+        """处理用户登录按钮点击。
+
+        Args:
+            xp: XPath 实例。
+            hierarchy: 界面层级 dump 结果。
+
+        Returns:
+            bool: 是否点击了登录按钮。
+        """
         login_wait_results = self.get_for_any_ele([
             XPS('//*[@text="登录"]', xp, hierarchy),
             XPS('//*[@content-desc="登录"]', xp, hierarchy)])
@@ -586,14 +698,13 @@ class LoginHandler(UI):
 
     @staticmethod
     def get_for_any_ele(list_u2_path: list) -> bool | tuple:
-        """
-        从候选 XPath 或 UiObject 列表中查找第一个存在的元素。
+        """从候选 XPath 或 UiObject 列表中查找第一个存在的元素。
 
         Args:
-            list_u2_path: UiObject 或 XPathSelector 的列表，长度 >= 1。
+            list_u2_path (list): UiObject 或 XPathSelector 的列表，长度 >= 1。
 
         Returns:
-            False 表示未找到元素，tuple 表示找到的元素边界。
+            bool | tuple: 未找到元素返回 False，找到返回元素边界元组。
         """
         for path in list_u2_path:
             try:
@@ -612,6 +723,11 @@ class LoginHandler(UI):
         return False
 
     def get_cn_xp_hierarchy(self) -> tuple:
+        """获取当前界面的 XPath 实例与 dump 层级数据。
+
+        Returns:
+            tuple: (XPath 实例, dump_hierarchy 结果)。
+        """
         d = self.device.u2
         xp = XPath(d)
         hierarchy = d.dump_hierarchy()
@@ -619,5 +735,14 @@ class LoginHandler(UI):
 
 
 class XPS(XPathSelector):
+    """XPath 选择器包装类。"""
+
     def __init__(self, xpath, parent, source):
+        """初始化 XPath 选择器。
+
+        Args:
+            xpath (str): XPath 表达式。
+            parent: 父级选择器或 XPath 对象。
+            source: 页面源数据。
+        """
         super().__init__(parent, xpath, source)

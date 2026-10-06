@@ -59,11 +59,14 @@
       "Commission",
       "Tactical",
       "Research",
+      "StorageStatistics",
       "Dorm",
       "Meowfficer",
       "Guild",
       "Reward",
-      "Awaken"
+      "Awaken",
+      "Secretary",
+      "OperationHandover"
     ]
   },
   "DailyMission": {
@@ -90,6 +93,7 @@
       "OpsiAshBeacon",
       "OpsiAshAssist",
       "OpsiExplore",
+      "OpsiExploreCleanup",
       "OpsiShop",
       "OpsiVoucher",
       "OpsiDaily",
@@ -133,7 +137,6 @@
     "menu": "collapse",
     "page": "setting",
     "tasks": [
-      "FleetScan",
       "FleetInfo"
     ]
   },
@@ -141,6 +144,7 @@
     "menu": "collapse",
     "page": "tool",
     "tasks": [
+      "FleetScan",
       "Daemon",
       "OpsiDaemon",
       "EventStory",
@@ -150,7 +154,8 @@
       "OcrBenchmark",
       "AzurLaneUncensored",
       "GameManager",
-      "EmulatorManager"
+      "EmulatorManager",
+      "MeowfficerScore"
     ]
   }
 }

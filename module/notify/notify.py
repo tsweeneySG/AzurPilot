@@ -8,6 +8,7 @@
     - notify_webui(): 向本地 WebUI 服务发送 HTTP POST 通知。
 """
 
+import requests
 import onepush.core
 import yaml
 from onepush import get_notifier
@@ -20,6 +21,22 @@ from module.logger import logger
 
 onepush.core.log = logger
 
+# onepush 的内部请求不传 timeout，推送服务器无响应时会永久阻塞调度线程（issue #824）。
+# 覆盖其 Provider.request，为所有推送请求注入默认超时，(连接超时, 读取超时)，单位秒。
+PUSH_REQUEST_TIMEOUT = (10, 30)
+
+# 仅在未 patch 过时包装：模块被重复加载时 Provider.request 已是包装函数，
+# 二次包装会因模块 dict 原地更新导致原函数引用丢失、无限递归
+if not getattr(Provider.request, '_timeout_patched', False):
+    _original_provider_request = Provider.request
+
+    def _provider_request_with_timeout(method, url, **kwargs):
+        kwargs.setdefault('timeout', PUSH_REQUEST_TIMEOUT)
+        return _original_provider_request(method, url, **kwargs)
+
+    _provider_request_with_timeout._timeout_patched = True
+    Provider.request = staticmethod(_provider_request_with_timeout)
+
 
 def handle_notify(_config: str, **kwargs) -> bool:
     """处理推送通知请求。
@@ -28,11 +45,11 @@ def handle_notify(_config: str, **kwargs) -> bool:
     并通过 onepush 库发送通知消息。
 
     Args:
-        _config: YAML 格式的通知配置字符串，包含 provider 和渠道参数。
+        _config (str): YAML 格式的通知配置字符串，包含 provider 和渠道参数。
         **kwargs: 附加的通知参数，如 title、content 等。
 
     Returns:
-        通知发送成功返回 True，失败返回 False。
+        bool: 通知发送成功返回 True，失败返回 False。
     """
     try:
         config = {}
@@ -75,6 +92,12 @@ def handle_notify(_config: str, **kwargs) -> bool:
                 config["token"] = access_token
 
         resp = notifier.notify(**config)
+        if resp is None:
+            # onepush 内部请求异常被吞（连接失败/超时/SSL 重试失败）时返回 None，
+            # 必须显式报失败，否则卡死或推送不可达时日志里无任何失败痕迹
+            logger.warning("推送通知失败!")
+            logger.warning("[通知] 未收到推送服务器的响应（连接失败或超时）")
+            return False
         if isinstance(resp, Response):
             if resp.status_code != 200:
                 logger.warning("推送通知失败!")
@@ -107,21 +130,20 @@ def notify_webui(instance: str, title: str, content: str, **kwargs) -> bool:
     默认端口为 25548，可通过配置自定义。
 
     Args:
-        instance: 触发通知的实例名称。
-        title: 通知标题。
-        content: 通知正文内容。
+        instance (str): 触发通知的实例名称。
+        title (str): 通知标题。
+        content (str): 通知正文内容。
         **kwargs: 其他附加字段，合并到请求体中。
 
     Returns:
-        推送成功返回 True，失败返回 False。
+        bool: 推送成功返回 True，失败返回 False。
     """
     try:
-        from module.webui.setting import State
+        from module.runtime.setting import State
         port = int(State.deploy_config.WebuiPort) or 25548
     except Exception:
         port = 25548
     try:
-        import requests
         payload = {"instance": instance, "title": title, "content": content}
         payload.update(kwargs)
         requests.post(

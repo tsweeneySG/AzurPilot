@@ -211,9 +211,19 @@ class ShopClerk(ShopBase, Retirement):
         diff = limit - total
         if diff > 0:
             limit = total
+        limit = self.shop_strategy_plan_quantity(item, limit)
+        item._shop_strategy_executed_quantity = limit
 
         # 包装 OCR 函数适配 ui_ensure_index，防止库存不足时超买
         def shop_buy_select_ensure_index(image):
+            """读取自选商品库存并适配索引控制。
+
+            Args:
+                image: 截图区域。
+
+            Returns:
+                int: 剩余库存数或目标限制数。
+            """
             current, remain, _ = OCR_SHOP_SELECT_STOCK.ocr(image)
             if not current:
                 group_case = item.group.title() if len(item.group) > 2 else item.group.upper()
@@ -271,6 +281,8 @@ class ShopClerk(ShopBase, Retirement):
         diff = limit - total
         if diff > 0:
             limit = total
+        limit = self.shop_strategy_plan_quantity(item, limit)
+        item._shop_strategy_executed_quantity = limit
 
         self.ui_ensure_index(limit, letter=OCR_SHOP_AMOUNT, prev_button=AMOUNT_MINUS, next_button=AMOUNT_PLUS,
                              skip_first_screenshot=True)
@@ -309,6 +321,12 @@ class ShopClerk(ShopBase, Retirement):
             skip_first_screenshot: 是否跳过首次截图
         """
         success = False
+        confirmed_purchase = False
+        if self.shop_strategy_enabled():
+            # 无数量选择框的商品默认只会确认一次；有数量框时由对应处理器覆盖。
+            item._shop_strategy_executed_quantity = min(
+                getattr(item, '_shop_strategy_quantity', 1), 1,
+            )
         self.shop_interval_clear()
 
         while 1:
@@ -329,6 +347,11 @@ class ShopClerk(ShopBase, Retirement):
             if self.handle_retirement():
                 self.interval_reset(SHOP_BACK_ARROW)
                 continue
+            if self.shop_purchase_result_handle():
+                self.interval_reset(SHOP_BACK_ARROW)
+                success = True
+                confirmed_purchase = True
+                continue
             if self.shop_obstruct_handle():
                 self.interval_reset(SHOP_BACK_ARROW)
                 success = True
@@ -340,7 +363,7 @@ class ShopClerk(ShopBase, Retirement):
 
             # 结束条件
             if success and self.appear(SHOP_BACK_ARROW, offset=(30, 30)):
-                break
+                return confirmed_purchase if self.shop_strategy_enabled() else True
 
     def shop_buy(self):
         """执行商店购买主循环。
@@ -376,7 +399,8 @@ class ShopClerk(ShopBase, Retirement):
             # 先获取商品列表，利用固有延迟等待 OCR 货币识别更准确
             items = self.shop_get_items()
             self.shop_currency()
-            if self._currency <= 0:
+            strategy_currency = self.shop_strategy_currency(items) if self.shop_strategy_enabled() else {}
+            if self._currency <= 0 and not any(amount > 0 for amount in strategy_currency.values()):
                 logger.warning(f'[商店-购买] 当前资金: {self._currency}，停止')
                 return False
 
@@ -385,7 +409,12 @@ class ShopClerk(ShopBase, Retirement):
                 logger.info('[商店-购买] 购买完成')
                 return True
             else:
-                self.shop_buy_execute(item)
+                completed = self.shop_buy_execute(item)
+                if completed:
+                    self.shop_strategy_record_purchase(item)
+                elif self.shop_strategy_enabled():
+                    logger.warning('[高级商店策略] 未获得明确购买结果，停止本轮以避免错误记账')
+                    return True
                 continue
 
         logger.warning('购买物品过多，停止')

@@ -72,6 +72,23 @@ class CoreShop_250814(ShopClerk, ShopStatus):
         logger.info(f'[商店-核心] 核心数据: {self._currency}')
         return self._currency
 
+    @staticmethod
+    def shop_strategy_stock(item):
+        """核心商店数量弹窗会二次钳制库存，策略可生成多件计划。"""
+        return 99
+
+    @staticmethod
+    def shop_strategy_max_quantity(item):
+        """获取策略规划中单次购买数量上限。
+
+        Args:
+            item: 待购买商品对象。
+
+        Returns:
+            int: 允许购买的最大数量。
+        """
+        return 99
+
     def shop_interval_clear(self):
         """清除购买界面相关按钮的点击间隔。
 
@@ -105,7 +122,7 @@ class CoreShop_250814(ShopClerk, ShopStatus):
 
         按照过滤器配置购买核心商店商品。
         """
-        if not self.shop_filter:
+        if not self.shop_filter and not self.shop_strategy_enabled():
             return
 
         logger.hr('[商店-核心] 核心商店', level=1)

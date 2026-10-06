@@ -13,6 +13,8 @@
 - 根据用户配置的设备偏好（'gpu'、'cpu'、'npu'）选择 EP
 - 自动检测 AMD 集成显卡并排除不兼容的 EP
 - 通过 GPU 显存大小区分独显和集显
+- 同型号多设备时优先真实独显（Discrete 标记 + DXGI 高性能索引），
+  避免绑定到会热插拔的虚拟显示器适配器
 - 使用线程锁确保 EP 初始化的线程安全性
 
 核心函数 create_onnx_session() 被 al_ocr.py 调用，
@@ -37,6 +39,8 @@ OPENVINO_GPU_DEVICE = "openvino_gpu"
 OPENVINO_CPU_DEVICE = "openvino_cpu"
 
 _MIN_DISCRETE_VIDEO_MEMORY_MIB = 1024
+# 缺少 DxgiHighPerformanceIndex 元数据时的排序占位值，保证这类设备排在已知索引之后
+_UNKNOWN_HIGH_PERFORMANCE_INDEX = 1 << 16
 _AMD_INTEGRATED_HD_MODELS = {
     "6250",
     "6290",
@@ -74,7 +78,19 @@ def create_onnx_session(
     allow_vendor_execution_providers=True,
     device_preference="auto",
 ):
-    """按固定优先级创建 Windows ML 或 CPU ONNX Runtime session。"""
+    """按固定优先级创建 Windows ML 或 CPU ONNX Runtime session。
+
+    Args:
+        ort: onnxruntime 模块对象。
+        model_path (str | Path): 模型文件路径。
+        session_options_factory (callable | None): 用于创建 SessionOptions 的工厂函数。
+        allow_acceleration (bool): 是否允许硬件加速。默认 True。
+        allow_vendor_execution_providers (bool): 是否允许加载第三方厂商 EP（如 QNN/OpenVINO）。默认 True。
+        device_preference (str): 设备偏好设置，如 'auto', 'gpu', 'cpu', 'qnn_npu' 等。默认 'auto'。
+
+    Returns:
+        tuple[InferenceSession, str]: (ONNX 推理会话对象, 选用的 EP 名称)。
+    """
     create_options = session_options_factory or ort.SessionOptions
 
     if os.name != "nt" or not allow_acceleration:
@@ -129,7 +145,12 @@ def create_onnx_session(
 
 
 def _prepare_vendor_execution_providers(ort, provider_names):
-    """通过 Windows Update 获取并注册本项目允许使用的厂商 EP。"""
+    """通过 Windows Update 获取并注册本项目允许使用的厂商 EP。
+
+    Args:
+        ort: onnxruntime 模块对象。
+        provider_names (tuple[str, ...]): 待准备的执行提供程序名称元组。
+    """
     marker = id(ort)
     with _provider_lock:
         pending_provider_names = tuple(
@@ -170,6 +191,13 @@ def _prepare_vendor_execution_providers(ort, provider_names):
 
 
 def _ensure_and_register_provider(ort, windowsml, provider):
+    """确保执行提供程序就绪并注册到 ONNX Runtime。
+
+    Args:
+        ort: onnxruntime 模块对象。
+        windowsml: windowsml 模块对象。
+        provider: Windows ML 执行提供程序对象。
+    """
     try:
         ready = windowsml.EpReadyState.Ready
         if provider.ready_state != ready:
@@ -189,11 +217,52 @@ def _ensure_and_register_provider(ort, windowsml, provider):
         )
 
 
+def _device_priority(device):
+    """设备排序键：真实独显优先，同级再按 DXGI 高性能索引升序。
+
+    Windows 上的虚拟显示器适配器（远程控制虚拟屏、模拟器虚拟屏、
+    Virtual Display Driver 等）会镜像独显的名称与显存，且通常不填
+    Discrete 元数据，仅靠 _is_discrete_gpu() 无法把它们与真实独显区分。
+    这类适配器会随显示配置变化被热插拔，绑定其上的 DirectML 会话会在
+    run() 时失效报错（底层消息为本地化编码，最终表现为
+    UnicodeDecodeError 崩溃并中断任务）。
+    Discrete=1 是 Windows ML 为真实独显写入的标记，
+    DxgiHighPerformanceIndex 则把性能最高的适配器排在前面，
+    两者结合即可稳定选中真实独显。
+
+    Args:
+        device: ONNX Runtime 的 OrtEpDevice。
+
+    Returns:
+        tuple: (是否非独显, 高性能索引)，用于升序排序。
+    """
+    metadata = device.device.metadata
+    discrete = metadata.get("Discrete")
+    not_discrete = 0 if str(discrete).lower() in ("1", "true") else 1
+
+    index = metadata.get("DxgiHighPerformanceIndex")
+    try:
+        performance = int(index)
+    except (TypeError, ValueError):
+        performance = _UNKNOWN_HIGH_PERFORMANCE_INDEX
+    return not_discrete, performance
+
+
 def _iter_preferred_devices(
     ort,
     device_preference="auto",
     allow_vendor_execution_providers=True,
 ):
+    """按优先级顺序枚举与筛选可用的 ONNX Runtime 设备列表。
+
+    Args:
+        ort: onnxruntime 模块对象。
+        device_preference (str): 设备偏好设置。默认 'auto'。
+        allow_vendor_execution_providers (bool): 是否允许第三方厂商 EP。默认 True。
+
+    Returns:
+        tuple: 排序后的候选设备元组。
+    """
     try:
         devices = ort.get_ep_devices()
     except Exception as exc:
@@ -217,17 +286,39 @@ def _iter_preferred_devices(
     }.get(device_preference, ())
     if not allow_vendor_execution_providers:
         candidates = tuple(candidate for candidate in candidates if candidate[0] == DML_EP)
-    return tuple(
-        device
-        for ep_name, device_type, require_discrete in candidates
-        for device in devices
-        if device.ep_name == ep_name
-        and device.device.type == device_type
-        and (not require_discrete or _is_discrete_gpu(device))
-    )
+
+    preferred = []
+    for ep_name, device_type, require_discrete in candidates:
+        matched = [
+            device
+            for device in devices
+            if device.ep_name == ep_name
+            and device.device.type == device_type
+            and (not require_discrete or _is_discrete_gpu(device))
+        ]
+        # 同一候选内可能有多个同型号设备（真实独显 + 虚拟显示器适配器），
+        # 排序后再交给 create_onnx_session 依次尝试，确保先绑到真实独显。
+        preferred.extend(sorted(matched, key=_device_priority))
+
+    for device in preferred:
+        metadata = device.device.metadata
+        logger.info(
+            f"[OCR] 候选设备 {device.ep_name}/{metadata.get('Description', 'unknown')}"
+            f" (adapter={metadata.get('DxgiAdapterNumber', '?')},"
+            f" discrete={metadata.get('Discrete', '?')})"
+        )
+    return tuple(preferred)
 
 
 def _vendor_execution_provider_names(device_preference):
+    """根据设备偏好返回需准备的厂商 EP 名称列表。
+
+    Args:
+        device_preference (str): 设备偏好。
+
+    Returns:
+        tuple[str, ...]: 厂商 EP 名称元组。
+    """
     if device_preference in ("auto", QNN_NPU_DEVICE):
         names = [QNN_EP]
     else:
@@ -243,6 +334,14 @@ def _vendor_execution_provider_names(device_preference):
 
 
 def _is_discrete_gpu(device):
+    """判断给定设备是否为独立显卡。
+
+    Args:
+        device: OrtEpDevice 设备对象。
+
+    Returns:
+        bool: 是独立显卡返回 True，否则返回 False。
+    """
     metadata = device.device.metadata
     discrete = metadata.get("Discrete")
     if discrete is not None:
@@ -262,13 +361,28 @@ def _is_discrete_gpu(device):
 
 
 def _normalize_gpu_name(name):
+    """规范化 GPU 名称字符串以进行模糊匹配。
+
+    Args:
+        name (str): 原始设备名称。
+
+    Returns:
+        str: 清洗与小写化后的名称字符串。
+    """
     name = str(name).lower()
     name = name.replace("(r)", "").replace("(tm)", "")
     return " ".join(name.split())
 
 
 def _is_known_integrated_gpu_name(name):
-    """根据 Windows 设备名识别没有 Discrete 元数据的常见核显。"""
+    """根据 Windows 设备名识别没有 Discrete 元数据的常见核显。
+
+    Args:
+        name (str): 规范化后的 GPU 名称。
+
+    Returns:
+        bool: 若为已知核显名称则返回 True，否则返回 False。
+    """
     if name.startswith(
         (
             "intel graphics media accelerator",
@@ -320,6 +434,14 @@ def _is_known_integrated_gpu_name(name):
 
 
 def _is_software_gpu_name(name):
+    """判断是否为软件渲染适配器或远程桌面虚拟适配器。
+
+    Args:
+        name (str): 规范化后的设备名称。
+
+    Returns:
+        bool: 是软件或虚拟适配器返回 True，否则返回 False。
+    """
     return name.startswith(
         (
             "microsoft basic render driver",
@@ -330,6 +452,14 @@ def _is_software_gpu_name(name):
 
 
 def _video_memory_mib(value):
+    """解析显存字符串为 MiB 数值。
+
+    Args:
+        value: 显存大小字符串或数值。
+
+    Returns:
+        int | None: 显存大小（MiB），无法解析时返回 None。
+    """
     if value is None:
         return None
 
@@ -345,6 +475,14 @@ def _video_memory_mib(value):
 
 
 def _describe_device(device):
+    """生成设备的描述信息字符串。
+
+    Args:
+        device: OrtEpDevice 设备对象。
+
+    Returns:
+        str: 包含提供程序名称与设备型号的描述字符串。
+    """
     metadata = device.device.metadata
     description = metadata.get("Description", device.device.vendor)
     return f"{device.ep_name}/{device.device.type.name}: {description}"

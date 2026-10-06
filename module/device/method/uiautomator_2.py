@@ -1,13 +1,17 @@
-# 此文件实现了基于 uiautomator2 的设备交互逻辑。
-# 包含截图、模拟点击、长按、滑动、层级提取（dump）等控制移动端设备的核心操作。
+"""基于 uiautomator2 的设备交互与控制实现模块。
+
+提供 Uiautomator2 类，封装了通过 uiautomator2 进行截图、输入控制、应用管理、
+无障碍节点提取（UI dump）、后台进程管理等核心功能。
+"""
+
 import base64
-import time
 import typing as t
 from dataclasses import dataclass
-from functools import wraps
+from functools import partial
 from json.decoder import JSONDecodeError
 from subprocess import list2cmdline
 
+import requests
 import uiautomator2 as u2
 from adbutils.errors import AdbError
 from lxml import etree
@@ -15,113 +19,52 @@ from lxml import etree
 from module.base.utils import *
 from module.config.server import DICT_PACKAGE_TO_ACTIVITY
 from module.device.connection import Connection
-from module.device.method.utils import (ImageTruncated, PackageNotInstalled, RETRY_TRIES, handle_adb_error,
-                                        handle_unknown_host_service, possible_reasons, retry_sleep)
+from module.device.method.retry import retry_backend, recover_adb, recover_truncated_image, recover_unknown
+from module.device.method.utils import ImageTruncated, PackageNotInstalled, handle_adb_error, possible_reasons
 from module.exception import EmulatorNotRunningError, RequestHumanTakeover
 from module.logger import logger
 
 
-def retry(func):
-    @wraps(func)
-    def retry_wrapper(self, *args, **kwargs):
-        """
-        Args:
-            self (Uiautomator2):
-        """
-        init = None
-        for _ in range(RETRY_TRIES):
-            try:
-                if callable(init):
-                    time.sleep(retry_sleep(_))
-                    init()
-                return func(self, *args, **kwargs)
-            # 不可处理
-            except RequestHumanTakeover:
-                break
-            # adb server 被终止时
-            except ConnectionResetError as e:
-                logger.error(e)
+def _retry_recover(self, error, trial):
+    if isinstance(error, (ConnectionResetError, AdbError)):
+        return recover_adb(self, error)
+    if isinstance(error, requests.exceptions.ConnectionError):
+        logger.error(error)
+        # atx-agent 中断需要重装并等待就绪，其余连接丢失只重连 ADB。
+        if 'Connection aborted' in str(error):
+            return self.install_uiautomator2
+        return self.adb_reconnect
+    if isinstance(error, JSONDecodeError):
+        logger.error(error)
+        return self.install_uiautomator2
+    if isinstance(error, RuntimeError):
+        return self.adb_reconnect if handle_adb_error(error) else None
+    if isinstance(error, AssertionError):
+        logger.exception(error)
+        possible_reasons('如果使用 BlueStacks、雷电模拟器或 WSA，请在模拟器设置中启用 ADB')
+        return None
+    if isinstance(error, PackageNotInstalled):
+        logger.error(error)
+        return self.detect_package
+    if isinstance(error, ImageTruncated):
+        return recover_truncated_image(self, error)
+    return recover_unknown(error)
 
-                def init():
-                    self.adb_reconnect()
-            # 在 `device.set_new_command_timeout(604800)` 时
-            # json.decoder.JSONDecodeError: Expecting value: line 1 column 2 (char 1)
-            except JSONDecodeError as e:
-                logger.error(e)
 
-                def init():
-                    self.install_uiautomator2()
-            # AdbError
-            except AdbError as e:
-                if handle_adb_error(e):
-                    def init():
-                        self.adb_reconnect()
-                elif handle_unknown_host_service(e):
-                    def init():
-                        self.adb_start_server()
-                        self.adb_reconnect()
-                else:
-                    break
-            # RuntimeError: USB device 127.0.0.1:5555 is offline
-            except RuntimeError as e:
-                if handle_adb_error(e):
-                    def init():
-                        self.adb_reconnect()
-                else:
-                    break
-            # 在 `assert c.read string(4) == _OKAY` 时
-            # 模拟器未启用 ADB
-            except AssertionError as e:
-                logger.exception(e)
-                possible_reasons(
-                    '如果你使用的是 BlueStacks、雷电模拟器或 WSA，'
-                    '请在模拟器设置中启用 ADB'
-                )
-                break
-            # 包未安装
-            except PackageNotInstalled as e:
-                logger.error(e)
-
-                def init():
-                    self.detect_package()
-            # 图像截断
-            except ImageTruncated as e:
-                from module.device.method.utils import handle_image_truncated
-                handle_image_truncated(self, e)
-
-                def init():
-                    pass
-            # 不可处理 - 必须向上抛出以触发模拟器重启
-            except EmulatorNotRunningError:
-                raise
-            # 未知异常
-            except Exception as e:
-                logger.exception(e)
-
-                def init():
-                    pass
-
-        if func.__name__ in [
-            '_app_start_u2_am', '_app_start_u2_monkey',
-            'screenshot_uiautomator2',
-            'app_current_uiautomator2',
-            'app_stop_uiautomator2',
-        ]:
-            # 这些函数失败说明设备连接已断开，应触发重启而非人工介入
-            # app_stop_uiautomator2 失败属于应用重启失败，按项目规则
-            # 必须抛 EmulatorNotRunningError 触发模拟器重启，
-            # 而非 RequestHumanTakeover（会被错误地视为不可恢复）
-            logger.critical(f'[设备-U2] 重试 {func.__name__}() 失败')
-            raise EmulatorNotRunningError
-
-        logger.critical(f'[设备-U2] 重试 {func.__name__}() 失败')
-        raise RequestHumanTakeover
-
-    return retry_wrapper
+retry = partial(retry_backend, recover=_retry_recover, label='设备-U2')
 
 
 @dataclass
 class ProcessInfo:
+    """Android 设备进程信息数据类。
+
+    Attributes:
+        pid (int): 进程 ID。
+        ppid (int): 父进程 ID。
+        thread_count (int): 线程数量。
+        cmdline (str): 命令行字符串。
+        name (str): 进程名称。
+    """
     pid: int
     ppid: int
     thread_count: int
@@ -131,13 +74,20 @@ class ProcessInfo:
 
 @dataclass
 class ShellBackgroundResponse:
+    """后台执行 Shell 命令的响应数据类。
+
+    Attributes:
+        success (bool): 是否成功启动。
+        pid (int): 启动的后台进程 ID。
+        description (str): 响应描述信息。
+    """
     success: bool
     pid: int
     description: str
 
 
 class Uiautomator2(Connection):
-    @retry
+    @retry(on_exhausted=EmulatorNotRunningError)
     def screenshot_uiautomator2(self):
         image = self.u2.screenshot(format='raw')
         # 防止 None/空响应
@@ -213,7 +163,7 @@ class Uiautomator2(Connection):
     def drag_uiautomator2(self, p1, p2, segments=1, shake=(0, 15), point_random=(-10, -10, 10, 10),
                           shake_random=(-5, -5, 5, 5), swipe_duration=0.25, shake_duration=0.1,
                           hold_duration=0.0):
-        """拖拽并抖动，示意如下:
+        r"""拖拽并抖动，示意如下:
                      /\
         +-----------+  +  +
                         \/
@@ -249,7 +199,7 @@ class Uiautomator2(Connection):
         path = [(int(x), int(y), d) for x, y, d in path]
         self._drag_along(path)
 
-    @retry
+    @retry(on_exhausted=EmulatorNotRunningError)
     def app_current_uiautomator2(self):
         """
         Returns:
@@ -258,7 +208,7 @@ class Uiautomator2(Connection):
         result = self.u2.app_current()
         return result['package']
 
-    @retry
+    @retry(on_exhausted=EmulatorNotRunningError)
     def _app_start_u2_monkey(self, package_name=None, allow_failure=False):
         """
         Args:
@@ -292,7 +242,7 @@ class Uiautomator2(Connection):
             # ## Network stats: elapsed time=4ms (0ms mobile, 0ms wifi, 4ms not connected)
             return True
 
-    @retry
+    @retry(on_exhausted=EmulatorNotRunningError)
     def _app_start_u2_am(self, package_name=None, activity_name=None, allow_failure=False):
         """
         Args:
@@ -401,7 +351,7 @@ class Uiautomator2(Connection):
         logger.error('[设备-U2] 所有尝试失败')
         return False
 
-    @retry
+    @retry(on_exhausted=EmulatorNotRunningError)
     def app_stop_uiautomator2(self, package_name=None):
         if not package_name:
             package_name = self.package

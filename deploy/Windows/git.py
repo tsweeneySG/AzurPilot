@@ -11,7 +11,19 @@ from deploy.git_over_cdn.endpoints import CLOUDFLARE_UPDATE_URLS, FALLBACK_UPDAT
 
 
 class GitConfigParser(configparser.ConfigParser):
+    """Git 配置文件解析器，提供配置值检查功能。"""
+
     def check(self, section, option, value):
+        """检查指定配置小节下的配置项是否与期望值一致。
+
+        Args:
+            section (str): 配置小节名称。
+            option (str): 配置选项名称。
+            value (str | None): 期望的配置值。
+
+        Returns:
+            bool: 配置项是否存在且与期望值相等。
+        """
         result = self.get(section, option, fallback=None)
         if result == value:
             logger.info(f'Git config {section}.{option} = {value}')
@@ -21,7 +33,10 @@ class GitConfigParser(configparser.ConfigParser):
 
 
 class GitOverCdnClientWindows(GitOverCdnClient):
+    """带安装器进度上报的 Windows 版 GitOverCDN 客户端。"""
+
     def update(self, *args, **kwargs):
+        """执行更新并通知安装器进度。"""
         Progress.GitInit()
         _ = super().update(*args, **kwargs)
         Progress.GitShowVersion()
@@ -29,19 +44,28 @@ class GitOverCdnClientWindows(GitOverCdnClient):
 
     @cached_property
     def latest_commit(self) -> str:
+        """获取最新 commit 并通知安装器进度。"""
         _ = super().latest_commit
         Progress.GitLatestCommit()
         return _
 
     def download_pack(self):
+        """下载 pack 包并通知安装器进度。"""
         _ = super().download_pack()
         Progress.GitDownloadPack()
         return _
 
 
 class GitManager(DeployConfig):
+    """Windows 下 Git 仓库初始化与分支同步管理类。"""
+
     @staticmethod
     def remove(file):
+        """安全删除指定文件。
+
+        Args:
+            file (str): 待删除的文件路径。
+        """
         try:
             os.remove(file)
             logger.info(f'Removed file: {file}')
@@ -50,30 +74,38 @@ class GitManager(DeployConfig):
 
     @cached_property
     def git_config(self):
+        """获取当前仓库的 .git/config 解析器对象。
+
+        Returns:
+            GitConfigParser: 配置文件解析实例。
+        """
         conf = GitConfigParser()
         conf.read('./.git/config')
         return conf
 
     @staticmethod
     def git_user_agent():
-        """生成随机的 git User-Agent，绕开部分镜像仓库对特定 git 版本的封禁。
+        """生成随机的 git User-Agent，绕开镜像仓库对固定/异常 git UA 的封禁。
 
-        版本号各段与构建后缀均由随机数生成器产出，每次更新 UA 都不同，
-        避免命中 gitcode 等仓库针对特定 UA 字符串的封禁（418）。
+        gitcode 等仓库会对命中黑名单的 UA 返回 418。官方 git 主版本只有 2.x，
+        Windows 构建形如 2.x.y.windows.z，不带多余尾段；这里只产出形态真实的
+        版本号（避免一眼假的 git/3.x 或五段式 UA 被按特征封禁），同时把采样
+        空间撑到约 4×10³ 种（minor 24~63、patch 0~9、build 1~9 的笛卡尔积），
+        每次取值都不重复，任何单一 UA 都难以累积成可封禁的固定指纹。
+
+        Returns:
+            str: 伪装的 Git User-Agent 字符串。
         """
         while True:
-            major = random.randint(2, 3)
-            minor = random.randint(30, 59)
+            minor = random.randint(24, 63)
             patch = random.randint(0, 9)
-            build = random.randint(1, 5)
-            sub = random.randint(1, 9999)
-            if random.random() < 0.3:
-                ua = f'git/{major}.{minor}.{patch}'
-            elif random.random() < 0.6:
-                ua = f'git/{major}.{minor}.{patch}.windows.{build}'
+            # 少部分用官方跨平台版（大量 CI/服务器请求即此形态），多数用 Git for Windows
+            if random.random() < 0.2:
+                ua = f'git/2.{minor}.{patch}'
             else:
-                ua = f'git/{major}.{minor}.{patch}.windows.{build}.{sub}'
-            if not ua.startswith('git/2.51.0.windows.2'):
+                build = random.randint(1, 9)
+                ua = f'git/2.{minor}.{patch}.windows.{build}'
+            if ua != 'git/2.51.0.windows.2':
                 break
         return ua
 
@@ -99,13 +131,23 @@ class GitManager(DeployConfig):
                 return
             logger.warning(f'git fetch failed with UA {ua}, attempt {i + 1}/{max_retry}')
             if i < max_retry - 1:
-                time.sleep(delay)
+                # 重试间隔加随机抖动，避免暴露固定的失败-重试节奏
+                time.sleep(delay * random.uniform(0.5, 1.8))
                 ua = self.git_user_agent()
         raise ExecutionError
 
     def git_repository_init(
             self, repo, source='origin', branch='master', proxy='', ssl_verify=True
     ):
+        """初始化或更新本地 Git 仓库并拉取指定分支。
+
+        Args:
+            repo (str): 远端仓库地址。
+            source (str): 远端源名称，默认为 'origin'。
+            branch (str): 分支名称，默认为 'master'。
+            proxy (str): HTTP/HTTPS 代理地址。
+            ssl_verify (bool): 是否校验 SSL 证书。
+        """
         # 所有 git 命令统一带随机 UA，绕过 gitcode 等仓库对特定 UA 的 418 封禁
         git = f'"{self.git}" -c http.userAgent={self.git_user_agent()}'
 
@@ -162,6 +204,8 @@ class GitManager(DeployConfig):
         Progress.GitReset()
         # git fetch 已执行，checkout 会更快
         if not self.execute(f'{git} checkout {branch}', allow_failure=True):
+            # pull 联网，与 fetch 用不同 UA，降低同源请求的可归集性
+            git = f'"{self.git}" -c http.userAgent={self.git_user_agent()}'
             self.execute(f'{git} pull --ff-only {source} {branch}')
         Progress.GitCheckout()
 
@@ -171,18 +215,24 @@ class GitManager(DeployConfig):
 
     @property
     def goc_client(self):
-        client = GitOverCdnClient(
+        """获取 Windows 环境下的 GitOverCDN 客户端实例。
+
+        Returns:
+            GitOverCdnClientWindows: 客户端实例。
+        """
+        client = GitOverCdnClientWindows(
             url=CLOUDFLARE_UPDATE_URLS,
             fallback_urls=FALLBACK_UPDATE_URLS,
             folder=self.root_filepath,
             source='origin',
-            branch='master',
+            branch=self.Branch,
             git=self.git,
         )
         client.logger = logger
         return client
 
     def git_install(self):
+        """执行 Git 仓库的更新或完整初始化流程。"""
         logger.hr('Update AzurPilot', 0)
 
         if self.GitOverCdn:

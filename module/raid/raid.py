@@ -18,6 +18,7 @@ import numpy as np
 
 import module.config.server as server
 from module.base.timer import Timer
+from module.base.utils import color_mask, image_size
 from module.campaign.campaign_event import CampaignEvent
 from module.combat.assets import *
 from module.exception import ScriptError
@@ -91,13 +92,44 @@ class HuanChangPtOcr(Digit):
         """
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         image = cv2.threshold(image, 128, 255, cv2.THRESH_BINARY_INV)[1]
-        count, cc = cv2.connectedComponents(image)
+        count, cc, stats, _ = cv2.connectedComponentsWithStats(image)
         # 计算连通域面积，大于 60 的视为数字
         # CN/JP 背景最右侧连通但 EN 不连通，因此需要同时排除 [0,-1] 和 [-1,-1]
-        num_idx = [i for i in range(1, count + 1) if
-                   i != cc[0, -1] and i != cc[-1, -1] and np.count_nonzero(cc == i) > 60]
-        image = ~(np.isin(cc, num_idx) * 255)  # 数字为白色，需要反转
-        return image.astype(np.uint8)
+        num_idx = [i for i in range(1, count) if
+                   i != cc[0, -1] and i != cc[-1, -1] and stats[i, cv2.CC_STAT_AREA] > 60]
+        # 数字为白色需要反转，因此把数字标签映射为 0、其余映射为 255
+        lut = np.full(count, 255, np.uint8)
+        lut[num_idx] = 0
+        return lut[cc]
+
+
+class BigshotPtOcr(Digit):
+    """BIGSHOT 突袭活动 PT 积分 OCR 识别器。"""
+
+    def pre_process(self, image):
+        """清除左上角和左下角的白色背景干扰。
+
+        Args:
+            image (np.ndarray): 待处理的原始图像。
+
+        Returns:
+            np.ndarray: 清除背景后的图像。
+        """
+        # 创建白色背景掩膜
+        mask = color_mask(image, (240, 252, 233), threshold=75)
+        # 对左上角和左下角执行泛洪填充至 128
+        width, height = image_size(image)
+        fill_color = 128
+        if mask[0, 0] == 255:
+            cv2.floodFill(mask, mask=None, seedPoint=(0, 0), newVal=fill_color, flags=8)
+        if mask[height - 1, 0] == 255:
+            cv2.floodFill(mask, mask=None, seedPoint=(0, height - 1), newVal=fill_color, flags=8)
+        # 提取泛洪填充区域并反转掩膜
+        cv2.inRange(mask, fill_color, fill_color, dst=mask)
+        cv2.bitwise_not(mask, dst=mask)
+        # 应用掩膜清除图像背景
+        image = cv2.bitwise_and(image, image, mask=mask)
+        return super().pre_process(image)
 
 
 def raid_name_shorten(name):
@@ -256,7 +288,7 @@ def pt_ocr(raid):
     elif raid == 'CHANGWU':
         return Digit(button, letter=(255, 239, 215), threshold=128)
     elif raid == 'BIGSHOT':
-        return Digit(button, letter=(255, 247, 236), threshold=128)
+        return BigshotPtOcr(button, letter=(255, 247, 236), threshold=128)
 
 
 class Raid(MapOperation, RaidCombat, CampaignEvent):
@@ -294,7 +326,7 @@ class Raid(MapOperation, RaidCombat, CampaignEvent):
         """
         # 油量限制
         if oil_check:
-            if self.get_oil() < max(500, self.config.StopCondition_OilLimit):
+            if self.get_oil() < max(self.config.StopCondition_OilLimitHardFloor, self.config.StopCondition_OilLimit):
                 logger.hr('触发停止条件: 石油上限')
                 self.config.task_delay(minute=(120, 240))
                 return True
@@ -550,7 +582,7 @@ class Raid(MapOperation, RaidCombat, CampaignEvent):
                 pt = ocr.ocr(self.device.image)
                 if timeout.reached():
                     logger.warning('等待PT超时，假设已达到')
-                    LogRes(self.config).Pt = pt
+                    LogRes(self.config).record('Pt', pt, observed=False)
                     return pt
                 if pt in [70000, 70001]:
                     continue

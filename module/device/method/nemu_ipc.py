@@ -9,9 +9,9 @@ MuMu 模拟器 IPC 通信方法。
 import ctypes
 import json
 import os
+import re
 import sys
-import time
-from functools import wraps
+from functools import partial
 
 import cv2
 import numpy as np
@@ -21,9 +21,10 @@ from module.base.timer import Timer
 from module.base.utils import ensure_time
 from module.config.deep import deep_get
 from module.device.env import IS_WINDOWS
+from module.device.method.retry import retry_backend, recover_unknown, retry_without_recovery
 from module.device.method.minitouch import insert_swipe, random_rectangle_point
 from module.device.method.pool import JobTimeout, WORKER_POOL
-from module.device.method.utils import RETRY_TRIES, retry_sleep
+from module.device.method.utils import retry_sleep
 from module.device.platform import Platform
 from module.exception import EmulatorNotRunningError, RequestHumanTakeover
 from module.logger import logger
@@ -164,85 +165,77 @@ class CaptureNemuIpc(CaptureStd):
             raise NemuIpcError('Emulator instance is probably dead')
 
 
-def retry(func):
-    @wraps(func)
-    def retry_wrapper(self, *args, **kwargs):
-        """
-        Args:
-            self (NemuIpcImpl):
-        """
-        init = None
-        for _ in range(RETRY_TRIES):
-            # 重试时延长超时时间
-            if func.__name__ == 'screenshot':
-                timeout = retry_sleep(_)
-                if timeout > 0:
-                    kwargs['timeout'] = timeout
-            try:
-                if callable(init):
-                    time.sleep(retry_sleep(_))
-                    init()
-                return func(self, *args, **kwargs)
-            # 不可处理
-            except RequestHumanTakeover:
-                break
-            # 不可处理
-            except NemuIpcIncompatible as e:
-                logger.error(e)
-                break
-            # 函数调用超时
-            except JobTimeout:
-                logger.warning(f'Func {func.__name__}() 调用超时，重试: {_}')
+def _retry_recover(self, error, trial):
+    if isinstance(error, NemuIpcIncompatible):
+        logger.error(error)
+        return None
+    if isinstance(error, JobTimeout):
+        logger.warning(f'[设备-NemuIpc] 调用超时，重试: {trial}')
+        return retry_without_recovery
+    if isinstance(error, NemuIpcError):
+        logger.error(error)
+        return self.reconnect
+    return recover_unknown(error)
 
-                def init():
-                    pass
-            # NemuIpcError
-            except NemuIpcError as e:
-                logger.error(e)
 
-                def init():
-                    self.reconnect()
-            # 不可处理 - 必须向上抛出以触发模拟器重启
-            except EmulatorNotRunningError:
-                raise
-            # 未知异常，可能是损坏的图像
-            except Exception as e:
-                logger.exception(e)
+def _screenshot_retry_timeout(trial, args, kwargs):
+    # 保留截图重试时 0.5 → 0.5 → 1 → 3 → 3 秒的超时阶梯。
+    timeout = retry_sleep(trial)
+    if timeout > 0:
+        kwargs['timeout'] = timeout
 
-                def init():
-                    pass
 
-        if func.__name__ in ['connect_with_retry', 'screenshot', 'down', 'up']:
-            logger.critical(f'[设备-NemuIpc] 重试 {func.__name__}() 失败')
-            raise EmulatorNotRunningError
-
-        logger.critical(f'[设备-NemuIpc] 重试 {func.__name__}() 失败')
-        raise RequestHumanTakeover
-
-    return retry_wrapper
+retry = partial(retry_backend, recover=_retry_recover, label='设备-NemuIpc')
 
 
 class NemuIpcImpl:
-    def __init__(self, nemu_folder: str, instance_id: int, display_id: int = 0):
+    def __init__(self, nemu_folder: str, instance_id: int, display_id: int = 0, version: str = None):
         """
         Args:
             nemu_folder: MuMu12 安装路径，例如 E:/ProgramFiles/MuMuPlayer-12.0
             instance_id: 模拟器实例 ID，从 0 开始
             display_id: 如果未启用后台挂机保活，始终为 0
+            version: 模拟器实例版本，如 '15.0'，来自实例名（MuMuPlayer-15.0-0）。
+                未提供时从 vms 目录名自动推断，用于选择匹配版本的 IPC SDK。
+                版本不匹配时（如用 12.0 的 DLL 连 15.0 实例）调用会失效。
         """
         self.nemu_folder: str = nemu_folder
         self.instance_id: int = instance_id
         self.display_id: int = display_id
 
-        # 尝试从多个路径加载 DLL
-        list_dll = [
+        if version is None:
+            version = self.detect_version(nemu_folder, instance_id)
+        self.version: str = version
+
+        # 尝试从多个路径加载 DLL，实例版本的 SDK 优先
+        list_dll = []
+        if version:
+            # MuMu15 及后续版本：nx_device/<版本>/shell/sdk
+            list_dll.append(os.path.abspath(os.path.join(
+                nemu_folder, f'./nx_device/{version}/shell/sdk/external_renderer_ipc.dll')))
+        # 兜底：探测 nx_device 下其余版本的 SDK（按版本号降序，优先新版本），
+        # 覆盖单装 15.0 等未在下方硬编码的版本
+        try:
+            others = []
+            for name in os.listdir(os.path.join(nemu_folder, 'nx_device')):
+                if re.match(r'\d+\.\d+$', name) and name != version:
+                    others.append(name)
+            others.sort(key=lambda s: float(s), reverse=True)
+            list_dll += [
+                os.path.abspath(os.path.join(nemu_folder, f'./nx_device/{name}/shell/sdk/external_renderer_ipc.dll'))
+                for name in others
+            ]
+        except OSError:
+            pass
+        list_dll += [
             # MuMuPlayer12
             os.path.abspath(os.path.join(nemu_folder, './shell/sdk/external_renderer_ipc.dll')),
-            # MuMuPlayer12 5.0
+            # MuMuPlayer12 5.0（未被上方探测覆盖时的兜底）
             os.path.abspath(os.path.join(nemu_folder, './nx_device/12.0/shell/sdk/external_renderer_ipc.dll')),
             # MuMuPlayer12 6.0
             os.path.abspath(os.path.join(nemu_folder, './nx_main/sdk/external_renderer_ipc.dll')),
         ]
+
         self.lib = None
         for ipc_dll in list_dll:
             if not os.path.exists(ipc_dll):
@@ -265,11 +258,34 @@ class NemuIpcImpl:
             f'nemu_folder={nemu_folder}, '
             f'ipc_dll={ipc_dll}, '
             f'instance_id={instance_id}, '
+            f'version={version}, '
             f'display_id={display_id}'
         )
+        self.ipc_dll: str = ipc_dll
         self.connect_id: int = 0
         self.width = 0
         self.height = 0
+
+    @staticmethod
+    def detect_version(nemu_folder: str, instance_id: int):
+        """
+        从 vms 目录名推断实例版本。
+
+        目录命名如 MuMuPlayer-15.0-0 / MuMuPlayer-12.0-1 / YXArkNights-12.0-1，
+        尾部数字为实例 ID，与 instance_id 对应。
+
+        Returns:
+            str: 版本号如 '15.0'，推断失败返回 None
+        """
+        try:
+            names = os.listdir(os.path.join(nemu_folder, 'vms'))
+        except OSError:
+            return None
+        for name in names:
+            res = re.match(rf'.*-(\d+\.\d+)-{instance_id}$', name)
+            if res:
+                return res.group(1)
+        return None
 
     def connect(self, on_thread=True):
         if self.connect_id > 0:
@@ -290,7 +306,7 @@ class NemuIpcImpl:
         self.connect_id = connect_id
         # logger.info(f'NemuIpc connected: {self.connect_id}')
 
-    @retry
+    @retry(on_exhausted=EmulatorNotRunningError)
     def connect_with_retry(self, on_thread=True):
         self.connect(on_thread=on_thread)
 
@@ -395,7 +411,7 @@ class NemuIpcImpl:
         # 返回 pixels_pointer 而非 image，避免通过 job 传递图像对象
         return pixels_pointer
 
-    @retry
+    @retry(on_exhausted=EmulatorNotRunningError, before_attempt=_screenshot_retry_timeout)
     def screenshot(self, timeout=0.5):
         """
         Args:
@@ -415,29 +431,23 @@ class NemuIpcImpl:
         image = np.ctypeslib.as_array(pixels_pointer.contents).reshape((self.height, self.width, 4))
         return image
 
-    def convert_xy(self, x, y):
-        """
-        将标准 ADB 坐标转换为 Nemu 坐标。
-        调用此方法前必须先更新 `self.height`。
-
-        Returns:
-            int, int
-        """
-        x, y = int(x), int(y)
-        x, y = self.height - y, x
-        return x, y
-
-    @retry
+    @retry(on_exhausted=EmulatorNotRunningError,
+           passthrough=(ctypes.ArgumentError, TypeError, ValueError, OverflowError))
     def down(self, x, y):
         """
         触摸按下，连续的触摸按下会被视为滑动。
         """
         if self.connect_id == 0:
             self.connect()
-        if self.height == 0:
-            self.get_resolution()
 
-        x, y = self.convert_xy(x, y)
+        # click/drag/swipe 的坐标来自 numpy（np.int64），而 nemu 的函数没有声明
+        # argtypes，ctypes 无法转换 numpy 标量，会抛
+        # ArgumentError: Don't know how to convert parameter 3；被 retry 包装成
+        # EmulatorNotRunningError 后 Alas 会误判为掉线并重启模拟器。
+        # 这里统一转成 Python int；None / nan / inf 之类的无效坐标会抛
+        # TypeError / ValueError / OverflowError，由 retry 包装按「调用方参数错误」
+        # 直接抛出，同样不会触发模拟器重启。
+        x, y = int(x), int(y)
 
         ret = self.run_func(
             self.lib.nemu_input_event_touch_down,
@@ -446,7 +456,8 @@ class NemuIpcImpl:
         if ret > 0:
             raise NemuIpcError('nemu_input_event_touch_down failed')
 
-    @retry
+    @retry(on_exhausted=EmulatorNotRunningError,
+           passthrough=(ctypes.ArgumentError, TypeError, ValueError, OverflowError))
     def up(self):
         """
         触摸抬起。
@@ -518,10 +529,13 @@ class NemuIpc(Platform):
             logger.info(f'[设备-NemuIpc] nemu_ipc 在 MuMuPlayerGlobal 上不可用, {self.emulator_instance.path}')
             raise RequestHumanTakeover
         try:
+            # 实例名带版本号（MuMuPlayer-15.0-0），用于选择匹配版本的 IPC SDK
+            res = re.search(r'-(\d+\.\d+)-\d+$', self.emulator_instance.name)
             impl = NemuIpcImpl(
                 nemu_folder=self.emulator_instance.emulator.abspath('../'),
                 instance_id=self.emulator_instance.MuMuPlayer12_id,
-                display_id=0
+                display_id=0,
+                version=res.group(1) if res else None,
             )
             impl.connect_with_retry()
             return impl
@@ -586,8 +600,11 @@ class NemuIpc(Platform):
         if self.config.EmulatorInfo_path:
             index = NemuIpcImpl.serial_to_id(self.serial)
             if index is not None:
+                folder = os.path.abspath(os.path.join(self.config.EmulatorInfo_path, '../../'))
+                # 实例目录名含版本号（MuMuPlayer-15.0-0 / MuMuPlayer-12.0-1），不能硬编码 12.0
+                version = NemuIpcImpl.detect_version(folder, index) or '12.0'
                 file = os.path.abspath(os.path.join(
-                    self.config.EmulatorInfo_path, f'../../vms/MuMuPlayer-12.0-{index}/configs/customer_config.json'))
+                    folder, f'./vms/MuMuPlayer-{version}-{index}/configs/customer_config.json'))
                 if self.check_mumu_app_keep_alive_400(file):
                     return True
 
@@ -609,6 +626,12 @@ class NemuIpc(Platform):
         logger.info('[设备-NemuIpc] nemu_ipc已释放')
 
     def screenshot_nemu_ipc(self):
+        """
+        通过 NemuIpc 截取模拟器屏幕画面。
+
+        Returns:
+            np.ndarray: RGB 色彩空间的图像数组。
+        """
         image = self.nemu_ipc.screenshot()
 
         image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
@@ -616,6 +639,13 @@ class NemuIpc(Platform):
         return image
 
     def click_nemu_ipc(self, x, y):
+        """
+        通过 NemuIpc 模拟点击指定坐标。
+
+        Args:
+            x: 点击横坐标。
+            y: 点击纵坐标。
+        """
         down = ensure_time((0.010, 0.020))
         self.nemu_ipc.down(x, y)
         self.sleep(down)
@@ -623,12 +653,27 @@ class NemuIpc(Platform):
         self.sleep(0.050 - down)
 
     def long_click_nemu_ipc(self, x, y, duration=1.0):
+        """
+        通过 NemuIpc 模拟长按指定坐标。
+
+        Args:
+            x: 长按横坐标。
+            y: 长按纵坐标。
+            duration: 长按持续时间（秒）。
+        """
         self.nemu_ipc.down(x, y)
         self.sleep(duration)
         self.nemu_ipc.up()
         self.sleep(0.050)
 
     def swipe_nemu_ipc(self, p1, p2):
+        """
+        通过 NemuIpc 模拟平滑滑动操作。
+
+        Args:
+            p1: 滑动起点坐标 (x, y)。
+            p2: 滑动终点坐标 (x, y)。
+        """
         points = insert_swipe(p0=p1, p3=p2)
 
         for point in points:
@@ -639,6 +684,15 @@ class NemuIpc(Platform):
         self.sleep(0.050)
 
     def drag_nemu_ipc(self, p1, p2, point_random=(-10, -10, 10, 10), hold_duration=0.0):
+        """
+        通过 NemuIpc 模拟拖拽操作。
+
+        Args:
+            p1: 拖拽起始坐标 (x, y)。
+            p2: 拖拽释放坐标 (x, y)。
+            point_random: 起止坐标的随机偏移范围。
+            hold_duration: 到达终点后的按住停顿时间（秒）。
+        """
         p1 = np.array(p1) - random_rectangle_point(point_random)
         p2 = np.array(p2) - random_rectangle_point(point_random)
         points = insert_swipe(p0=p1, p3=p2, speed=20)

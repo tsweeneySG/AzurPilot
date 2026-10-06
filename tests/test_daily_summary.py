@@ -3,6 +3,7 @@ import sys
 import tempfile
 import types
 import unittest
+from tests.opsi_test_support import install_store
 from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,6 +23,16 @@ from module.statistics.daily_summary import (
     resolve_daily_summary_server,
 )
 from module.statistics.daily_summary_store import DailySummaryStore
+
+
+def temporary_directory():
+    """建一个容忍清理失败的临时目录。
+
+    Windows 上 SQLite 文件在最后一个连接关闭后仍可能被短暂占用
+    （杀毒扫描、句柄回收延迟等），cleanup 会抛 WinError 32/145。
+    目录本来就在 %TEMP% 下，清不掉不该判定用例失败。
+    """
+    return tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
 
 
 def sample_facts():
@@ -154,9 +165,10 @@ class TestDailySummaryWindow(unittest.TestCase):
 
 class TestDailySummaryStore(unittest.TestCase):
     def setUp(self):
-        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.temporary_directory = temporary_directory()
+        install_store(self, self.temporary_directory.name)
         self.store = DailySummaryStore(
-            Path(self.temporary_directory.name) / 'daily_summary.db'
+            Path(self.temporary_directory.name) / 'config' / 'daily_summary.db'
         )
         self.start = datetime(2026, 8, 20, 20)
         self.end = self.start + timedelta(days=1)
@@ -247,8 +259,9 @@ class TestDailySummaryStore(unittest.TestCase):
 
 class TestDailySummaryDataIntervals(unittest.TestCase):
     def setUp(self):
-        self.temporary_directory = tempfile.TemporaryDirectory()
-        self.resource_db = Path(self.temporary_directory.name) / 'resources.db'
+        self.temporary_directory = temporary_directory()
+        install_store(self, self.temporary_directory.name)
+        self.resource_db = Path(self.temporary_directory.name) / 'config' / 'azurstats_local.db'
         self.original_resource_db = resource_stats._LOCAL_DB
         self.original_table_ensured = resource_stats._table_ensured
         resource_stats._LOCAL_DB = str(self.resource_db)

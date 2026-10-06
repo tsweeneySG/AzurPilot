@@ -14,17 +14,24 @@
 和 ``FastForwardHandler``（快进处理），组合了进入地图所需的全部子流程。
 """
 
+from datetime import datetime, timedelta
+
 import cv2
 
 from module.base.timer import Timer
+from module.config.time_source import now as current_time
 from module.exception import CampaignEnd, RequestHumanTakeover, ScriptEnd
 from module.handler.fast_forward import FastForwardHandler
 from module.handler.mystery import MysteryHandler
 from module.logger import logger
 from module.map.assets import *
 from module.map.map_fleet_preparation import FleetPreparation
+from module.notify import handle_notify
 from module.retire.retirement import Retirement
 from module.ui.assets import BACK_ARROW, DAILY_CHECK
+
+# 读不到作战委托结束时间时的兜底重试间隔（分钟）
+HANDOVER_CONFLICT_RETRY_MINUTES = 15
 
 
 class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHandler):
@@ -52,11 +59,10 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
     fleet_current_index = 1
 
     def get_fleet_show_index(self):
-        """
-        获取屏幕上当前显示的舰队编号。
+        """获取屏幕上当前显示的舰队编号。
 
         Returns:
-            int: 1 或 2
+            int: 屏幕显示的舰队编号（1 或 2）。
 
         Pages:
             in: in_map
@@ -73,11 +79,10 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
             return 1
 
     def get_fleet_current_index(self):
-        """
-        获取当前逻辑舰队编号（考虑舰队顺序反转）。
+        """获取当前逻辑舰队编号（考虑舰队顺序反转）。
 
         Returns:
-            int: 1 或 2
+            int: 逻辑舰队编号（1 为道中队，2 为 Boss 队）。
         """
         if self.fleets_reversed:
             self.fleet_current_index = 3 - self.fleet_show_index
@@ -87,15 +92,14 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
             return self.fleet_current_index
 
     def fleet_set(self, index=None, skip_first_screenshot=True):
-        """
-        切换到目标舰队。
+        """切换到目标逻辑舰队。
 
         Args:
-            index (int): 目标 fleet_current_index。
-            skip_first_screenshot (bool): 是否跳过第一次截图。
+            index (int, optional): 目标逻辑舰队编号（1 或 2）。默认为 None。
+            skip_first_screenshot (bool, optional): 是否跳过首次截图。默认为 True。
 
         Returns:
-            bool: 是否进行了切换。
+            bool: 是否进行了舰队切换。
         """
         logger.info(f'[地图-操作] 舰队设置为 {index}')
         timeout = Timer(5, count=10).start()
@@ -133,14 +137,153 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
 
         return count > 0
 
-    def enter_map(self, button, mode='normal', skip_first_screenshot=True):
+    def handover_conflict_appear(self):
+        """当前画面是不是作战委托的阻止弹窗。
+
+        两种弹窗都算：
+        - 委托的不是当前关卡：游戏通用的「信息 INFORMATION」弹窗，右侧是「查看委托」
+        - 委托的正是当前关卡：直接弹出「作战委托 INFORM」弹窗，底部是「终止作战」
+          或「领取奖励」
+
+        Returns:
+            bool: 屏幕上有作战委托阻止弹窗返回 True。
         """
-        进入战役关卡。
+        return (
+            self.appear(HANDOVER_CONFLICT_CHECK, offset=(20, 20))
+            or self.appear(HANDOVER_STOP_CHECK, offset=(20, 20))
+            or self.appear(HANDOVER_PASS_CLICK, offset=(20, 20))
+        )
+
+    def handle_handover_conflict(self):
+        """处理作战委托进行中的阻止弹窗。
+
+        作战委托进行时，出击类任务点关卡节点会被上面 handover_conflict_appear()
+        列的两种弹窗拦下。两个弹窗都不能用 handle_popup_cancel()：它要求画面上
+        同时有通用弹窗的「确定」和「取消」，而「信息」弹窗右侧是「查看委托」
+        （位置正好压在通用「确定」上），通用素材在这里一个都命中不了，只会让
+        截图循环空转；「作战委托 INFORM」弹窗的按钮更是完全另一套。必须用弹窗
+        各自的专用素材点击。
+
+        关掉弹窗后把当前任务推迟到作战委托结束之后：委托期间出击类任务都无法
+        进行，但委托是有明确结束时间的，不必整天不刷。委托是脚本自己开的
+        （任务开关为开）时额外推送一次「功能冲突」提示。
+
+        Pages:
+            in: 关卡页（阻止弹窗）
+            out: 关卡页
+
+        Raises:
+            TaskEnd: 作战委托进行中无法出击，当前任务到此为止。
+        """
+        if not self.handover_conflict_appear():
+            return
+
+        logger.hr('功能冲突: 作战委托进行中', level=2)
+
+        # 无论委托是不是脚本自己开的都要先关掉弹窗，
+        # 否则脚本会卡在这个页面上，之后所有页面识别都会失败。
+        closed = self.handover_close_conflict()
+        target = self.handover_conflict_delay()
+
+        if self.config.is_task_enabled('OperationHandover'):
+            handle_notify(
+                self.config.Error_OnePushConfig,
+                title=f'AzurPilot <{self.config.config_name}> 功能冲突',
+                content=f'<{self.config.config_name}> 作战委托未结束，'
+                        f'{self.config.task.command} 无法出击，已推迟到 {target}',
+            )
+        else:
+            logger.warning('[功能冲突] 作战委托任务未启用，'
+                           '当前委托可能是手动开启的，本次不推送通知')
+
+        if not closed:
+            logger.warning('[功能冲突] 阻止弹窗关闭失败，当前页面可能无法正常操作')
+
+        self.config.task_stop('作战委托进行中，无法出击')
+
+    def handover_conflict_delay(self):
+        """把当前任务推迟到作战委托结束之后。
+
+        作战委托开委托时会把结束时间记在 OperationHandover.CommissionEnd，
+        优先用它——作战委托任务自己的 NextRun 不一定是委托结束时间（委托次数为 0
+        时它只是下一次触发时刻，可能在一周以后）。两个都读不到或者都已经过期时，
+        改为 HANDOVER_CONFLICT_RETRY_MINUTES 分钟后再试，避免把任务排到过去。
+
+        Returns:
+            datetime.datetime: 实际推迟到的时间点。
+        """
+        now = current_time()
+        commission_end = self.config.cross_get(
+            keys=['OperationHandover', 'OperationHandover', 'CommissionEnd'], default=None)
+        next_run = self.config.cross_get(
+            keys=['OperationHandover', 'Scheduler', 'NextRun'], default=None)
+        candidates = [
+            t for t in (commission_end, next_run)
+            if isinstance(t, datetime) and t > now
+        ]
+
+        if candidates:
+            end = min(candidates)
+            target = (end + timedelta(minutes=1)).replace(microsecond=0)
+            logger.info(f'[功能冲突] 作战委托预计 {end} 结束，推迟到 {target}')
+        else:
+            target = (now + timedelta(minutes=HANDOVER_CONFLICT_RETRY_MINUTES)).replace(microsecond=0)
+            logger.warning(f'[功能冲突] 读不到作战委托的结束时间'
+                           f'（{commission_end} / {next_run}），'
+                           f'{HANDOVER_CONFLICT_RETRY_MINUTES} 分钟后再试')
+
+        self.config.task_delay(target=target)
+        return target
+
+    def handover_close_conflict(self):
+        """关闭作战委托阻止弹窗。
+
+        两种弹窗都要关：
+        - 「信息 INFORMATION」弹窗：点左下角「取消」
+        - 「作战委托 INFORM」弹窗：点右上角红叉。底部那颗按钮不能点，
+          「终止作战」会把委托停掉，「领取奖励」会提前领奖。
+
+        Pages:
+            in: 关卡页（阻止弹窗）
+            out: 关卡页
+
+        Returns:
+            bool: 弹窗已关闭返回 True，超时仍未关闭返回 False。
+        """
+        # 30 秒的静态画面检测会抛 GameStuckError，这里的超时要更短，
+        # 保证失败时还能继续走完推迟任务的流程。
+        timeout = Timer(10).start()
+        while 1:
+            self.device.screenshot()
+
+            if not self.handover_conflict_appear():
+                logger.info('[功能冲突] 已关闭作战委托提示弹窗')
+                return True
+
+            if timeout.reached():
+                return False
+
+            if self.appear_then_click(HANDOVER_CONFLICT_CANCEL, offset=(20, 20), interval=1):
+                continue
+            if self.appear_then_click(HANDOVER_DIALOG_CLOSE, offset=(20, 20), interval=1):
+                continue
+
+    def enter_map(self, button, mode='normal', skip_first_screenshot=True):
+        """进入战役关卡。
+
+        包含关卡点击、准备页面检测、自律与通关模式配置、舰队切换、剧情跳过等。
 
         Args:
-            button: 要进入的战役按钮。
-            mode (str): 'normal' 或 'hard'。
-            skip_first_screenshot (bool): 是否跳过第一次截图。
+            button (Button): 要进入的战役按钮。
+            mode (str, optional): 难度模式，'normal' 或 'hard'。默认为 'normal'。
+            skip_first_screenshot (bool, optional): 是否跳过首次截图。默认为 True。
+
+        Returns:
+            bool: 成功进入地图返回 True，若已在地图中则返回 False。
+
+        Raises:
+            RequestHumanTakeover: 点击次数过多或未满足限制时抛出，请求人工接管。
+            ScriptEnd: 达成关卡停止条件时抛出。
         """
         logger.hr('进入地图')
         campaign_timer = Timer(5)
@@ -201,6 +344,9 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                     logger.info(f'{DAILY_CHECK} -> {BACK_ARROW}')
                     self.device.click(BACK_ARROW)
                     continue
+
+                # 作战委托进行中，出击会被游戏阻止
+                self.handle_handover_conflict()
 
                 # 地图准备
                 if map_timer.reached() and self.handle_map_mode_switch(mode):
@@ -264,7 +410,7 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                 if self.handle_use_data_key():
                     continue
 
-                # 16-1/16-2 submarine support popup
+                # 16-1/16-2 潜艇支援弹窗
                 if self.handle_submarine_support_popup():
                     continue
 
@@ -418,7 +564,7 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         """取消进入地图，从地图准备界面退回关卡选择界面。
 
         Args:
-            skip_first_screenshot (bool): 是否跳过第一次截图。
+            skip_first_screenshot (bool, optional): 是否跳过首次截图。默认为 True。
 
         Returns:
             bool: 始终返回 True。
@@ -453,14 +599,13 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         return True
 
     def handle_map_mode_switch(self, mode):
-        """
-        处理地图难度模式切换。
+        """处理地图难度模式切换（普通/困难）。
 
         Args:
-            mode (str): 'normal' 或 'hard'。
+            mode (str): 目标模式，'normal' 或 'hard'。
 
         Returns:
-            bool: 地图模式是否满足要求。如果地图没有模式切换，则始终返回 True。
+            bool: 地图模式是否满足要求。若地图无模式切换则始终返回 True。
         """
         if not self.config.MAP_HAS_MODE_SWITCH:
             return True
@@ -510,11 +655,11 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         遍历多个可能的困难模式按钮模板进行匹配。
 
         Args:
-            active (bool): 是否需要检查按钮处于激活状态。
-            interval (int): 操作间隔时间（秒）。
+            active (bool, optional): 是否需要检查按钮处于激活状态。默认为 True。
+            interval (int | float, optional): 操作间隔时间（秒）。默认为 0。
 
         Returns:
-            bool: 困难模式按钮是否出现（且如果需要检查，是否处于激活状态）。
+            bool: 困难模式按钮是否出现（且若需要检查则是否处于激活状态）。
         """
         if interval:
             interval = self.get_interval_timer(MAP_MODE_SWITCH_HARD, interval=interval)
@@ -640,8 +785,7 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         return True
 
     def handle_map_preparation(self):
-        """
-        处理地图准备阶段，等待地图信息动画完成。
+        """处理地图准备阶段，等待地图信息动画完成。
 
         Returns:
             Button | None: 地图准备页出现且信息动画结束时，返回普通或困难模式
@@ -688,8 +832,13 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
             return None
 
     def withdraw(self, skip_first_screenshot=True):
-        """
-        撤退战役。
+        """从当前战役地图撤退。
+
+        Args:
+            skip_first_screenshot (bool, optional): 是否跳过首次截图。默认为 True。
+
+        Raises:
+            CampaignEnd: 成功撤退并回到关卡选择界面时抛出。
         """
         logger.hr('地图撤退')
         while 1:
@@ -717,19 +866,21 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                 raise CampaignEnd('Withdraw')
 
     def handle_map_cat_attack(self):
-        """
-        处理猫猫攻击动画，点击跳过。
+        """处理地图上的指挥喵伏击/攻击动画并点击跳过。
+
+        Returns:
+            bool: 是否检测到并点击跳过了动画。
         """
         if not self.map_cat_attack_timer.reached():
             return False
-        if self.image_color_count(MAP_CAT_ATTACK, color=(255, 231, 123), threshold=221, count=100):
+        if self.image_color_count(MAP_CAT_ATTACK, color=(255, 231, 123), threshold=30, count=100):
             logger.info('[地图-操作] 跳过地图猫攻击')
             self.device.click(MAP_CAT_ATTACK)
             self.map_cat_attack_timer.reset()
             return True
         if not self.map_is_clear_mode:
             # 威胁检测：Medium 模式有 106 像素计数，MAP_CAT_ATTACK_MIRROR 有 290。
-            if self.image_color_count(MAP_CAT_ATTACK_MIRROR, color=(255, 231, 123), threshold=221, count=200):
+            if self.image_color_count(MAP_CAT_ATTACK_MIRROR, color=(255, 231, 123), threshold=30, count=200):
                 logger.info('[地图-操作] 跳过地图被攻击')
                 self.device.click(MAP_CAT_ATTACK)
                 self.map_cat_attack_timer.reset()
@@ -739,13 +890,17 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
 
     @property
     def fleets_reversed(self):
+        """是否反转了道中队与 Boss 队在游戏界面上的出击顺序。
+
+        Returns:
+            bool: 是否反转。
+        """
         if not self.config.FLEET_2:
             return False
         return self.config.Fleet_FleetOrder in ['fleet1_boss_fleet2_mob', 'fleet1_standby_fleet2_all']
 
     def handle_fleet_reverse(self):
-        """
-        处理舰队顺序反转。
+        """处理舰队出击顺序反转。
 
         游戏会选择编号较小的舰队作为第一舰队，无论我们在舰队准备中如何选择。
         自动搜索更新后，游戏不再忽略用户设置。

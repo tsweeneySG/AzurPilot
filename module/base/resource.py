@@ -48,6 +48,11 @@ class PreservedAssets:
 
     @cached_property
     def ui(self):
+        """获取需要常驻内存的 UI 资源名称集合。
+
+        Returns:
+            set[str]: 资源常量名集合。
+        """
         assets = set()
         assets |= get_assets_from_file(
             file='./module/ui/assets.py',
@@ -180,7 +185,7 @@ def release_resources(next_task=''):
         next_task (str): 下一个任务名称。空字符串表示空闲状态。
     """
     released_ocr_models = 0
-    from module.webui.setting import State
+    from module.runtime.setting import State
     if State.deploy_config.UseOcrServer:
         if not next_task:
             # 空闲时断开 OCR 服务器连接

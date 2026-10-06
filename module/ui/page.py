@@ -25,6 +25,7 @@ from module.event_hospital.assets import HOSIPITAL_CHECK
 from module.freebies.assets import MAIL_ENTER
 from module.raid.assets import *
 from module.retire.assets import DOCK_CHECK
+from module.secretary.assets import *
 from module.ui.assets import *
 from module.ui_white.assets import *
 import module.config.server as server
@@ -50,6 +51,7 @@ class Page:
 
     @classmethod
     def clear_connection(cls):
+        """清除所有页面的父级导航连接。"""
         for page in cls.all_pages.values():
             page.parent = None
 
@@ -79,14 +81,29 @@ class Page:
 
     @classmethod
     def iter_pages(cls):
+        """遍历所有已注册的页面。
+
+        Returns:
+            dict_values: 所有 Page 实例的集合视图。
+        """
         return cls.all_pages.values()
 
     @classmethod
     def iter_check_buttons(cls):
+        """生成所有页面的标识检查按钮。
+
+        Yields:
+            Button: 各页面的 check_button。
+        """
         for page in cls.all_pages.values():
             yield page.check_button
 
     def __init__(self, check_button):
+        """初始化 UI 页面实例。
+
+        Args:
+            check_button (Button | None): 用于检测当前是否在该页面的标识按钮。
+        """
         self.check_button = check_button
         self.links = {}
         (filename, line_number, function_name, text) = traceback.extract_stack()[-2]
@@ -128,6 +145,12 @@ class Page:
         return None
 
     def link(self, button, destination):
+        """建立从当前页面到目标页面的单向导航链接。
+
+        Args:
+            button (Button): 点击以跳转到目标页面的按钮。
+            destination (Page): 目标页面实例。
+        """
         self.links[destination] = button
 
 
@@ -289,7 +312,7 @@ page_main_white.link(button=MAIN_GOTO_EVENT_LIST_WHITE, destination=page_event_l
 # page_raid.link(button=GOTO_MAIN, destination=page_main)
 # page_main.link(button=MAIN_GOTO_RAID, destination=page_raid)
 # page_main_white.link(button=MAIN_GOTO_RAID_WHITE, destination=page_raid)
-# after 2026.02.12
+# 2026.02.12 之后
 # page_raid = Page(RAID_CHECK)
 page_raid = Page(RAID_CHECK_20260827)
 page_raid.link(button=GOTO_MAIN, destination=page_main)
@@ -341,6 +364,14 @@ page_main_white.link(button=MAIN_GOTO_DORMMENU_WHITE, destination=page_dormmenu)
 page_dorm = Page(DORM_CHECK)
 page_dormmenu.link(button=DORMMENU_GOTO_DORM, destination=page_dorm)
 page_dorm.link(button=DORM_GOTO_MAIN, destination=page_main)
+
+# 秘书舰
+page_profile = Page(PROFILE_CHECK)
+page_secretary_group = Page(SECRETARY_GROUP_CHECK)
+page_main_white.link(button=MAIN_GOTO_PROFILE, destination=page_profile)
+page_profile.link(button=SECRETARY_BUTTON, destination=page_secretary_group)
+page_secretary_group.link(button=BACK_ARROW, destination=page_profile)
+page_profile.link(button=BACK_ARROW, destination=page_main)
 
 # 指挥喵
 page_meowfficer = Page(MEOWFFICER_CHECK)
@@ -425,7 +456,7 @@ page_hospital = Page(HOSIPITAL_CHECK)
 page_hospital.link(button=GOTO_MAIN_WHITE, destination=page_main)
 page_campaign_menu.link(button=CAMPAIGN_MENU_GOTO_EVENT, destination=page_hospital)
 
-# ISLAND
+# 寻宝活动/海岛活动（ISLAND）
 page_island = Page(ISLAND_CHECK)
 page_island_message = Page(DORMMENU_GOTO_ISLAND_MESSAGE)
 page_island_management = Page(ISLAND_MANAGEMENT_CHECK)

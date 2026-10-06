@@ -52,13 +52,13 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
     auto_search_coin_limit_triggered = False
 
     def _handle_auto_search_menu_missing(self):
-        """
-        Sometimes game is bugged, auto search menu is not shown.
-        After BOSS battle, it enters campaign directly.
-        To handle this, if game in campaign for a certain time, it means auto search ends.
+        """处理自动搜索菜单缺失的异常情况。
+
+        有时游戏出现异常未显示自动搜索菜单，Boss 战后直接返回关卡页面。
+        若停留在关卡页面超过一定时间，则判定自动搜索已结束。
 
         Returns:
-            bool: If triggered
+            bool: 是否触发自动搜索结束。
         """
         if self.is_in_stage():
             if self._auto_search_in_stage_timer.reached():
@@ -70,7 +70,11 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
         return False
 
     def map_offensive_auto_search(self, skip_first_screenshot=True):
-        """
+        """在地图中启动自动搜索。
+
+        Args:
+            skip_first_screenshot (bool, optional): 是否跳过首次截图。默认为 True。
+
         Pages:
             in: in_map, MAP_OFFENSIVE
             out: is_combat_loading
@@ -81,9 +85,8 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             if self.handle_auto_search_map_option():
                 self.interval_reset(AUTO_SEARCH_MAP_OPTION_ON)
                 continue
-            # Vanilla: Auto-Search icon can show ON but do nothing after retire.
-            # Monkey-clicking ON toggles AutoFight off under Sweeney, so re-trigger
-            # via set_mod_flags instead of clicking the button.
+            # 从退役界面退出并立即开启自动搜索时，图标显示正在运行但实际未动作。
+            # 桥接下点击 ON 会关掉 AutoFight，改为 set_mod_flags。
             if self._sweeney_bridge_on():
                 if self.appear(AUTO_SEARCH_MAP_OPTION_ON, offset=self._auto_search_offset, interval=8):
                     self._bridge_enable_chapter_autofight()
@@ -96,32 +99,31 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             if self.handle_retirement():
                 continue
 
-            # Break
+            # 结束判断
             if self.is_combat_loading():
                 break
 
     def auto_search_watch_fleet(self, checked=False):
-        """
-        Watch fleet index and ship level.
+        """监控舰队索引与舰船等级。
 
         Args:
-            checked (bool): Watchers are only executed or logged once during fleet moving.
-                            Set True to skip executing again.
+            checked (bool, optional): 舰队移动期间监控操作仅执行或记录一次。
+                设为 True 跳过再次执行。默认为 False。
 
         Returns:
-            bool: If executed.
+            bool: 监控操作是否已执行。
         """
         prev = self.fleet_current_index
         self.get_fleet_show_index()
         self.get_fleet_current_index()
         if self.fleet_current_index == prev:
-            # Same as current, only print once
+            # 与当前舰队一致，仅输出一次日志
             if not checked:
                 logger.info(f'[自动搜索-舰队] 舰队: {self.fleet_show_index}, 当前舰队索引: {self.fleet_current_index}')
                 checked = True
                 self.lv_get(after_battle=True)
         else:
-            # Fleet changed
+            # 舰队发生切换
             logger.info(f'[自动搜索-舰队] 舰队: {self.fleet_show_index}, 当前舰队索引: {self.fleet_current_index}')
             checked = True
             self.lv_get(after_battle=False)
@@ -129,16 +131,20 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
         return checked
 
     def auto_search_watch_oil(self, checked=False):
-        """
-        Watch oil.
-        This will set auto_search_oil_limit_triggered.
+        """监控当前石油存量并更新石油限制状态。
+
+        Args:
+            checked (bool, optional): 是否已执行过检查。默认为 False。
+
+        Returns:
+            bool: 检查是否已执行。
         """
         if not checked:
             oil = self.get_oil()
             if oil == 0:
                 logger.warning('未找到石油')
             else:
-                if oil < max(500, self.config.StopCondition_OilLimit):
+                if oil < max(self.config.StopCondition_OilLimitHardFloor, self.config.StopCondition_OilLimit):
                     logger.info('达到石油上限')
                     self.auto_search_oil_limit_triggered = True
                 else:
@@ -151,9 +157,13 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
         return checked
 
     def auto_search_watch_coin(self, checked=False):
-        """
-        Watch coin.
-        This will set auto_search_coin_limit_triggered.
+        """监控当前物资存量并更新物资限制状态。
+
+        Args:
+            checked (bool, optional): 是否已执行过检查。默认为 False。
+
+        Returns:
+            bool: 检查是否已执行。
         """
         if not checked:
             limit = self.config.TaskBalancer_CoinLimit
@@ -166,25 +176,28 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                         logger.info('达到物资上限')
                         self.auto_search_coin_limit_triggered = True
                     else:
-                        # Enough coin
+                        # 物资充足
                         self.auto_search_coin_limit_triggered = False
                 else:
                     if self.auto_search_coin_limit_triggered:
-                        logger.warning('auto_search_coin_limit_triggered but coin recovered, '
-                                       'probably because of wrong OCR result before')
+                        logger.warning('[自动搜索-物资] 物资限制已触发但物资已恢复，'
+                                       '可能是因为之前的OCR结果错误')
                     self.auto_search_coin_limit_triggered = False
                 checked = True
 
         return checked
 
     def _wait_until_in_map(self, skip_first_screenshot=True):
-        """
-        To handle a bug in Azur Lane game client.
-        Auto search icon shows it's running but it's doing nothing
-        when Alas exited from retirement and turned it on immediately.
+        """等待直到回到地图界面。
+
+        处理退役或强化退出后立即开启自动搜索时，
+        图标显示运行但游戏无响应的客户端异常。
+
+        Args:
+            skip_first_screenshot (bool, optional): 是否跳过首次截图。默认为 True。
 
         Pages:
-            in: Exiting from retirement or enhancement
+            in: 退出退役或强化界面
             out: in_map()
         """
         timeout = Timer(3, count=6).start()
@@ -197,9 +210,18 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                 break
 
     def auto_search_moving(self, skip_first_screenshot=True):
-        """
+        """监控自动搜索中的舰队移动状态。
+
+        持续监控舰队移动、更新资源状态，并处理途中遭遇的退役、心情、剧情等弹窗。
+
+        Args:
+            skip_first_screenshot (bool, optional): 是否跳过首次截图。默认为 True。
+
+        Raises:
+            CampaignEnd: 检测到自动搜索菜单或菜单丢失时抛出，表示本轮探索结束。
+
         Pages:
-            in: map
+            in: 地图界面
             out: is_combat_loading()
         """
         logger.info('自动搜索移动中')
@@ -232,7 +254,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                 if self.handle_vote_popup():
                     continue
 
-                # End
+                # 结束判断
                 if self.is_combat_loading():
                     break
                 if self.is_combat_executing():
@@ -244,15 +266,22 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             self._auto_search_moving = False
 
     def auto_search_combat_execute(self, emotion_reduce, fleet_index, battle=None, expected_end=None):
-        """
+        """执行自动搜索战斗过程。
+
+        包含战斗加载、自律/手动控制、潜艇召唤、弹窗处理及结算判定。
+
         Args:
-            emotion_reduce (bool):
-            fleet_index (int):
-            expected_end (callable):
+            emotion_reduce (bool): 是否扣减心情。
+            fleet_index (int): 舰队索引（1 为道中队，2 为 Boss 队）。
+            battle (tuple[int, int], optional): 当前战斗场次信息 (当前战斗计数, 总战斗计数)。默认为 None。
+            expected_end (callable, optional): 外部传入的战斗结束判定回调函数。默认为 None。
+
+        Raises:
+            CampaignEnd: 检测到自动搜索菜单时抛出，表示探索已结束。
 
         Pages:
             in: is_combat_loading()
-            out: combat status
+            out: 战斗结算状态
         """
         logger.info('自动搜索战斗加载中')
         self.device.stuck_record_clear()
@@ -265,6 +294,19 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             if self.handle_story_skip():
                 continue
             if self.handle_vote_popup():
+                continue
+            # 加载期间出现的红脸（低心情）弹窗同样没有任何其他处理器会认，
+            # 不处理会一直等到 GameStuckError。ignore 模式下点「确定」继续出击
+            if self.handle_combat_low_emotion():
+                continue
+            # 过图期间弹出的「船坞已满」弹窗没有任何其他处理器会认，
+            # 不处理会一直等到 GameStuckError。处理完退役/强化后重新开启
+            # 自动搜索，等待游戏自己再次进入战斗加载
+            if self.handle_retirement():
+                # 退役流程在地图上进行，先恢复普通截图间隔
+                self.device.screenshot_interval_set()
+                self.map_offensive_auto_search()
+                self.device.screenshot_interval_set('combat')
                 continue
 
             # End
@@ -303,7 +345,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             if auto != 'combat_auto' and self.auto_mode_checked and self.is_combat_executing():
                 if self.handle_combat_weapon_release():
                     continue
-            # bunch of popup handlers
+            # 处理各种弹窗
             if self.handle_popup_confirm('AUTO_SEARCH_COMBAT_EXECUTE'):
                 continue
             if not self._withdraw and self.handle_urgent_commission():
@@ -317,7 +359,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             if self.handle_mission_popup_ack():
                 continue
 
-            # End
+            # 结束判断
             if self.is_in_auto_search_menu() or self._handle_auto_search_menu_missing():
                 self.device.screenshot_interval_set()
                 raise CampaignEnd
@@ -433,21 +475,28 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
         return True
 
     def auto_search_combat_status(self):
-        """
+        """处理自动搜索战斗后的结算与战败恢复。
+
+        处理经验结算、掉落物品、战败撤退与舰队切换，直至自动搜索重新运行或关卡结束。
+
+        Raises:
+            CampaignEnd: 战斗结束且回到自动搜索菜单，或触发撤退时抛出。
+            ScriptEnd: 连续战败达到上限且配置为撤退停止时抛出。
+
         Pages:
-            in: any
+            in: 任意结算界面
             out: is_auto_search_running()
         """
         logger.info('[自动搜索-结算] 战斗结算')
         self.device.stuck_record_clear()
         self.device.click_record_clear()
-        exp_info = False  # This is for the white screen bug in game
+        exp_info = False  # 用于处理游戏中的白屏异常
         withdraw_stable_timer = Timer(2)
         self._bridge_result_advances = 0
 
         for _ in self.loop():
 
-            # End
+            # 结束判断
             if self.is_auto_search_running():
                 self._auto_search_status_confirm = False
                 # 战斗正常结束（非战败），重置连续战败计数
@@ -458,7 +507,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             if self.is_in_auto_search_menu() or self._handle_auto_search_menu_missing():
                 raise CampaignEnd
 
-            # Withdraw
+            # 撤退处理
             if self._withdraw:
                 # 先处理战斗结算界面（D评价、经验信息、获得舰船等），
                 # 结算完成后才会出现FLEET_SWITCH_CONFIRM或WITHDRAW按钮
@@ -528,9 +577,8 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                         self._handle_fleet_switch_over()
                         continue
 
-            # Combat status
-            # 船坞已满必须在 GET_SHIP 之前：AzurPilot 的 handle_get_ship
-            # 只要画面上还有 GET_SHIP 就返回 True，ALAS 原版会走到 handle_retirement。
+            # 船坞已满必须在 GET_SHIP 之前：handle_get_ship
+            # 只要画面上还有 GET_SHIP 就返回 True，否则会走不到退役。
             if self.handle_retirement() or self.retirement_appear():
                 continue
             if self._bridge_try_result_advance():
@@ -540,7 +588,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             if not self._withdraw and self.handle_auto_search_map_option():
                 self._auto_search_status_confirm = False
                 continue
-            # bunch of popup handlers
+            # 处理各种弹窗
             if self.handle_popup_confirm('AUTO_SEARCH_COMBAT_STATUS'):
                 continue
             if self.handle_urgent_commission():
@@ -573,8 +621,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                 self._withdraw = True
                 continue
 
-            # Handle low emotion combat
-            # Combat status
+            # 处理低心情出击状态
             if self._auto_search_status_confirm:
                 if (not exp_info or self.appear(GET_SHIP)) and self.handle_get_ship():
                     continue
@@ -589,11 +636,16 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                     continue
 
     def auto_search_combat(self, emotion_reduce=None, fleet_index=1, battle=None):
-        """
-        Execute a combat.
+        """执行单次自动搜索战斗全流程。
 
-        Note that fleet index == 1 is mob fleet, 2 is boss fleet.
-        It's not the fleet index in fleet preparation or auto search setting.
+        包含战斗执行及后续的状态结算。
+        注意：fleet_index 中 1 表示道中队，2 表示 Boss 队，
+        不同于编队准备或自动搜索设置中的舰队编号。
+
+        Args:
+            emotion_reduce (bool, optional): 是否扣减心情。若为 None 则使用 self.emotion.is_calculate。默认为 None。
+            fleet_index (int, optional): 舰队索引（1 为道中队，2 为 Boss 队）。默认为 1。
+            battle (tuple[int, int], optional): 当前战斗场次信息。默认为 None。
         """
         emotion_reduce = emotion_reduce if emotion_reduce is not None else self.emotion.is_calculate
 

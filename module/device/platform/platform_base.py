@@ -29,15 +29,18 @@ class EmulatorInfo(BaseModel):
 
 
 def serial_to_id(serial: str):
-    """
-    根据 serial 推算实例 ID。
+    """根据 serial 端口推算 MuMu12 等模拟器的实例 ID。
+
     例如:
         "127.0.0.1:16384" -> 0
         "127.0.0.1:16416" -> 1
         端口 16414 到 16418 -> 1
 
+    Args:
+        serial (str): 设备序列号，格式如 "127.0.0.1:16384"。
+
     Returns:
-        int: 实例 ID，推算失败则返回 None
+        int: 推算出的实例 ID，若推算失败或超出范围则返回 None。
     """
     try:
         port = int(serial.split(':')[1])
@@ -73,11 +76,18 @@ class PlatformBase(Connection, EmulatorManagerBase):
             from module.device.connection_attr import ConnectionAttr
             ConnectionAttr.__init__(self, config)
 
-    def emulator_start(self):
+    def emulator_start(self, deep=False, failures=0):
         """
         启动模拟器，直到启动完成。
         - 需要支持重试。
         - 禁止使用无聊的 sleep 来等待启动。
+
+        Args:
+            deep (bool): 深度重启标志。仅 MuMu12（PlatformWindows）有对应的
+                实现，其它平台忽略该参数——保留它是为了让调用方无需按平台
+                分支传参。
+            failures (int): 本次之前已连续失败几次。同样只有 MuMu12 使用，
+                其它平台忽略。
         """
         emulator = getattr(self.config, 'EmulatorInfo_Emulator', '')
         if emulator == 'SSH':

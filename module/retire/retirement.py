@@ -100,6 +100,11 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
 
     @property
     def retire_keep_common_cv(self):
+        """检查当前是否需要保留普通稀有度航母（用于钻石打捞或三油低耗任务）。
+
+        Returns:
+            bool: 若启用了 GemsFarming 或 ThreeOilLowCost 则返回 True。
+        """
         return self.config.is_task_enabled('GemsFarming') or self.config.is_task_enabled('ThreeOilLowCost')
 
     def _retirement_choose(self, amount=10, target_rarity=('N',)):
@@ -178,7 +183,12 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
             if timeout.reached():
                 logger.warning('[退役-确认] 等待退役确认超时，假设已完成')
                 break
-            if executed and self.appear(IN_RETIREMENT_CHECK, offset=(20, 20)) and not overlay:
+            # 有时 EQUIP_CONFIRM 没有黑色模糊背景，与 IN_RETIREMENT_CHECK 同时出现
+            # 拆卸装备后的 GET_ITEMS_1 弹窗也可能与 IN_RETIREMENT_CHECK 同屏，
+            # 必须点完才能退出，否则弹窗残留导致后续流程卡死（#838 #418）
+            if executed and self.appear(IN_RETIREMENT_CHECK, offset=(20, 20)) and not overlay \
+                    and not self.appear(EQUIP_CONFIRM, offset=(30, 30)) \
+                    and not self.appear(GET_ITEMS_1, offset=(30, 30)):
                 if stable.reached():
                     break
             else:
@@ -400,6 +410,13 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
             break
 
         logger.info(f'[退役-一键] 退役总轮数: {total // 10}')
+        # 拆卸装备的"获得物资"弹窗可能在 _retirement_confirm 退出后才延迟弹出，
+        # 残留弹窗会卡死后续流程（#838 #418）。先刷新一次截图再检测，
+        # 覆盖确认流程超时退出后才弹出的窗口
+        self.device.screenshot()
+        if self.appear(GET_ITEMS_1, offset=(30, 30)):
+            logger.info('[退役-一键] 检测到残留的获得物资弹窗，补充确认')
+            self._retirement_confirm()
         return total
 
     def retire_ships_old(self, amount=None, rarity=None):
@@ -489,9 +506,12 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
         self.dock_sort_method_dsc_set(wait_loading=False)
         self.dock_filter_set(index='cv', rarity='common', extra='not_level_max', sort='level')
 
-        scanner = ShipScanner(
-            rarity='common', fleet=0, status='free', level=(2, 100))
+        # 稀有度已由上面的 dock_filter_set(rarity='common') 在筛选层限定，扫描阶段
+        # 再校验一次，会让颜色采样异常的 'unknown' 卡被漏掉，导致废弃旗舰退役不到而堆积。
+        # 与 gems_farming / ambush_1_1 中的同类调用保持一致：这里直接关闭稀有度子扫描器。
+        scanner = ShipScanner(fleet=0, status='free', level=(2, 100))
         scanner.disable('emotion')
+        scanner.disable('rarity')
 
         total = 0
         _ = self._have_kept_cv
@@ -652,8 +672,11 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
             bool: True 表示已完成退役、强化，或已退出无舰可退的船坞。
         """
         # 2025.05.29 进入船坞时游戏会弹出皮肤信息提示
-        if self.handle_game_tips():
-            return True
+        # 但「船坞已满」弹窗不是游戏提示：若被 handle_game_tips() 抢先点掉，
+        # 弹窗消失而退役流程不会执行，船坞仍然满着，于是反复弹出
+        if not self.retirement_appear():
+            if self.handle_game_tips():
+                return True
         skip = self._retire_skip_repeat_entry()
         if skip is not None:
             return skip
@@ -770,8 +793,7 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
         return total
 
     def _retire_select_one(self, button, skip_first_screenshot=True):
-        """
-        在退役确认界面中选择一艘舰船（取消其退役）。
+        """在退役确认界面中选择一艘舰船（取消其退役）。
 
         通过检测 RETIRE_COIN 模板是否变化来判断是否成功选中。
         最多重试 3 次。
@@ -779,6 +801,9 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
         Args:
             button (Button): 要选择的舰船按钮。
             skip_first_screenshot (bool): 是否跳过首次截图。默认 True。
+
+        Returns:
+            bool: 成功取消选中返回 True，尝试 3 次失败返回 False。
         """
         count = 0
         RETIRE_COIN.load_color(self.device.image)

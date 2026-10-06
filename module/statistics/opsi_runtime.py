@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import Future
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +21,15 @@ MEOW_HAZARD_LEVELS = {2, 3, 4, 5, 6}
 
 
 def instance_name_from_config(config: Any, default: str = "default") -> str:
+    """从配置对象中提取实例名称。
+
+    Args:
+        config (Any): 配置对象。
+        default (str): 未找到时的默认实例名称。默认为 "default"。
+
+    Returns:
+        str: 实例标识名。
+    """
     return getattr(config, "config_name", None) or default
 
 
@@ -195,15 +205,14 @@ def record_meow_auto_search_battle(
 
 
 def start_meow_search_timer(main: Any) -> tuple[float, int | None]:
-    """记录耄耋相接开始搜索当前海域时的时间与行动力。"""
-    try:
-        refresh_action_point(main)
-        start_ap = main._action_point_total
-        logger.debug(f"[统计-大世界] 耄耋搜索开始，行动力: {start_ap}")
-    except Exception:
-        start_ap = None
-        logger.debug("[统计-大世界] 获取起始行动力失败")
+    """记录耄耋相接开始搜索当前海域时的时间与行动力。
 
+    行动力取当前缓存值，不为了统计再开一次弹窗：搜索开始时 ALAS 刚读过行动力
+    （智能调度决策、短猫前置检查），多开一次弹窗就多一组 REMAIN_OS + CANCEL
+    点击，会加速触发「两个按钮交替点击次数过多」。
+    """
+    start_ap = int(getattr(main, "_action_point_total", 0) or 0) or None
+    logger.debug(f"[统计-大世界] 耄耋搜索开始，行动力: {start_ap}")
     logger.debug("[统计-大世界] 耄耋搜索开始，计时器重置")
     return time.time(), start_ap
 
@@ -223,7 +232,8 @@ def finish_meow_search_timer(
             record_ap_snapshot(
                 main.config,
                 ap_current=main._action_point_current,
-                ap_total=main._action_point_total,
+                # 统计口径使用始终含体力箱的总行动力
+                ap_total=getattr(main, '_action_point_total_with_box', main._action_point_total),
                 source="meow",
             )
         except Exception:
@@ -263,21 +273,54 @@ def finish_meow_search_timer(
     return duration
 
 
-def record_cl1_akashi_encounter(config: Any) -> int | None:
-    """记录侵蚀1明石事件，并返回当月累计次数。"""
+def record_cl1_akashi_encounter(config: Any) -> Future | None:
+    """异步记录侵蚀1明石事件，提交成功后输出累计次数并返回写入 Future。"""
     try:
         from module.statistics.cl1_database import db as cl1_db
 
         instance_name = instance_name_from_config(config)
-        cl1_db.async_increment_akashi_encounter(instance_name)
         month_key = datetime.now().strftime("%Y-%m")
-        future = cl1_db.async_get_stats(instance_name, month_key)
-        data = future.result(timeout=5.0)
-        encounters = int(data.get("akashi_encounters", 0))
-        logger.attr("侵蚀1明石月度次数", encounters)
-        return encounters
+        future = cl1_db.async_increment_akashi_encounter(instance_name, month_key)
+
+        def log_committed_count(completed):
+            try:
+                # 回调只在 Future 完成后运行，结果来自已经提交的数据库事务。
+                logger.attr("侵蚀1明石月度次数", completed.result())
+            except Exception:
+                logger.exception("[统计-大世界] 持久化侵蚀1明石月度次数失败")
+
+        future.add_done_callback(log_committed_count)
+        return future
     except Exception:
         logger.exception("[统计-大世界] 持久化侵蚀1明石月度次数失败")
+        return None
+
+
+def record_meow_akashi_encounter(main: Any) -> Future | None:
+    """异步记录耄耋相接明石事件，提交成功后输出该侵蚀等级累计次数。"""
+    try:
+        from module.statistics.cl1_database import db as cl1_db
+
+        instance_name = instance_name_from_config(main.config)
+        hazard_level = meow_hazard_level_from_runtime(main)
+        if hazard_level is None:
+            logger.debug("[统计-大世界] 耄耋相接侵蚀等级未知，跳过明石事件记录")
+            return None
+        month_key = datetime.now().strftime("%Y-%m")
+        future = cl1_db.async_increment_meow_akashi_encounter(instance_name, hazard_level, month_key)
+
+        def log_committed_count(completed):
+            try:
+                count = completed.result()
+                if count is not None:
+                    logger.attr("耄耋相接明石月度次数", f"侵蚀{hazard_level}: {count}")
+            except Exception:
+                logger.exception("[统计-大世界] 持久化耄耋相接明石次数失败")
+
+        future.add_done_callback(log_committed_count)
+        return future
+    except Exception:
+        logger.exception("[统计-大世界] 持久化耄耋相接明石次数失败")
         return None
 
 

@@ -72,8 +72,8 @@ class PrivateQuarters(PQInteract, PQShop):
     not_supported_filter = {
         'cn': (),
         'en': (),
-        'jp': ('nakhimov'),
-        'tw': ('taihou', 'nakhimov'),
+        'jp': ('nakhimov', 'implacable'),
+        'tw': ('taihou', 'nakhimov', 'implacable'),
     }
 
     def _pq_get_daily_count(self, retry=3):
@@ -188,7 +188,7 @@ class PrivateQuarters(PQInteract, PQShop):
         # 校验目标是否可选
         target_title = target_ship.title().replace('_', ' ')
         if target_ship not in self.available_targets:
-            logger.error(f'Unsupported target ship: {target_title}, cannot continue subtask')
+            logger.error(f'[私人休息室] 不支持的目标舰娘: {target_title}，无法继续子任务')
             return
 
         # 进入目标房间，最多重试 3 次
@@ -200,19 +200,18 @@ class PrivateQuarters(PQInteract, PQShop):
 
     def pq_run(self, buy_roses, buy_cake, target_interact, target_ship,
                do_shop=True, do_interact=True):
-        """
-        执行私人宿舍日常流程。
+        """执行私人宿舍日常流程。
 
         包括购买每周商品（玫瑰/蛋糕）和与目标舰娘互动。
         桥接已完成的子任务由 do_shop / do_interact 跳过。
 
         Args:
-            buy_roses (bool): 是否购买每周玫瑰
-            buy_cake (bool): 是否购买每周蛋糕
-            target_interact (bool): 是否执行舰娘互动
-            target_ship (str): 目标舰娘名称
-            do_shop (bool): 是否走截图商店路径
-            do_interact (bool): 是否走截图互动路径
+            buy_roses (bool): 是否购买每周玫瑰。
+            buy_cake (bool): 是否购买每周蛋糕。
+            target_interact (bool): 是否执行舰娘互动。
+            target_ship (str): 目标舰娘名称。
+            do_shop (bool): 是否走截图商店路径。
+            do_interact (bool): 是否走截图互动路径。
 
         Pages:
             in: 私人宿舍主页
@@ -226,7 +225,7 @@ class PrivateQuarters(PQInteract, PQShop):
                     f'目标舰娘={target_title}')
 
         # 进入商店购买每周物品
-        if do_shop and self.shop_filter:
+        if do_shop and (self.shop_filter or self.shop_strategy_enabled()):
             if server.server not in ['tw']:
                 self.pq_shop_weekly_items()
             else:
@@ -234,8 +233,8 @@ class PrivateQuarters(PQInteract, PQShop):
 
         # 执行舰娘互动
         if do_interact and target_interact:
-            # Ensure target is supported for server
-            # Update `not_supported_filter` to enable a target
+            # 确认目标舰娘在当前服务器是否受支持
+            # 更新 not_supported_filter 可启用新舰娘支持
             if target_ship in self.not_supported_filter[server.server]:
                 logger.info(f'[私人休息室] 目标舰娘 {target_ship} 在 {server.server} 服务器不可用')
                 return

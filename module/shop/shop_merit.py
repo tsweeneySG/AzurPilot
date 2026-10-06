@@ -2,12 +2,54 @@
 支持 2025-08-14 新 UI 布局，使用模板匹配识别商品。
 """
 
+import cv2
+
+
 from module.base.decorator import cached_property
+from module.base.utils import color_similar
 from module.logger import logger
-from module.shop.base import ShopItemGrid, ShopItemGrid_250814
+from module.shop.base import ShopItemGrid_250814 as BaseShopItemGrid_250814
 from module.shop.clerk import ShopClerk
 from module.shop.shop_status import ShopStatus
 from module.shop.ui import ShopUI
+
+
+class ShopItemGrid_250814(BaseShopItemGrid_250814):
+    SHIP_PRICES = {20000, 8000, 5000, 4000}
+
+    @staticmethod
+    def predict_tag(image):
+        """识别商品角标状态（如未获得）。
+
+        Args:
+            image: 角标区域图像。
+
+        Returns:
+            str | None: 'unobtained' 表示未获得，无对应角标返回 None。
+        """
+        color = cv2.mean(image)[:3]
+        if color_similar(color, (255, 72, 72), threshold=50):
+            return 'unobtained'
+        return None
+
+    def predict(self, image, name=True, amount=True, cost=False, price=False, tag=False):
+        """识别功勋商店网格中的商品并标记未拥有舰船。
+
+        Args:
+            image: 商店截图。
+            name: 是否识别名称。
+            amount: 是否识别数量。
+            cost: 是否识别货币类型。
+            price: 是否识别价格。
+            tag: 是否识别角标。
+
+        Returns:
+            list[ShopItem_250814]: 识别后的商品列表。
+        """
+        items = super().predict(image, name, amount, cost, price, tag=True)
+        for item in items:
+            item.is_unobtained_ship = item.tag == 'unobtained' and item.price in self.SHIP_PRICES
+        return items
 
 
 class MeritShop_250814(ShopClerk, ShopUI, ShopStatus):
@@ -44,6 +86,7 @@ class MeritShop_250814(ShopClerk, ShopUI, ShopStatus):
             amount_area=(42, 50, 65, 65),
             cost_area=(-12, 115, 60, 155),
             price_area=(18, 121, 85, 150),
+            tag_area=(81, 4, 91, 8),
         )
         shop_merit_items.load_template_folder(self.shop_template_folder)
         shop_merit_items.load_cost_template_folder('./assets/shop/cost')
@@ -72,6 +115,25 @@ class MeritShop_250814(ShopClerk, ShopUI, ShopStatus):
         logger.info(f'[商店-功勋] 功勋: {self._currency}')
         return self._currency
 
+    def shop_check_custom_item(self, item):
+        """检查商品是否为允许购买的未拥有舰船。
+
+        Args:
+            item: 待检查的商品对象。
+
+        Returns:
+            bool: 满足购买条件返回 True，否则返回 False。
+        """
+        if not self.config.MeritShop_BuyUnobtainedShip:
+            return False
+        if not getattr(item, 'is_unobtained_ship', False):
+            return False
+        if item.cost != 'Merit' or item.price > self._currency:
+            return False
+
+        logger.info(f'商品 {item} 判定为未获得舰船')
+        return True
+
     def run(self):
         """运行功勋商店购买流程。
 
@@ -79,19 +141,20 @@ class MeritShop_250814(ShopClerk, ShopUI, ShopStatus):
 
         按照过滤器配置购买功勋商店商品，支持刷新。
         """
-        # 过滤器为空时直接退出
-        if not self.shop_filter:
+        # 过滤器为空且未启用"购买未获得舰船"时直接退出
+        if not self.shop_filter and not self.config.MeritShop_BuyUnobtainedShip and not self.shop_strategy_enabled():
             return
 
         # 调用时应已在功勋商店界面
         logger.hr('[商店-功勋] 功勋商店', level=1)
 
-        # 执行购买操作，启用刷新时最多尝试 2 次
-        refresh = self.config.MeritShop_Refresh
+        # 刷新会绕开高级脚本的 reserve / max_spend，故高级模式不执行。
+        refresh = self.config.MeritShop_Refresh and not self.shop_strategy_enabled()
         for _ in range(2):
             success = self.shop_buy()
             if not success:
                 break
             if refresh and self.shop_refresh():
+                self.shop_strategy_reset_inventory()
                 continue
             break

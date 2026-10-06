@@ -1,12 +1,12 @@
-import copy
 import os
 import subprocess
 import sys
 from typing import Optional, Union
 
 from deploy.geo import get_country_code
+from deploy.config_transaction import DeployConfigTransaction
 from deploy.Windows.logger import logger
-from deploy.Windows.utils import DEPLOY_CONFIG, DEPLOY_TEMPLATE, cached_property, poor_yaml_read, poor_yaml_write
+from deploy.Windows.utils import DEPLOY_CONFIG, DEPLOY_TEMPLATE, cached_property
 
 
 GIT_OVER_CDN_REPOSITORY = 'git://git.pull/AzurPilot'
@@ -19,6 +19,7 @@ class ExecutionError(Exception):
 
 
 class ConfigModel:
+    """Windows 部署配置模型，定义所有配置项及其默认值。"""
     # Git 配置
     Repository: str = GITHUB_REPOSITORY
     Branch: str = "master"
@@ -57,6 +58,8 @@ class ConfigModel:
     SSHUser: Optional[str] = None
     SSHServer: Optional[str] = None
     SSHExecutable: Optional[str] = None
+    AllowedRedirectHosts: Optional[str] = None
+    MaxRedirects: int = 2
     SignalingServer: Optional[str] = None
     StunServers: Optional[str] = '["stun:stun.l.google.com:19302"]'
     TurnServers: Optional[str] = None
@@ -70,6 +73,9 @@ class ConfigModel:
     DpiScaling: bool = True
     Password: Optional[str] = None
     CDN: Union[str, bool] = False
+    # --watermark. 关闭未经验证版本的水印。默认 False，即默认显示水印；
+    # 需与 deploy/config.py 保持一致，否则 Windows 启动器读不到该开关。
+    DisableBranchWatermark: bool = False
     Run: Optional[str] = None
     AppAsarUpdate: bool = True
     NoSandbox: bool = True
@@ -78,7 +84,9 @@ class ConfigModel:
     GitOverCdn: bool = False
 
 
-class DeployConfig(ConfigModel):
+class DeployConfig(DeployConfigTransaction, ConfigModel):
+    """Windows 环境部署配置管理器，维护配置加载、事务同步与工具路径解析。"""
+
     def __init__(self, file=DEPLOY_CONFIG):
         """初始化部署配置。
 
@@ -86,6 +94,7 @@ class DeployConfig(ConfigModel):
             file (str): 用户部署配置文件路径。
         """
         self.file = file
+        self.template_file = DEPLOY_TEMPLATE
         self.config = {}
         self.config_template = {}
         self._github_location_checked = False
@@ -94,6 +103,7 @@ class DeployConfig(ConfigModel):
         self.show_config()
 
     def show_config(self):
+        """展示非默认的部署配置项。"""
         logger.hr("Show deploy config", 1)
         for k, v in self.config.items():
             if k in ("Password", "SSHUser"):
@@ -103,24 +113,6 @@ class DeployConfig(ConfigModel):
             logger.info(f"{k}: {v}")
 
         logger.info(f"Rest of the configs are the same as default")
-
-    def read(self):
-        self.config = poor_yaml_read(DEPLOY_TEMPLATE)
-        self.config_template = copy.deepcopy(self.config)
-        origin = poor_yaml_read(self.file)
-        self.config.update(origin)
-
-        for key, value in self.config.items():
-            if hasattr(self, key):
-                super().__setattr__(key, value)
-
-        self.config_redirect()
-
-        if self.config != origin:
-            self.write()
-
-    def write(self):
-        poor_yaml_write(self.config, self.file)
 
     def config_redirect(self):
         """部署配置重定向，处理旧配置到新配置的迁移。
@@ -145,7 +137,7 @@ class DeployConfig(ConfigModel):
         country_code = get_country_code()
         if country_code == 'cn':
             logger.info('检测到中国大陆网络，切换至国内 Git 更新源')
-            self.Repository = GIT_OVER_CDN_REPOSITORY
+            object.__setattr__(self, 'Repository', GIT_OVER_CDN_REPOSITORY)
             self.config['Repository'] = GIT_OVER_CDN_REPOSITORY
         elif country_code is None:
             logger.warning('无法检测网络所在国家，保留 GitHub 更新源')
@@ -172,6 +164,11 @@ class DeployConfig(ConfigModel):
 
     @cached_property
     def root_filepath(self):
+        """获取项目根目录绝对路径。
+
+        Returns:
+            str: 格式化为正斜杠的绝对路径。
+        """
         return (
             os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
             .replace(r"\\", "/")
@@ -180,6 +177,11 @@ class DeployConfig(ConfigModel):
 
     @cached_property
     def adb(self) -> str:
+        """获取 ADB 可执行文件路径。
+
+        Returns:
+            str: ADB 绝对路径或回退命令 'adb'。
+        """
         exe = self.filepath(self.AdbExecutable)
         if os.path.exists(exe):
             return exe
@@ -189,6 +191,11 @@ class DeployConfig(ConfigModel):
 
     @cached_property
     def git(self) -> str:
+        """获取 Git 可执行文件路径。
+
+        Returns:
+            str: Git 绝对路径或回退命令 'git'。
+        """
         exe = self.filepath(self.GitExecutable)
         if os.path.exists(exe):
             return exe
@@ -198,6 +205,11 @@ class DeployConfig(ConfigModel):
 
     @cached_property
     def python(self) -> str:
+        """获取 Python 可执行文件路径。
+
+        Returns:
+            str: Python 绝对路径或当前解释器路径。
+        """
         exe = self.filepath(self.PythonExecutable)
         if os.path.exists(exe):
             return exe
@@ -256,6 +268,11 @@ class DeployConfig(ConfigModel):
         return stdout.decode()
 
     def show_error(self, command=None):
+        """展示更新失败信息及排查指引。
+
+        Args:
+            command (str, optional): 触发失败的命令。
+        """
         logger.hr("Update failed", 0)
         self.show_config()
         logger.info("")

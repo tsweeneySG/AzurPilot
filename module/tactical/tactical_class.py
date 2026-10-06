@@ -45,6 +45,8 @@ else:
 
 
 class ExpOnBookSelect(DigitCounter):
+    """教材选择界面经验 OCR 识别器。"""
+
     def pre_process(self, image):
         # 图像格式类似 `NEXT:1900+500/5800`，其中 500 为绿色，其余为白色
 
@@ -95,6 +97,8 @@ class ExpOnBookSelect(DigitCounter):
 
 
 class ExpOnSkillSelect(Ocr):
+    """技能选择界面经验与满级状态 OCR 识别器。"""
+
     def pre_process(self, image):
         # 转换为灰度图
         r, g, b = cv2.split(image)
@@ -127,6 +131,8 @@ BOOK_FILTER = Filter(
 
 
 class Book:
+    """技能教材数据类，包含类型、品质及经验值识别逻辑。"""
+
     color_genre = {
         1: (214, 69, 74),  # 攻击，红色
         2: (115, 178, 255),  # 防御，蓝色
@@ -310,6 +316,7 @@ class RewardTacticalClass(Dock):
     books: SelectedGrids
     tactical_finish = []
     dock_select_index = 0
+    pending_ship_confirm = False
 
     def _tactical_books_get(self, skip_first_screenshot=True):
         """
@@ -407,128 +414,37 @@ class RewardTacticalClass(Dock):
             logger.attr('过滤数量', before - self.books.count)
             logger.attr('教材列表', str(self.books))
 
-    def _is_current_skill_max(self, skip_first_screenshot=True):
-        """
-        检测当前选中的技能是否已满级（基于教材选择界面的经验 OCR）。
-        方法内部会自行截图，不依赖调用方是否已更新 self.device.image。
-
-        Returns:
-            bool: 如果当前技能已满级返回 True
-        """
-        if not skip_first_screenshot:
-            self.device.screenshot()
-        try:
-            current, _, total = SKILL_EXP.ocr(self.device.image)
-            if total > 0 and current >= total:
-                logger.info(f'[战术-技能] 当前技能已满级: {current}/{total}')
-                return True
-        except Exception as e:
-            logger.warning(f'[战术-技能] 检查技能满级失败: {e}')
-        return False
-
-    def _wait_until_appear(self, button, offset, attempts=5):
-        for _ in range(attempts):
-            self.device.screenshot()
-            if self.appear(button, offset=offset):
-                return True
-            self.device.sleep((0.3, 0.5))
-        return False
-
-    def _return_to_tactical_page(self):
-        self.device.click(BACK_ARROW)
-        self.device.sleep((0.3, 0.5))
-
-    def _try_switch_to_next_skill(self):
-        """
-        当前技能已满级时，尝试切换到同舰娘的下一个非满级技能。
-
-        进入时在 TACTICAL_CLASS_START，立即点击取消回到技能选择界面 (SKILL_CONFIRM)，
-        查找下一个未满级技能并确认后返回教材选择界面 (TACTICAL_CLASS_START)。
-
-        Returns:
-            bool: 是否成功切换到下一个技能
-
-        Pages:
-            in: TACTICAL_CLASS_START (点击取消后进入 SKILL_CONFIRM)
-            out: TACTICAL_CLASS_START (if success) or SKILL_CONFIRM (if no skill found)
-        """
-        logger.hr('尝试切换到下一个技能', level=2)
-        # 取消当前教材选择，回到技能选择界面
-        self.device.click(TACTICAL_CLASS_CANCEL)
-        self.device.sleep((0.5, 1.0))
-
-        # 等待技能选择界面加载
-        if not self._wait_until_appear(SKILL_CONFIRM, offset=(20, 20)):
-            logger.warning('[战术-切换] 取消后无法返回技能确认界面')
-            return False
-
-        # 寻找下一个非满级技能
-        selected_skill = self.find_not_full_level_skill(skip_first_screenshot=True)
-        if selected_skill is None:
-            logger.info('[战术-切换] 该舰娘没有其他非满级技能，返回战术页面')
-            self._return_to_tactical_page()
-            return False
-
-        # 选中并确认新技能
-        logger.info('[战术-切换] 切换到下一个非满级技能')
-        self._tactical_skill_select(selected_skill)
-        self.device.click(SKILL_CONFIRM)
-
-        # 等待教材选择界面加载
-        if self._wait_until_appear(TACTICAL_CLASS_START, offset=(30, 30)):
-            logger.info('[战术-切换] 技能切换后进入教材选择界面')
-            return True
-        logger.warning('[战术-切换] 技能切换后无法进入教材选择界面')
-        self._return_to_tactical_page()
-        return False
-
     def _tactical_books_choose(self):
         """
         根据配置选择战术教材。
 
         Returns:
-            int: 是否成功选择教材
+            bool: 是否成功选择教材
 
         Pages:
             in: TACTICAL_CLASS_START
             out: Unknown, may TACTICAL_CLASS_START, page_tactical, or _tactical_animation_running
         """
         logger.hr('选择战术教材', level=2)
-        MAX_SWITCH_RETRIES = 3
-        for retry in range(MAX_SWITCH_RETRIES + 1):
-            if not self._tactical_books_get():
-                return False
+        if not self._tactical_books_get():
+            return False
 
-            self.device.click_record_clear()
-            # 确保第一本教材被选中
-            # 对于较慢的电脑，选中状态可能已改变
-            first = self.books[0]
-            self._tactical_book_select(first)
+        self.device.click_record_clear()
+        # 确保第一本教材被选中
+        # 对于较慢的电脑，选中状态可能已改变
+        first = self.books[0]
+        self._tactical_book_select(first)
 
-            # 应用经验溢出过滤，会修改 self.books
-            self._tactical_books_filter_exp()
+        # 应用经验溢出过滤，会修改 self.books
+        self._tactical_books_filter_exp()
 
-            # 应用配置过滤器，不修改 self.books
-            BOOK_FILTER.load(self.config.Tactical_TacticalFilter)
-            books = BOOK_FILTER.apply(self.books.grids)
-            logger.attr('教材排序', ' > '.join([str(book) for book in books]))
+        # 应用配置过滤器，不修改 self.books
+        BOOK_FILTER.load(self.config.Tactical_TacticalFilter)
+        books = BOOK_FILTER.apply(self.books.grids)
+        logger.attr('教材排序', ' > '.join([str(book) for book in books]))
 
-            # 如果有可用教材则选择，否则检测是否因为技能已满级
-            if not books:
-                # 无教材可选时，检测是否因为技能已满级（受 SkillAutoSwitch 配置控制）
-                if not self.config.Tactical_SkillAutoSwitch:
-                    break
-                if retry >= MAX_SWITCH_RETRIES:
-                    logger.warning('[战术-选择] 达到技能切换最大重试次数')
-                    break
-                if not self._is_current_skill_max(skip_first_screenshot=True):
-                    break
-                logger.info('[战术-选择] 没有教材因为技能已满级，尝试切换到下一个技能')
-                if not self._try_switch_to_next_skill():
-                    break
-                logger.info('[战术-选择] 已切换到下一个技能，重新进入教材选择')
-                continue
-
+        # 过滤器没命中任何教材时才为空（配置里去掉了 `first` 兜底才会发生），此时取消本次战术
+        if books:
             book = books[0]
             if str(book) != 'first':
                 self._tactical_book_select(book)
@@ -633,32 +549,32 @@ class RewardTacticalClass(Dock):
     def _handle_tactical_popups(self):
         if self.appear_then_click(REWARD_2, offset=(20, 20), interval=3):
             self.interval_reset(REWARD_2_WHITE)
-            return True, False
+            return True
         if self.appear_then_click(REWARD_2_WHITE, offset=(20, 20), interval=3):
             self.interval_reset(REWARD_2)
-            return True, False
+            return True
         if self.appear_then_click(REWARD_GOTO_TACTICAL, offset=(20, 20), interval=3):
             self.interval_reset(REWARD_GOTO_TACTICAL_WHITE)
-            return True, False
+            return True
         if self.appear_then_click(REWARD_GOTO_TACTICAL_WHITE, offset=(20, 20), interval=3):
             self.interval_reset(REWARD_GOTO_TACTICAL)
-            return True, False
+            return True
         if self.ui_main_appear_then_click(page_reward, interval=3):
-            return True, False
+            return True
         if self.handle_popup_confirm('TACTICAL'):
             self.interval_reset([BOOK_EMPTY_POPUP])
-            return True, False
+            return True
         if self.handle_urgent_commission():
             # Only one button in the middle, when skill reach max level.
-            return True, self.config.Tactical_SkillAutoSwitch
+            return True
         if self.ui_page_main_popups():
             self.interval_reset([BOOK_EMPTY_POPUP])
-            return True, False
+            return True
         # Similar to handle_mission_popup_ack, but battle pass item expire popup has a different ACK button
         if self.appear(MISSION_POPUP_GO, offset=self._popup_offset, interval=2):
             self.device.click(MISSION_POPUP_ACK)
-            return True, False
-        return False, False
+            return True
+        return False
 
     def _handle_tactical_books_start(self):
         if not self.appear(TACTICAL_CLASS_START, offset=(30, 30), interval=2):
@@ -677,11 +593,17 @@ class RewardTacticalClass(Dock):
         if not self.appear(DOCK_CHECK, offset=(20, 20), interval=3):
             return False, False
         if self.dock_selected():
-            # When you click a ship from page_main -> dock,
-            # this ship will be selected default in tactical dock,
-            # so we need click BACK_ARROW to clear selected state
-            logger.info('[战术-船坞] 船坞中有预选舰船，重新进入')
-            self.device.click(BACK_ARROW)
+            if self.pending_ship_confirm:
+                # 预选的是刚确认过技能的那位学员，退出船坞会把它换成别人
+                logger.info('[战术-船坞] 确认继续学习的舰船')
+                self.device.click(SHIP_CONFIRM)
+            else:
+                # When you click a ship from page_main -> dock,
+                # this ship will be selected default in tactical dock,
+                # so we need click BACK_ARROW to clear selected state
+                logger.info('[战术-船坞] 船坞中有预选舰船，重新进入')
+                self.device.click(BACK_ARROW)
+            self.pending_ship_confirm = False
             self.interval_reset([BOOK_EMPTY_POPUP, DOCK_CHECK], interval=3)
             return True, False
 
@@ -699,22 +621,25 @@ class RewardTacticalClass(Dock):
         self.interval_reset([BOOK_EMPTY_POPUP, DOCK_CHECK], interval=3)
         return True, study_finished
 
-    def _handle_tactical_skill_confirm(self, pending_skill_auto_switch):
+    def _handle_tactical_skill_confirm(self):
         if not self.appear(SKILL_CONFIRM, offset=(20, 20), interval=3):
-            return False, False, pending_skill_auto_switch
+            return False, False
 
         study_finished = False
-        if pending_skill_auto_switch or self.config.AddNewStudent_Enable:
-            pending_skill_auto_switch = False
+        # 游戏在技能满级后主动给出这一屏，切技能只能在这里发生
+        if self.config.Tactical_SkillAutoSwitch or self.config.AddNewStudent_Enable:
             if not self._tactical_skill_choose():
                 study_finished = True
                 self.device.click(BACK_ARROW)
+            else:
+                # 确认技能后游戏可能再弹一次船坞，让我们确认刚选的这位学员
+                self.pending_ship_confirm = True
         else:
             logger.info('[战术-技能] 不学习技能但有技能确认界面，关闭')
             study_finished = True
             self.device.click(BACK_ARROW)
         self.interval_reset([BOOK_EMPTY_POPUP, SKILL_CONFIRM], interval=3)
-        return True, study_finished, pending_skill_auto_switch
+        return True, study_finished
 
     def _handle_tactical_meta(self):
         if not self.appear(TACTICAL_META, offset=(200, 20), interval=3):
@@ -753,7 +678,6 @@ class RewardTacticalClass(Dock):
         logger.hr('领取战术学院奖励', level=1)
         received = False
         study_finished = not self.config.AddNewStudent_Enable
-        pending_skill_auto_switch = False
         book_empty = False
         # 战术卡片加载较慢，通过计时器确认是否真的为空
         empty_confirm = Timer(0.6, count=2).start()
@@ -781,9 +705,7 @@ class RewardTacticalClass(Dock):
                 received = received or finished
                 continue
 
-            handled, auto_switch = self._handle_tactical_popups()
-            if handled:
-                pending_skill_auto_switch = pending_skill_auto_switch or auto_switch
+            if self._handle_tactical_popups():
                 continue
 
             handled, finished = self._handle_tactical_books_start()
@@ -800,7 +722,7 @@ class RewardTacticalClass(Dock):
                 study_finished = study_finished or finished
                 continue
 
-            handled, finished, pending_skill_auto_switch = self._handle_tactical_skill_confirm(pending_skill_auto_switch)
+            handled, finished = self._handle_tactical_skill_confirm()
             if handled:
                 study_finished = study_finished or finished
                 continue
@@ -872,7 +794,44 @@ class RewardTacticalClass(Dock):
 
         return True
 
+    @staticmethod
+    def _level_limits(min_level, max_level):
+        """规范化最低/最高等级限制，返回 (最低等级, 最高等级)。
+
+        配置中的 0（含无效值）表示该方向不限制。两个限制同时启用却相互矛盾
+        （最低 > 最高）时选不出任何舰船，此时两者都按 0（关闭）处理。
+
+        Args:
+            min_level: 最低等级配置原始值。
+            max_level: 最高等级配置原始值。
+
+        Returns:
+            tuple[int, int]: 规范化后的等级限制，0 表示不限制。
+        """
+        def normalize(value, name):
+            try:
+                limit = int(value)
+            except (ValueError, TypeError) as e:
+                logger.warning(f'[战术-船坞] 无效的{name}配置: {value}, {e}')
+                return 0
+            return limit if limit > 0 else 0
+
+        min_level = normalize(min_level, '最低等级')
+        max_level = normalize(max_level, '最高等级')
+        if min_level and max_level and min_level > max_level:
+            logger.warning(f'[战术-船坞] 最低等级 {min_level} 大于最高等级 {max_level}，两者均按 0（关闭）处理')
+            return 0, 0
+        return min_level, max_level
+
     def select_suitable_ship(self):
+        """在船坞中筛选并选中一艘适合学习技能的舰船。
+
+        根据配置设置收藏过滤和阵营筛选（跳过 META 舰船），
+        选择等级在配置的最低/最高要求之间的舰船并确认。
+
+        Returns:
+            bool: 成功选中舰船返回 True，无可用舰船返回 False。
+        """
         logger.hr('选择合适舰船')
 
         # 根据配置设置收藏筛选
@@ -904,28 +863,29 @@ class RewardTacticalClass(Dock):
         else:
             logger.warning('[战术-船坞] 等待舰船卡片超时')
 
-        try:
-            min_level = int(self.config.AddNewStudent_MinLevel)
-            if min_level < 1:
-                min_level = 1
-        except (ValueError, TypeError) as e:
-            logger.warning(f'[战术-船坞] 无效的最低等级配置: {self.config.AddNewStudent_MinLevel}, {e}')
-            min_level = 1
-        logger.attr('最低等级要求', min_level)
+        min_level, max_level = self._level_limits(
+            self.config.AddNewStudent_MinLevel, self.config.AddNewStudent_MaxLevel)
+        logger.attr('等级要求', f'{min_level or "不限"} ~ {max_level or "不限"}')
 
         should_select_button = None
         for button, level in list(zip(CARD_GRIDS.buttons, list_level))[self.dock_select_index:]:
-            # 仅选择等级 >= min_level 的舰船
-            if level >= min_level:
-                should_select_button = button
-                break
+            # level 为 0 是空槽位；等级限制为 0 表示该方向不限制
+            if level <= 0:
+                continue
+            if min_level and level < min_level:
+                continue
+            if max_level and level > max_level:
+                continue
+            should_select_button = button
+            break
 
         if should_select_button is None:
-            logger.info(f'[战术-船坞] 船坞中没有等级 >= {min_level} 的舰船')
+            logger.info(f'[战术-船坞] 船坞中没有等级在 {min_level or "不限"} ~ {max_level or "不限"} 之间的舰船')
             return False
 
         # 选择舰船
-        self.dock_select_one(should_select_button, skip_first_screenshot=True)
+        # dock_select_one 已由上游改为内部循环，不再接受 skip_first_screenshot
+        self.dock_select_one(should_select_button)
         # 确认选中的舰船
         # 如果刚刚从 META 技能中退出，清除间隔计时器
         self.interval_clear(SHIP_CONFIRM)

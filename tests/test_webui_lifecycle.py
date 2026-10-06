@@ -3,13 +3,9 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from module.webui.fake_pil_module import remove_fake_pil_module
-
-remove_fake_pil_module()
-
-from module.webui import app_lifecycle
-from module.webui import setting
-from module.webui.setting import State
+from module.api import lifecycle as app_lifecycle
+from module.runtime import setting
+from module.runtime.setting import State
 
 
 class TestWebUILifecycle(unittest.TestCase):
@@ -33,7 +29,6 @@ class TestWebUILifecycle(unittest.TestCase):
                 return_value=[worker],
             ) as running_instances,
             patch.object(app_lifecycle.RemoteAccess, "kill_ssh_process") as stop_remote,
-            patch.object(app_lifecycle, "close_discord_rpc") as close_discord,
             patch.object(app_lifecycle, "stop_ocr_server_process") as stop_ocr,
             patch.object(app_lifecycle.task_handler, "stop") as stop_tasks,
             patch.object(State, "clearup", side_effect=mark_state_cleared) as clear_state,
@@ -44,7 +39,6 @@ class TestWebUILifecycle(unittest.TestCase):
         running_instances.assert_called_once_with()
         worker.stop.assert_called_once_with()
         stop_remote.assert_called_once_with()
-        close_discord.assert_called_once_with()
         stop_ocr.assert_called_once_with()
         stop_tasks.assert_called_once_with()
         clear_state.assert_called_once_with()
@@ -58,7 +52,6 @@ class TestWebUILifecycle(unittest.TestCase):
                 return_value=[],
             ),
             patch.object(app_lifecycle.RemoteAccess, "kill_ssh_process"),
-            patch.object(app_lifecycle, "close_discord_rpc"),
             patch.object(app_lifecycle, "stop_ocr_server_process"),
             patch.object(State, "clearup") as clear_state,
         ):
@@ -85,8 +78,8 @@ class TestWebUIState(unittest.TestCase):
         State.process_registry = {"alas": 12345}
 
         with (
-            patch("module.webui.worker_registry.get_workers", return_value={}),
-            patch("module.webui.worker_registry.clear_owner"),
+            patch("module.runtime.worker_registry.get_workers", return_value={}),
+            patch("module.runtime.worker_registry.clear_owner"),
         ):
             State.clearup()
             State.clearup()
@@ -101,9 +94,16 @@ class TestWebUIState(unittest.TestCase):
         State.manager = manager
         State.process_registry = {"alas": 12345}
 
-        with patch(
-            "module.webui.worker_registry.get_workers",
-            return_value={"alas": {"pid": 12345, "created_at": 1}},
+        record = {"pid": 12345, "created_at": 1}
+        with (
+            patch(
+                "module.runtime.worker_registry.get_workers",
+                return_value={"alas": record},
+            ),
+            patch(
+                "module.runtime.worker_registry.filter_live_workers",
+                return_value={"alas": record},
+            ),
         ):
             with self.assertRaises(RuntimeError):
                 State.clearup()
@@ -111,14 +111,35 @@ class TestWebUIState(unittest.TestCase):
         manager.shutdown.assert_not_called()
         self.assertFalse(State._clearup)
 
+    def test_clearup_allows_dead_worker_records_to_self_heal(self):
+        # 崩溃残留的 worker 记录已失效时不应阻塞退出，让 clear_owner 能
+        # 清空登记文件，避免残留文件拖到下次启动。
+        manager = Mock()
+        State.manager = manager
+        State.process_registry = {"alas": 12345}
+
+        record = {"pid": 12345, "created_at": 1}
+        with (
+            patch(
+                "module.runtime.worker_registry.get_workers",
+                return_value={"alas": record},
+            ),
+            patch("module.runtime.worker_registry.filter_live_workers", return_value={}),
+            patch("module.runtime.worker_registry.clear_owner"),
+        ):
+            State.clearup()
+
+        manager.shutdown.assert_called_once_with()
+        self.assertTrue(State._clearup)
+
     def test_init_reenables_cleanup_after_previous_shutdown(self):
         manager = Mock()
         manager.dict.return_value = {}
         State._clearup = True
 
         with (
-            patch("module.webui.setting.multiprocessing.Manager", return_value=manager),
-            patch("module.webui.worker_registry.claim_owner"),
+            patch("module.runtime.setting.multiprocessing.Manager", return_value=manager),
+            patch("module.runtime.worker_registry.claim_owner"),
         ):
             State.init()
 

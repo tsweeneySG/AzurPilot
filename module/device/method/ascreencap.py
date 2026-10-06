@@ -7,87 +7,45 @@ aScreenCap 直接读取 Android 设备的 framebuffer，绕过系统 screencap �
 需要先通过 ADB 将 aScreenCap 推送至设备并赋予执行权限。
 """
 import os
-import time
-from functools import wraps
+from functools import partial
 
 from adbutils.errors import AdbError
 
 from module.base.utils import *
 from module.device.connection import Connection
-from module.device.method.utils import (ImageTruncated, RETRY_TRIES, handle_adb_error, handle_unknown_host_service,
-                                        retry_sleep)
+from module.device.method.retry import retry_backend, recover_adb, recover_truncated_image, recover_unknown
+from module.device.method.utils import ImageTruncated
 from module.exception import EmulatorNotRunningError, RequestHumanTakeover, ScriptError
 from module.logger import logger
 
 
 class AscreencapError(Exception):
+    """aScreenCap 截图或通信异常。"""
     pass
 
 
-def retry(func):
-    @wraps(func)
-    def retry_wrapper(self, *args, **kwargs):
-        """
-        Args:
-            self (AScreenCap):
-        """
-        init = None
-        for _ in range(RETRY_TRIES):
-            try:
-                if callable(init):
-                    time.sleep(retry_sleep(_))
-                    init()
-                return func(self, *args, **kwargs)
-            # 无法处理
-            except RequestHumanTakeover:
-                break
-            # ADB 服务被终止时
-            except ConnectionResetError as e:
-                logger.error(e)
+def _retry_recover(self, error, trial):
+    """aScreenCap 操作失败后的异常恢复策略。
 
-                def init():
-                    self.adb_reconnect()
-            # ascreencap 未安装时
-            except AscreencapError as e:
-                logger.error(e)
+    Args:
+        self: 设备实例。
+        error: 捕获的异常对象。
+        trial: 当前重试轮次。
 
-                def init():
-                    self.ascreencap_init()
-            # ADB 错误
-            except AdbError as e:
-                if handle_adb_error(e):
-                    def init():
-                        self.adb_reconnect()
-                elif handle_unknown_host_service(e):
-                    def init():
-                        self.adb_start_server()
-                        self.adb_reconnect()
-                else:
-                    break
-            # 图像数据截断
-            except ImageTruncated as e:
-                from module.device.method.utils import handle_image_truncated
-                handle_image_truncated(self, e)
+    Returns:
+        可调用的恢复函数，若无法恢复则返回 None。
+    """
+    if isinstance(error, (ConnectionResetError, AdbError)):
+        return recover_adb(self, error)
+    if isinstance(error, AscreencapError):
+        logger.error(error)
+        return self.ascreencap_init
+    if isinstance(error, ImageTruncated):
+        return recover_truncated_image(self, error)
+    return recover_unknown(error)
 
-                def init():
-                    pass
-            # 无法处理 - 必须向上抛出以触发模拟器重启
-            except EmulatorNotRunningError:
-                raise
-            # 未知异常
-            except Exception as e:
-                logger.exception(e)
 
-                def init():
-                    pass
-
-        if func.__name__ in ['screenshot_ascreencap', 'screenshot_ascreencap_nc']:
-            logger.critical(f'[设备-aScreenCap] 重试 {func.__name__}() 失败')
-            raise EmulatorNotRunningError
-        logger.critical(f'[设备-aScreenCap] 重试 {func.__name__}() 失败')
-        raise RequestHumanTakeover
-
-    return retry_wrapper
+retry = partial(retry_backend, recover=_retry_recover, label='设备-aScreenCap')
 
 
 class AScreenCap(Connection):
@@ -97,6 +55,11 @@ class AScreenCap(Connection):
     ascreencap_available = True
 
     def ascreencap_init(self):
+        """初始化 aScreenCap：检查系统架构与 SDK 版本，推送对应的二进制文件并设置权限。
+
+        Raises:
+            RequestHumanTakeover: 当未找到适用于当前设备的 aScreenCap 二进制文件时抛出。
+        """
         logger.hr('[设备-aScreenCap] aScreenCap初始化')
         self.__bytepointer = 0
         self.ascreencap_available = True
@@ -126,18 +89,26 @@ class AScreenCap(Connection):
         self.adb_shell(['chmod', '0777', self.config.ASCREENCAP_FILEPATH_REMOTE])
 
     def uninstall_ascreencap(self):
+        """从设备上删除 aScreenCap 可执行文件。"""
         logger.info('[设备-aScreenCap] 移除ascreencap')
         self.adb_shell(['rm', self.config.ASCREENCAP_FILEPATH_REMOTE])
 
     def _ascreencap_reposition_byte_pointer(self, byte_array):
-        """
-        返回经过清理的 ascreencap 标准输出，用于存在链接器警告的设备。
-        正确的指针位置会被保存，供后续屏幕刷新使用。
+        """重置并查找数据中的 BMZ1 头部指针，清理可能附带的链接器警告等杂质数据。
+
+        Args:
+            byte_array (bytes): aScreenCap 输出的原始字节流。
+
+        Returns:
+            bytes: 从 BMZ1 标识开始的有效数据流。
+
+        Raises:
+            AscreencapError: 未找到 BMZ1 标识，数据损坏。
         """
         while byte_array[self.__bytepointer:self.__bytepointer + 4] != b'BMZ1':
             self.__bytepointer += 1
             if self.__bytepointer >= len(byte_array):
-                text = 'Repositioning byte pointer failed, corrupted aScreenCap data received'
+                text = '重新定位字节指针失败，收到损坏的 aScreenCap 数据'
                 logger.warning(text)
                 if len(byte_array) < 500:
                     logger.warning(f'异常截图: {byte_array}')
@@ -145,6 +116,18 @@ class AScreenCap(Connection):
         return byte_array[self.__bytepointer:]
 
     def __load_screenshot(self, screenshot, method):
+        """按指定的换行符规则转换截图数据。
+
+        Args:
+            screenshot (bytes): 截图字节流。
+            method (int): 转换模式编号（0, 1, 2）。
+
+        Returns:
+            bytes: 处理后的字节流。
+
+        Raises:
+            ScriptError: 未知的转换模式。
+        """
         if method == 0:
             return screenshot
         elif method == 1:
@@ -155,11 +138,23 @@ class AScreenCap(Connection):
             raise ScriptError(f'Unknown method to load screenshots: {method}')
 
     def __uncompress(self, screenshot):
+        """解压并解析 aScreenCap 压缩数据为 RGB 图像。
+
+        Args:
+            screenshot (bytes): aScreenCap 输出的数据。
+
+        Returns:
+            np.ndarray: 解析并垂直翻转后的 RGB 图像。
+
+        Raises:
+            AscreencapError: 头部校验失败或数据不完整。
+            ImageTruncated: 解压数据为空或截断。
+        """
         raw_compressed_data = self._ascreencap_reposition_byte_pointer(screenshot)
 
         # 确保头部数据存在
         if raw_compressed_data is None or len(raw_compressed_data) < 20:
-            text = 'aScreenCap returned incomplete data or empty payload'
+            text = 'aScreenCap 返回了不完整的数据或空载荷'
             logger.warning(text)
             if raw_compressed_data is not None and len(raw_compressed_data) < 500:
                 logger.warning(f'异常截图: {raw_compressed_data}')
@@ -171,8 +166,7 @@ class AScreenCap(Connection):
         if compressed_data_header[0] != 828001602:
             compressed_data_header = compressed_data_header.byteswap()
             if compressed_data_header[0] != 828001602:
-                text = f'aScreenCap header verification failure, corrupted image received. ' \
-                    f'HEADER IN HEX = {compressed_data_header.tobytes().hex()}'
+                text = f'aScreenCap 头部验证失败，收到损坏的图像。十六进制头部 = {compressed_data_header.tobytes().hex()}'
                 logger.warning(text)
                 raise AscreencapError(text)
 
@@ -208,6 +202,17 @@ class AScreenCap(Connection):
         return image
 
     def __process_screenshot(self, screenshot):
+        """尝试多种换行符转换并解压截图数据。
+
+        Args:
+            screenshot (bytes): 待处理的数据。
+
+        Returns:
+            np.ndarray: 解压成功的 RGB 图像。
+
+        Raises:
+            ImageTruncated: 所有模式解压均失败。
+        """
         from lz4.block import LZ4BlockError
         for method in self.__screenshot_method_fixed:
             try:
@@ -224,14 +229,24 @@ class AScreenCap(Connection):
             logger.warning(f'异常截图: {screenshot}')
         raise ImageTruncated(f'cannot load screenshot')
 
-    @retry
+    @retry(on_exhausted=EmulatorNotRunningError)
     def screenshot_ascreencap(self):
+        """通过 aScreenCap 工具配合 ADB shell 截取屏幕图像。
+
+        Returns:
+            np.ndarray: RGB 格式的屏幕截图。
+        """
         content = self.adb_shell([self.config.ASCREENCAP_FILEPATH_REMOTE, '--pack', '2', '--stdout'], stream=True)
 
         return self.__process_screenshot(content)
 
-    @retry
+    @retry(on_exhausted=EmulatorNotRunningError)
     def screenshot_ascreencap_nc(self):
+        """通过 aScreenCap 工具配合 netcat 直连截取屏幕图像。
+
+        Returns:
+            np.ndarray: RGB 格式的屏幕截图。
+        """
         data = self.adb_shell_nc([self.config.ASCREENCAP_FILEPATH_REMOTE, '--pack', '2', '--stdout'])
         if len(data) < 500:
             logger.warning(f'异常截图: {data}')
