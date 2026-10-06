@@ -20,6 +20,7 @@
 
 import time
 import module.base.utils as _base_utils
+from module.base.button import Button
 from module.base.timer import Timer
 from module.base.utils import *
 from module.logger import logger
@@ -105,6 +106,16 @@ class GlobeOperation(ActionPointHandler):
                     button.load_offset(zone)
 
                 return zone
+
+        # JP 星图在类型标签原位置放了「探索海域」页签，旧 ZONE_* 模板对不上。
+        # 「海域进入」仍在原处，用它确认弹窗已打开，并据此对齐点击坐标。
+        if self.appear(ZONE_ENTRANCE, offset=(30, 20), similarity=max(similarity, 0.85)):
+            for button in ASSETS_PINNED_ZONE:
+                button.load_offset(ZONE_ENTRANCE)
+            if not getattr(self, '_zone_entrance_pin_logged', False):
+                logger.info('[大世界-操作] 类型标签未命中，改用海域进入按钮识别固定弹窗')
+                self._zone_entrance_pin_logged = True
+            return ZONE_ENTRANCE
 
         return None
 
@@ -260,6 +271,17 @@ class GlobeOperation(ActionPointHandler):
             # End
             if self.is_zone_pinned():
                 break
+            # 行动力不足时游戏弹出药剂窗口，盖住海域类型。这里直接补行动力，
+            # 不要干等固定弹窗回来。
+            zone = getattr(self, '_globe_target_zone', None)
+            if zone is not None and self._is_in_action_point():
+                pinned = 'DANGEROUS'
+                bname = getattr(button, 'name', '') or ''
+                if bname.startswith('SELECT_'):
+                    pinned = bname.split('_', 1)[-1]
+                logger.info('[大世界-操作] 海域类型选择遇到行动力窗口，改走药剂')
+                if self.handle_action_point(zone=zone, pinned=pinned):
+                    continue
             if self.appear_then_click(
                     button, offset=self._zone_select_offset, similarity=self._zone_select_similarity, interval=5):
                 continue
@@ -447,6 +469,19 @@ class GlobeOperation(ActionPointHandler):
                 if confirm_timer.reached():
                     break
 
+    def _click_zone_entrance(self):
+        """
+        点击「海域进入」。
+
+        JP 在进入按钮正下方增加了「探索委任」。点击区域只用进入按钮的上半段，
+        避免随机落点压到委任。
+        """
+        area = tuple(int(v) for v in ZONE_ENTRANCE.button)
+        height = max(1, area[3] - area[1])
+        shrunk = (area[0], area[1], area[2], area[1] + max(8, int(height * 0.6)))
+        self.device.click(Button(
+            area=shrunk, color=(0, 0, 0), button=shrunk, name='ZONE_ENTRANCE'))
+
     def globe_enter(self, zone):
         """
         从全球地图进入指定海域。
@@ -465,7 +500,7 @@ class GlobeOperation(ActionPointHandler):
         click_count = 0
         pinned = None
         for _ in self.loop():
-            if pinned is None:
+            if pinned in (None, ''):
                 pinned = self.get_zone_pinned_name()
 
             # End
@@ -484,11 +519,13 @@ class GlobeOperation(ActionPointHandler):
                 if click_timer.reached():
                     # 点太快会进不去 浪费时间
                     time.sleep(0.2)
-                    self.device.click(ZONE_ENTRANCE)
+                    self._click_zone_entrance()
                     click_count += 1
                     click_timer.reset()
                     continue
-            if self.handle_action_point(zone=zone, pinned=pinned):
+            # 只认出进入按钮时没有类型名。按危险海域估行动力，避免把消耗估低后取消购买。
+            ap_pinned = 'DANGEROUS' if pinned == 'ENTRANCE' else pinned
+            if self.handle_action_point(zone=zone, pinned=ap_pinned):
                 click_timer.clear()
                 continue
             if self.handle_map_event():

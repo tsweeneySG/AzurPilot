@@ -19,6 +19,7 @@ from module.alas_bridge.actions import (
     os_goto_task,
     os_goto_zone,
     os_submit_tasks,
+    os_zone_maps,
 )
 
 TASK_SIREN = 5
@@ -180,11 +181,55 @@ def map_types_for_alas(types) -> list:
     return out
 
 
+def peek_os_zone_has_safe(config, zone_id, *, alas_ids: bool = True) -> Optional[bool]:
+    """
+    True when the entrance already has a secured map (complete_chapter).
+
+    Returns:
+        True/False from the bridge.
+        None: bridge off, or the running mod has no os_zone_maps verb.
+    """
+    if not bridge_enabled(config):
+        return None
+    zid = int(zone_id)
+    game_id = alas_zone_to_game_entrance(zid) if alas_ids else zid
+    result = os_zone_maps(config, game_id)
+    if not isinstance(result, dict) or 'has_safe' not in result:
+        return None
+    return bool(result.get('has_safe'))
+
+
+def _raise_os_ap_short(result):
+    """
+    桥接确认行动力不够进入海域。抛出后调用方不要再点星图。
+
+    Raises:
+        ActionPointLimit: 当前行动力低于进入消耗，且药剂不够补。
+    """
+    from module.logger import logger
+    from module.os_handler.action_point import ActionPointLimit
+
+    def _as_int(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    current = _as_int(result.get('current') if isinstance(result, dict) else None)
+    cost = _as_int(result.get('cost') if isinstance(result, dict) else None)
+    logger.info(
+        f'[大世界-行动点] 桥接行动力不足 current={current} cost={cost}，不回退星图点击'
+    )
+    raise ActionPointLimit(current=current, total=current, cost=cost)
+
+
 def run_os_globe_goto(
         config, zone_id, types=None, timeout: float = 25.0, *,
         alas_ids: bool = True) -> Optional[bool]:
     """
     Transport to zone_id via OpTransport.
+
+    行动力不够时桥接先用药剂。仍然不够则抛 ActionPointLimit，不回退截图点击。
 
     Args:
         alas_ids: True if zone_id is an ALAS DIC_OS_MAP id (NY=0).
@@ -194,20 +239,41 @@ def run_os_globe_goto(
         True: arrived in-map at zone_id.
         False: already there.
         None: bridge off/miss — caller keeps globe clicks.
+
+    Raises:
+        ActionPointLimit: 药剂不够支付进入消耗。
     """
     if not bridge_enabled(config):
         return None
+    from module.logger import logger
     zid = int(zone_id)
     game_id = alas_zone_to_game_entrance(zid) if alas_ids else zid
     prefer = map_types_for_alas(types)
-    result = os_goto_zone(config, game_id, map_types=prefer)
-    if result is None:
-        return None
-    if result.get('pending_scene'):
-        time.sleep(2.0)
+    scene_tries = 0
+    ap_tries = 0
+    while True:
         result = os_goto_zone(config, game_id, map_types=prefer)
         if result is None:
             return None
+        if result.get('pending_scene'):
+            scene_tries += 1
+            if scene_tries > 2:
+                return None
+            time.sleep(2.0)
+            continue
+        if result.get('pending_ap'):
+            ap_tries += 1
+            if ap_tries > 6:
+                _raise_os_ap_short(result)
+            logger.info(
+                f"[大世界-行动点] 桥接使用行动力药剂 item={result.get('used_item')} "
+                f"x{result.get('used_count')}，等待结算后再进入"
+            )
+            time.sleep(1.5)
+            continue
+        if result.get('ap_short'):
+            _raise_os_ap_short(result)
+        break
     already = bool(result.get('already_active'))
     # GetInMap flips true at SetInMap start; still wait for map chrome.
     # Heartbeat zone_id is the game atlas id.

@@ -112,6 +112,8 @@ class TestCampaignNameErrorDelay(unittest.TestCase):
         helper = inspect.getsource(run.CampaignRun._handle_campaign_script_end)
         self.assertIn("Campaign name error", helper)
         self.assertIn('task_delay(minute=30)', helper)
+        self.assertIn("No remaining chapter tries", helper)
+        self.assertIn('server_update=True', helper)
 
     def test_map_init_campaign_end_is_success(self):
         import inspect

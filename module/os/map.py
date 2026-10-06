@@ -153,11 +153,32 @@ class OSMap(OSFleet, Map, GlobeCamera, StorageHandler, StrategicSearchHandler):
         elif self.is_in_globe():
             self.os_globe_goto_map()
         else:
+            # 同一进程里后续大世界任务不要再等 90 秒过场。
+            blocked_until = getattr(self.config, '_os_entry_block_until', 0) or 0
+            if time.time() < blocked_until:
+                logger.warning('[大世界-地图] 大世界入口刚失败过，本轮跳过以免反复重开')
+                self.config.task_delay(minute=30)
+                raise TaskEnd
             if self.ui_page_appear(page_os):
                 self.ui_goto_main()
             self.ui_ensure(page_os)
             if self.is_in_globe():
                 self.os_globe_goto_map()
+
+        in_os = (
+            self.is_in_map() or self.is_in_globe() or self.ui_page_appear(page_os)
+        )
+        if not in_os and getattr(self, '_ui_goto_scene_os_gave_up', False):
+            logger.warning('[大世界-地图] 月度过场未完成，回到主界面后推迟 30 分钟')
+            self.config._os_entry_block_until = time.time() + 30 * 60
+            # 过场留在未知页时，下一任务的 ui_ensure 会再重启一次。
+            self.ui_get_current_page(skip_first_screenshot=False)
+            self.config.task_delay(minute=30)
+            raise TaskEnd
+        if self._ui_home_chrome_visible() and not in_os:
+            logger.warning('[大世界-地图] 未能进入大世界，推迟任务以免主界面空等地球仪')
+            self.config.task_delay(minute=2)
+            raise TaskEnd
 
         # 初始化
         self.zone_init()
@@ -242,6 +263,7 @@ class OSMap(OSFleet, Map, GlobeCamera, StorageHandler, StrategicSearchHandler):
             out: IN_MAP
         """
         zone = self.name_to_zone(zone)
+        self._globe_target_zone = zone
         logger.hr(f"地球仪前往: {zone}")
         if self.zone == zone:
             if refresh:
@@ -259,7 +281,12 @@ class OSMap(OSFleet, Map, GlobeCamera, StorageHandler, StrategicSearchHandler):
         # MAP_EXIT 处理
         if self.is_in_special_zone():
             self.map_exit()
-        bridged = self._globe_goto_via_bridge(zone, types=types, stop_if_safe=stop_if_safe)
+        # 星图弹窗的进入键下面是蓝色「探索委任」。点旧坐标会进委任而不是海域。
+        # 确保海域直接跳过；其余用 OpTransport，不再点弹窗。
+        if stop_if_safe and self._bridge_zone_is_safe(zone):
+            logger.info("[大世界-地图] 海域已有确保，跳过进入")
+            return False
+        bridged = self._globe_goto_via_bridge(zone, types=types)
         if bridged is not None:
             if bridged:
                 if hasattr(self, "zone"):
@@ -289,21 +316,33 @@ class OSMap(OSFleet, Map, GlobeCamera, StorageHandler, StrategicSearchHandler):
         # self.map_init()
         return True
 
-    def _globe_goto_via_bridge(self, zone, types, stop_if_safe):
+    def _bridge_zone_is_safe(self, zone):
+        """
+        Returns:
+            bool: 桥接确认该海域已有确保图。没有这个动词时返回 False，改走进入。
+        """
+        try:
+            from module.alas_bridge.os_missions import peek_os_zone_has_safe
+            safe = peek_os_zone_has_safe(self.config, zone.zone_id)
+        except Exception as e:
+            logger.info(f'Sweeney OS zone maps miss: {e}')
+            return False
+        return safe is True
+
+    def _globe_goto_via_bridge(self, zone, types):
         """
         用 OpTransport 切海域，避开全球地图 ZONE_* 点击。
-
-        explore 的 stop_if_safe 仍走截图路径（需在星图上看 SAFE 而不进入）。
 
         Returns:
             True/False: 桥接完成（是否切换了海域）。
             None: 桥接不可用，调用方继续截图路径。
         """
-        if stop_if_safe:
-            return None
         try:
             from module.alas_bridge.os_missions import run_os_globe_goto
+            from module.os_handler.action_point import ActionPointLimit
             result = run_os_globe_goto(self.config, zone.zone_id, types=types)
+        except ActionPointLimit:
+            raise
         except Exception as e:
             logger.info(f'Sweeney OS globe goto miss: {e}')
             return None
@@ -821,6 +860,73 @@ class OSMap(OSFleet, Map, GlobeCamera, StorageHandler, StrategicSearchHandler):
         solved |= self.handle_fleet_repair(revert=False)
         logger.info(f"[大世界-搜索] 处理自动搜索完成后, 已解决={solved}")
         return solved
+
+    def get_action_point_limit(self):
+        """
+        月末按阶段下调耄耋相接的行动力保留，避免重置时把行动力浪费掉。
+
+        距重置超过 2 天时不改用户配置。最后 3 天降到 300（侵蚀 1 为 1000），
+        最后 1 天降到 0（跨月每日启用时降到 300）。隐秘/深渊坐标或塞壬要塞
+        仍需要行动力时保持用户配置。
+
+        Returns:
+            int: 本轮行动力保留。
+        """
+        from module.os.ap_preserve import (
+            month_end_stepped_preserve,
+            resolve_action_point_preserve,
+            should_hold_ap_for_loggers,
+        )
+
+        server = self.config.cross_get('Alas.Emulator.PackageName', default=None)
+        remain = get_os_reset_remain(server=server)
+        is_cl1 = self.is_cl1_enabled
+        cross_month = self.config.is_task_enabled('OpsiCrossMonth')
+        stepped = month_end_stepped_preserve(
+            remain,
+            is_cl1=is_cl1,
+            cross_month=cross_month,
+        )
+        hold = False
+        reason = ''
+        if stepped < 2000:
+            hold, reason = should_hold_ap_for_loggers(self.config)
+        preserve = resolve_action_point_preserve(
+            self.config.OpsiMeowfficerFarming_ActionPointPreserve,
+            remain,
+            is_cl1=is_cl1,
+            cross_month=cross_month,
+            hold=hold,
+        )
+        if hold:
+            logger.info(
+                f'[大世界-行动力] 仍有高耗行动力内容（{reason}），'
+                f'保持行动力保留 {preserve}'
+            )
+        elif remain <= 0:
+            if cross_month:
+                logger.info(
+                    f'[大世界-行动力] 距大世界重置不足 1 天且跨月每日已启用，'
+                    f'暂时将行动力保留设为 {preserve}'
+                )
+            else:
+                logger.info(
+                    f'[大世界-行动力] 距大世界重置不足 1 天，'
+                    f'暂时将行动力保留设为 {preserve}'
+                )
+        elif is_cl1 and remain <= 2:
+            logger.info(
+                f'[大世界-行动力] 距大世界重置不足 3 天，'
+                f'侵蚀 1 练级暂时将行动力保留设为 {preserve}'
+            )
+        elif remain <= 2:
+            logger.info(
+                f'[大世界-行动力] 距大世界重置不足 3 天，'
+                f'暂时将行动力保留设为 {preserve}'
+            )
+        else:
+            logger.info('[大世界-行动力] 未接近大世界重置，不调整行动力保留')
+        return preserve
 
     def cl1_ap_preserve(self):
         """

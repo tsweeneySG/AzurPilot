@@ -560,6 +560,10 @@ class OpsiAshBeacon(Meta):
             out: in_meta
         """
         logger.info('[META作战] 确保进入信标攻击页面')
+        # 委托侧栏被心跳当成 page_reward。大世界未开启时 meta_boss 隐藏，
+        # 旧的画面中央 META_ENTRANCE 也不会出现。一直等到卡死会重启客户端，
+        # 下次再把侧栏展开（Brad / nyan / booty 2026-10-01 09:02）。
+        timeout = Timer(8, count=12).start()
         while 1:
             if skip_first_screenshot:
                 skip_first_screenshot = False
@@ -572,7 +576,11 @@ class OpsiAshBeacon(Meta):
             if self.handle_map_event():
                 continue
             if self.appear_then_click(META_ENTRANCE, offset=(20, 300), interval=2):
+                timeout.reset()
                 continue
+            if timeout.reached():
+                logger.info('[META作战] 委托侧栏没有 META 入口，放弃以免卡死重启')
+                return False
 
     def ensure_dossier_page(self, skip_first_screenshot=True):
         """
@@ -585,7 +593,9 @@ class OpsiAshBeacon(Meta):
             out: in_meta, DOSSIER_LIST
         """
         self.ui_ensure(page_reward)
-        self._ensure_meta_page()
+        if not self._ensure_meta_page():
+            logger.info('[META作战] 未进入 META 页面，跳过档案')
+            return False
         logger.info('[META作战] 确保进入档案 META 页面')
         while 1:
             if skip_first_screenshot:
@@ -607,13 +617,51 @@ class OpsiAshBeacon(Meta):
         logger.hr('META作战')
         if not _server_support():
             logger.info("当前服务器暂不支持档案信标和一刀模式，请联系开发者")
-        self._ensure_meta_page()
+        if not self._ensure_meta_page():
+            return False
         self._attack_meta()
+        return True
+
+    def _dismiss_commission_drawer(self, skip_first_screenshot=True):
+        """
+        点侧栏外的空白处，让委托面板播放退出动画。
+
+        心跳把 CommissionInfoMediator 记成 page_reward。从这里走
+        REWARD_GOTO_MAIN 会点到底栏，而不是关掉侧栏。
+
+        Returns:
+            bool: 心跳已不再是 page_reward。
+        """
+        timeout = Timer(4, count=8).start()
+        while 1:
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            bridged = None
+            if self._sweeney_bridge_enabled():
+                bridged = self._try_sweeney_current_page(verbose=False)
+            if not self._ui_pages_equivalent(bridged, page_reward):
+                return True
+            if timeout.reached():
+                logger.info('[META作战] 委托侧栏未能关闭')
+                return False
+            timer = self.get_interval_timer('COMMISSION_DRAWER_DISMISS', interval=2, renew=True)
+            if timer.reached():
+                logger.info('[META作战] 点击空白处关闭委托侧栏')
+                self.device.click((1050, 360))
+                timer.reset()
 
     def run(self):
         """执行信标攻击任务主流程：进入 META 页面、攻击、领取奖励、延迟到下次服务器更新。"""
         self.ui_ensure(page_reward)
-        self._begin_beacon()
+        if not self._begin_beacon():
+            logger.info('[META作战] 未进入信标页面，30 分钟后再试')
+            self._dismiss_commission_drawer()
+            self.config.task_delay(minute=30)
+            self.ui_goto_main()
+            return
         self.ui_goto_main()
 
         with self.config.multi_set():

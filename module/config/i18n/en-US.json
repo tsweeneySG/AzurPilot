@@ -1382,7 +1382,7 @@
     },
     "LevelCap": {
       "name": "Stop at Level Cap",
-      "help": "Requires Sweeney Mod Bridge. Stop when a ship in the sortie roster hits a hard cap (70/80/90) or a soft cap (vanguard XP enough to 120, other ships XP enough to 125)."
+      "help": "Requires Sweeney Mod Bridge. Stop when a ship in the sortie roster hits a hard cap (70/80/90) or a soft cap (vanguard XP enough to 120, or to 125 if that cap is already unlocked; other ships XP enough to 125)."
     }
   },
   "WarArchives": {

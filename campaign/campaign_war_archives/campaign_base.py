@@ -1,5 +1,5 @@
 from module.campaign.campaign_base import CampaignBase as CampaignBase_
-from module.exception import RequestHumanTakeover
+from module.exception import CampaignNameError, RequestHumanTakeover
 from module.logger import logger
 from module.ui.assets import WAR_ARCHIVES_CHECK
 from module.ui.page import page_archives
@@ -115,6 +115,11 @@ class CampaignBase(CampaignBase_):
         result = True
         if self.first_run or not self.appear(WAR_ARCHIVES_CAMPAIGN_CHECK, offset=(20, 20)):
             result = self.ui_ensure(destination=page_archives)
+            # ui_ensure 在 MAIN_GOTO 放弃后仍返回 True。未到档案页就切 SP/EX
+            # 会把 WAR_ARCHIVES_SP_ON 连点到重启（1_67 Tempesta T6）。
+            if not self.appear(WAR_ARCHIVES_CHECK, offset=(30, 30)):
+                logger.warning('[战役] 未到达作战档案，跳过档案列表切换')
+                raise CampaignNameError
 
             WAR_ARCHIVES_SWITCH.set(mode, main=self)
 

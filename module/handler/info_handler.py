@@ -26,6 +26,7 @@ from module.combat.assets import BATTLE_PREPARATION
 from module.exception import CampaignEnd, GameNotRunningError, ScriptEnd
 from module.handler.assets import *
 from module.logger import logger
+from module.map.assets import MAP_PREPARATION, MAP_PREPARATION_HARD
 from module.os_handler.assets import CLICK_SAFE_AREA as OS_CLICK_SAFE_AREA
 from module.ui.assets import BACK_ARROW
 from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE, POPUP_SINGLE_WHITE
@@ -734,6 +735,22 @@ class InfoHandler(ModuleBase):
         Returns:
             是否处理了游戏提示。
         """
+        # LevelInfo 上 GAME_TIPS 会误点，关掉准备页后 chapter_track 变 not_in_prep
+        # （5_booty Event D3 2026-09-20 02:20）。
+        # 海图上 GAME_TIPS 会点到出击键附近，自动搜索移动中卡住
+        # （3_asami Hard 14-4 2026-09-21 11:30）。
+        if self.appear(MAP_PREPARATION, offset=(20, 20)) or self.appear(MAP_PREPARATION_HARD, offset=(20, 20)) \
+                or self.appear(IN_MAP, offset=(20, 20)):
+            return False
+        # 自动搜索移动时底部出击键会匹配 GAME_TIPS，IN_MAP 条又不在
+        # （5_booty Hard 14-4 2026-09-23 06:20，点 (915, 669)）。
+        running = getattr(self, 'is_auto_search_running', None)
+        if callable(running) and running():
+            return False
+        # 桥接自动搜索不显示 ON 图标，出击键仍会匹配 GAME_TIPS。
+        # 点下去之后海图停住（2_brad Hard 14-4 2026-09-30 03:23，(939, 654)）。
+        if getattr(self, '_auto_search_moving', False):
+            return False
         if self.appear(GAME_TIPS, offset=(20, 20), interval=2) and self.image_color_count(
                 GAME_TIPS.button, color=(40, 40, 40), threshold=240, count=50):
             self.device.click(GAME_TIPS)

@@ -1,9 +1,10 @@
 """Named ALAS-bridge RPC verbs (rewards, island, resources). Screenshot fallback stays in callers."""
 from __future__ import annotations
 
+import time
 from typing import Optional
 
-from module.alas_bridge.game_state import GameState
+from module.alas_bridge.game_state import GameState, page_name_from_state
 from module.alas_bridge.rpc import BridgeRpc
 
 
@@ -22,11 +23,19 @@ def _log(msg: str, warning: bool = False):
         print(msg)
 
 
+# 新 verb 在 Lua 未热更时会 8–12s 超时。跳过一段时间，避免结算环每帧卡死。
+_VERB_FAIL_UNTIL = {}
+_VERB_FAIL_SKIP_S = 60.0
+
+
 def send_verb(config, name: str, args: Optional[dict] = None, timeout: float = 12.0) -> Optional[dict]:
     """
     Returns:
         result dict on ok, else None.
     """
+    skip_until = _VERB_FAIL_UNTIL.get(name)
+    if skip_until and time.time() < skip_until:
+        return None
     try:
         gs = GameState.from_config(config)
         rpc = BridgeRpc(gs)
@@ -37,6 +46,11 @@ def send_verb(config, name: str, args: Optional[dict] = None, timeout: float = 1
     if not isinstance(ack, dict) or not ack.get('ok'):
         err = ack.get('error') if isinstance(ack, dict) else ack
         _log(f'Sweeney RPC {name} error: {err}', warning=True)
+        err_s = str(err or '').lower()
+        if 'not_in_prep' in err_s:
+            return {'reason': 'not_in_prep', 'sent': False}
+        if 'timeout' in err_s or 'unknown verb' in err_s:
+            _VERB_FAIL_UNTIL[name] = time.time() + _VERB_FAIL_SKIP_S
         return None
     result = ack.get('result')
     return result if isinstance(result, dict) else {}
@@ -349,6 +363,12 @@ def get_task_remains(config, timeout: float = 10.0) -> Optional[dict]:
 
 
 def get_shop_items(config, kind: str = 'merit', timeout: float = 10.0) -> Optional[dict]:
+    """
+    kind: merit | guild | medal | street | core
+    core is the monthly quota shop (cognitive chips / arrays).
+    After the mod reload, stock is remaining purchases. Older builds report
+    buyCount, which is 0 on merit goods that have not been bought yet.
+    """
     return send_verb(config, 'get_shop_items', {'kind': kind}, timeout=timeout)
 
 
@@ -478,14 +498,47 @@ def map_prep_showing_from_heartbeat(config, max_age: float = 3.0) -> Optional[st
     return None
 
 
+# Fleet.SUBMARINE_FLEET_ID。潜艇编队 1 是船坞 id 11，不是水面舰队 1。
+SUBMARINE_FLEET_ID = 11
+
+
 def fleet_ids_for_chapter_track(config) -> list:
-    """Dock fleet indices ALAS would pick on the fleet-prep screen."""
+    """
+    出击准备页会选中的船坞舰队 id。
+
+    ``Submarine_Fleet`` 是潜艇编队槽（1 = Sub Fleet 1），与 ``Fleet_Fleet1``
+    的水面舰队编号不是同一套。客户端把潜艇编队放在船坞 id 11–14。
+    """
     ids = []
-    for name in ('Fleet_Fleet1', 'Fleet_Fleet2', 'Submarine_Fleet'):
+    for name in ('Fleet_Fleet1', 'Fleet_Fleet2'):
         n = int(getattr(config, name, 0) or 0)
-        if n > 0 and n not in ids:
+        if 0 < n < SUBMARINE_FLEET_ID and n not in ids:
             ids.append(n)
+    sub = int(getattr(config, 'Submarine_Fleet', 0) or 0)
+    if sub > 0:
+        dock = SUBMARINE_FLEET_ID + sub - 1
+        if dock not in ids:
+            ids.append(dock)
     return ids
+
+
+def auto_sub_for_chapter_track(config):
+    """
+    写入 ``autoSubIsAcitve`` 的开关。
+
+    自动搜索跳过舰队准备页，截图路径上的潜艇自动呼叫不会执行。
+    未配置潜艇编队时返回 None，不改游戏里已有的偏好。
+
+    Returns:
+        bool | None:
+    """
+    sub = int(getattr(config, 'Submarine_Fleet', 0) or 0)
+    if sub <= 0:
+        return None
+    mode = str(getattr(config, 'Submarine_Mode', '') or '')
+    if mode in ('boss_only', 'hunt_and_boss'):
+        return False
+    return str(getattr(config, 'Submarine_AutoSearchMode', '') or '') == 'sub_auto_call'
 
 
 def chapter_track(
@@ -504,6 +557,9 @@ def chapter_track(
     Avoids GO / PROCEED / 出撃へ / HANDOVER template clicks.
     SelectFleet chapters (main 16-4 etc.) require fleet_ids; lastFleetIndex is
     only set after the fleet-select UI, which this path skips.
+    Submarine_Fleet is dock id 11+ (Sub Fleet 1), not surface fleet 1.
+    ``auto_sub`` writes PlayerPrefs autoSubIsAcitve because AutoFight skips
+    the duty tab (sub_auto_call / sub_standby).
     ``use_2x_book`` / ``operation_item`` override the in-game High-Efficiency
     Combat Manual PlayerPrefs cache (GetActiveSPItemID). AutoFight TRACKING
     skips fleet-prep, so screenshot 2x-book toggles never run on this path.
@@ -518,6 +574,10 @@ def chapter_track(
         args['chapter_id'] = int(chapter_id)
     if fleet_ids is None:
         fleet_ids = fleet_ids_for_chapter_track(config)
+        if not open_fleet:
+            auto_sub = auto_sub_for_chapter_track(config)
+            if auto_sub is not None:
+                args['auto_sub'] = bool(auto_sub)
     if fleet_ids:
         args['fleet_ids'] = [int(x) for x in fleet_ids if int(x) > 0]
     if operation_item is not None:
@@ -529,15 +589,25 @@ def chapter_track(
     from module.alas_bridge.sortie_status import (
         chapter_track_expected_stage,
         chapter_track_matches_stage,
+        normalize_chapter_name,
     )
-    expected = chapter_track_expected_stage(config)
+    expected = normalize_chapter_name(chapter_track_expected_stage(config))
     if expected:
         args['chapter_name'] = expected
     result = send_verb(config, 'chapter_track', args, timeout=timeout)
     if not isinstance(result, dict):
         return None
+    if result.get('reason') == 'no_tries':
+        _log(f'Sweeney chapter_track no tries: {result}')
+        return result
+    if result.get('reason') == 'not_in_prep':
+        _log(f'Sweeney chapter_track not_in_prep: {result}', warning=True)
+        return result
     if result.get('reason') == 'chapter_mismatch':
-        _log(f'Sweeney chapter_track mismatch: {result}', warning=True)
+        _log(
+            f'Sweeney chapter_track mismatch want={args.get("chapter_name")} got={result}',
+            warning=True,
+        )
         return result
     if result.get('sent') or result.get('already_active') or result.get('opened_fleet'):
         if not chapter_track_matches_stage(config, result):
@@ -623,6 +693,171 @@ def pq_spend_stamina(config, ship: Optional[str] = None, group_id: Optional[int]
     if result.get('already_done') or after == 0 or spent >= 1 or before == 0:
         return result
     return None
+
+
+GOTO_LEVEL_PAGES = {
+    'event': ('page_event', 'page_sp'),
+    'sp': ('page_sp', 'page_event'),
+    'campaign_menu': ('page_campaign_menu', 'page_event', 'page_sp', 'page_campaign'),
+    'campaign': ('page_campaign', 'page_campaign_menu'),
+    'archives': ('page_archives',),
+}
+
+
+def _goto_level_page_ok(want: Optional[str], page: Optional[str]) -> bool:
+    if not page:
+        return False
+    accepted = GOTO_LEVEL_PAGES.get(want or '')
+    if accepted:
+        return page in accepted
+    return page in (
+        'page_campaign_menu', 'page_event', 'page_sp', 'page_campaign', 'page_in_map',
+    )
+
+
+def goto_level(
+        config,
+        want: Optional[str] = None,
+        timeout: float = 12.0,
+        poll: float = 0.0,
+) -> Optional[dict]:
+    """
+    Open SCENE.LEVEL via GAME.GO_SCENE. Skips MAIN_GOTO_CAMPAIGN clicks.
+
+    Args:
+        want: event / sp / campaign_menu / campaign / archives. Empty accepts any LEVEL page.
+        poll: seconds to wait on heartbeat after pending_scene.
+    """
+    if not bridge_enabled(config):
+        return None
+    args = {}
+    if want:
+        args['want'] = want
+    result = send_verb(config, 'goto_level', args, timeout=timeout)
+    if not isinstance(result, dict):
+        return None
+    if result.get('pending_battle'):
+        _log('Sweeney goto_level skipped (in battle)', warning=True)
+        return result
+    if result.get('already_there') or result.get('already_on_level'):
+        return result
+    if result.get('pending_scene') and poll > 0:
+        deadline = time.time() + poll
+        while time.time() < deadline:
+            try:
+                gs = GameState.from_config(config)
+                state = gs.read(max_age=3.0)
+            except Exception:
+                state = None
+            page = page_name_from_state(state) if isinstance(state, dict) else None
+            if _goto_level_page_ok(want, page):
+                out = dict(result)
+                out['page'] = page
+                out['arrived'] = True
+                return out
+            time.sleep(0.4)
+    return result
+
+
+def goto_scene(
+        config,
+        scene: str,
+        data: Optional[dict] = None,
+        timeout: float = 12.0,
+) -> Optional[dict]:
+    """GAME.GO_SCENE. scene is a SCENE key such as SHOP or NAVALACADEMYSCENE."""
+    if not bridge_enabled(config):
+        return None
+    args = {'scene': scene}
+    if data:
+        args['data'] = data
+    result = send_verb(config, 'goto_scene', args, timeout=timeout)
+    return result if isinstance(result, dict) else None
+
+
+_ARCHIVE_TITLES = None
+
+
+def war_archive_title(event: Optional[str]) -> Optional[str]:
+    """作战档案活动 id 对应的 EN 显示名，用于匹配 memory_group.title。
+
+    Args:
+        event: 如 ``war_archives_20231026_cn``。
+
+    Returns:
+        带 ``archives `` 前缀的英文名；无法解析时返回 None。
+    """
+    if not event or not str(event).startswith('war_archives_'):
+        return None
+    global _ARCHIVE_TITLES
+    if _ARCHIVE_TITLES is None:
+        import json
+        import os
+        path = os.path.join(
+            os.path.dirname(__file__), '..', 'config', 'i18n', 'en-US.json')
+        try:
+            with open(path, encoding='utf-8') as handle:
+                data = json.load(handle)
+            events = data.get('Campaign', {}).get('Event', {})
+            _ARCHIVE_TITLES = events if isinstance(events, dict) else {}
+        except Exception:
+            _ARCHIVE_TITLES = {}
+    title = _ARCHIVE_TITLES.get(str(event))
+    if not isinstance(title, str) or not title:
+        return None
+    if title.startswith('Campaign.Event.'):
+        return None
+    return title
+
+
+def chapter_enter(
+        config,
+        chapter_name: Optional[str] = None,
+        chapter_id: Optional[int] = None,
+        remaster_id=None,
+        archive_title: Optional[str] = None,
+        timeout: float = 12.0,
+) -> Optional[dict]:
+    """
+    Open LevelInfoView for a live/main chapter. Skips aside OCR and stage-tile clicks.
+
+    archive_title selects a War Archives remaster (T6 is shared by more than one pack).
+    """
+    if not bridge_enabled(config):
+        return None
+    args = {}
+    if chapter_id is not None:
+        args['chapter_id'] = int(chapter_id)
+    if remaster_id is not None:
+        args['remaster_id'] = int(remaster_id)
+    if archive_title:
+        args['archive_title'] = str(archive_title)
+    name = chapter_name
+    if not name:
+        from module.alas_bridge.sortie_status import chapter_track_expected_stage
+        name = chapter_track_expected_stage(config)
+    if name:
+        args['chapter_name'] = name
+    if not args:
+        return None
+    result = send_verb(config, 'chapter_enter', args, timeout=timeout)
+    return result if isinstance(result, dict) else None
+
+
+def battle_result_advance(config, timeout: float = 8.0) -> Optional[dict]:
+    """Advance one NewBattleResult page via triggerButton. Not FINISH_STAGE."""
+    if not bridge_enabled(config):
+        return None
+    result = send_verb(config, 'battle_result_advance', timeout=timeout)
+    return result if isinstance(result, dict) else None
+
+
+def battle_result_diag(config, timeout: float = 8.0) -> Optional[dict]:
+    """Read the battle-result stack without clicking. Writes battle_result_diagnostic.txt."""
+    if not bridge_enabled(config):
+        return None
+    result = send_verb(config, 'battle_result_diag', timeout=timeout)
+    return result if isinstance(result, dict) else None
 
 
 def get_wa_status(config, timeout: float = 12.0) -> Optional[dict]:
@@ -715,6 +950,11 @@ def os_goto_zone(
     if map_types:
         args['map_types'] = list(map_types)
     return send_verb(config, 'os_goto_zone', args, timeout=timeout)
+
+
+def os_zone_maps(config, zone_id: int, timeout: float = 12.0) -> Optional[dict]:
+    """Read replacement map kinds for an entrance. Does not transport."""
+    return send_verb(config, 'os_zone_maps', {'zone_id': int(zone_id)}, timeout=timeout)
 
 
 def pq_shop_buy(config, roses: bool = False, cake: bool = False,

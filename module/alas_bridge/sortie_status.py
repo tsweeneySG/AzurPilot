@@ -39,10 +39,18 @@ def _campaign_stage_name(config) -> str:
     return str(getattr(config, 'Campaign_Name', '') or '')
 
 
+_DASH_CHARS = (
+    '\u2010', '\u2011', '\u2012', '\u2013', '\u2014', '\u2015',
+    '\u2212', '\uff0d',
+)
+
+
 def normalize_chapter_name(name) -> str:
     if name is None:
         return ''
-    s = str(name).strip().lower().replace('–', '-').replace('—', '-').replace(' ', '')
+    s = str(name).strip().lower().replace(' ', '')
+    for ch in _DASH_CHARS:
+        s = s.replace(ch, '-')
     return s
 
 
@@ -370,6 +378,56 @@ def any_at_cap(status: Optional[dict]) -> Optional[dict]:
     return None
 
 
+def level_cap_ship_line(ship: dict) -> str:
+    """English one-line description, same fields as the level-cap log."""
+    return (
+        f'{ship.get("name")} '
+        f'Lv.{ship.get("level")}/{ship.get("max_level")} '
+        f'hard={ship.get("hard_cap")} soft={ship.get("soft_cap")}'
+    )
+
+
+def notify_level_cap(config, ship: Optional[dict] = None, stage: str = '') -> bool:
+    """Push one English level-cap alert for this config object.
+
+    The battle loop can see the cap long before CampaignRun checks stop
+    conditions. Send here so Telegram is not skipped when that loop never
+    returns to the stop check. A second caller on the same config is ignored.
+
+    Returns:
+        bool: True when a push was attempted on this call.
+    """
+    if getattr(config, 'LEVEL_CAP_NOTIFIED', False):
+        return False
+    try:
+        config.LEVEL_CAP_NOTIFIED = True
+    except Exception:
+        return False
+
+    instance = getattr(config, 'config_name', None) or 'AzurPilot'
+    if ship:
+        line = level_cap_ship_line(ship)
+        try:
+            config.LEVEL_CAP_SHIP = line
+        except Exception:
+            pass
+        title = f'AzurPilot <{instance}> level cap reached'
+        content = f'<{instance}> Level cap reached: {line}'
+    else:
+        stage_name = stage or 'sortie'
+        title = f'AzurPilot <{instance}> campaign finished'
+        content = f'<{instance}> {stage_name} reached level limit'
+    try:
+        from module.notify import handle_notify
+        return bool(handle_notify(
+            getattr(config, 'Error_OnePushConfig', '') or '',
+            title=title,
+            content=content,
+        ))
+    except Exception:
+        return False
+
+
 def level_cap_triggered(config) -> bool:
     """True when SweeneyBridge + StopCondition.LevelCap and a sortie ship is at cap."""
     if not getattr(config, 'Optimization_SweeneyBridge', False):
@@ -380,13 +438,10 @@ def level_cap_triggered(config) -> bool:
     ship = any_at_cap(status)
     if ship is None:
         return False
-    _log(
-        f'Level cap reached: {ship.get("name")} '
-        f'Lv.{ship.get("level")}/{ship.get("max_level")} '
-        f'hard={ship.get("hard_cap")} soft={ship.get("soft_cap")}'
-    )
+    _log(f'Level cap reached: {level_cap_ship_line(ship)}')
     try:
         config.LV_TRIGGERED = True
     except Exception:
         pass
+    notify_level_cap(config, ship)
     return True

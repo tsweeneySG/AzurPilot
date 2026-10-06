@@ -70,6 +70,8 @@ class CampaignHard(CampaignRun):
             from module.alas_bridge.actions import bridge_enabled, get_task_remains
             if bridge_enabled(self.config):
                 remains = get_task_remains(self.config)
+                if isinstance(remains, dict) and remains.get('day_caught_up'):
+                    logger.info('[Sweeney] 客户端错过日切，已补跑 DayCall')
                 if remains is not None and remains.get('hard') is not None:
                     remain = int(remains.get('hard') or 0)
                     logger.attr('剩余次数', remain)

@@ -16,8 +16,11 @@ from module.war_archives_catchup.policy import (
     flags_for_chapter,
     hidden_incomplete,
     incomplete_bonus,
+    chapter_ticket_cost,
+    data_keys_insufficient,
     is_data_key_msgbox,
     is_low_emotion_msgbox,
+    keys_block_remaining,
     pick_next_chapter,
     wa_goto_ready_to_sit,
     watch_in_sortie,
@@ -392,8 +395,10 @@ class WarArchivesCatchup(CampaignEvent, Combat):
                 last_pos = pos
 
             tickets = wa.get('tickets')
-            cost = int(wa.get('ticket_cost') or 5)
-            if tickets is not None and int(tickets) < cost and not in_sortie:
+            cost = getattr(self, '_sortie_ticket_cost', None)
+            if cost is None:
+                cost = wa.get('ticket_cost')
+            if data_keys_insufficient(tickets, cost if cost is not None else 5) and not in_sortie:
                 logger.info(f'WarArchivesCatchup tickets {tickets} < {cost}')
                 return 'tickets'
 
@@ -495,16 +500,13 @@ class WarArchivesCatchup(CampaignEvent, Combat):
                         return
 
                     tickets = int(status.get('tickets') or 0)
-                    cost = int(status.get('ticket_cost') or 5)
-                    logger.attr('WA tickets', f'{tickets} / {status.get("tickets_max")} cost={cost}')
+                    flat_cost = status.get('ticket_cost')
+                    logger.attr(
+                        'WA tickets',
+                        f'{tickets} / {status.get("tickets_max")} flat_cost={flat_cost}',
+                    )
                     self._log_bonus(status)
                     self._log_hidden(status)
-
-                    if tickets < cost:
-                        logger.hr('Triggered out of data keys')
-                        self.config.task_delay(server_update=True)
-                        self.config.task_stop('WarArchivesCatchup: out of remaster tickets')
-                        return
 
                     oil = self.get_oil()
                     limit = max(500, int(getattr(self.config, 'StopCondition_OilLimit', 1000) or 0))
@@ -516,8 +518,19 @@ class WarArchivesCatchup(CampaignEvent, Combat):
 
                     target = pick_next_chapter(status)
                     if target is None:
+                        if keys_block_remaining(status):
+                            logger.hr('Triggered out of data keys')
+                            logger.info(
+                                f'WarArchivesCatchup tickets {tickets} cannot cover an open map'
+                            )
+                            self.config.task_delay(server_update=True)
+                            self.config.task_stop('WarArchivesCatchup: out of remaster tickets')
+                            return
                         self._disable_done('War Archives catchup: nothing incomplete and accessible')
                         return
+
+                    self._sortie_ticket_cost = chapter_ticket_cost(target, flat_cost)
+                    logger.info(f'WA map cost={self._sortie_ticket_cost}')
 
                     logger.hr(
                         f"WA target {target.get('pack_name')} {target.get('name')} "
@@ -548,9 +561,7 @@ class WarArchivesCatchup(CampaignEvent, Combat):
                     outcome = self._watch()
                     logger.info(f'WarArchivesCatchup outcome={outcome}')
                     if outcome == 'tickets':
-                        self.config.task_delay(server_update=True)
-                        self.config.task_stop('WarArchivesCatchup: out of remaster tickets')
-                        return
+                        continue
                     if outcome == 'dock':
                         self.config.task_call('Reward')
                         self.config.task_delay(minute=5)

@@ -36,6 +36,48 @@ def chapter_targetable(ch: Optional[dict]) -> bool:
     return chapter_incomplete(ch) and not chapter_need_hide(ch)
 
 
+# 2026-07 起旧档案关卡的钥匙消耗从 1 提到 5。新特别关卡在 re_map_template.tickets 里单独标价。
+LEGACY_REMASTER_TICKET_COST = 5
+
+
+def data_keys_insufficient(owned, cost) -> bool:
+    """
+    本图要扣钥匙，且持有量不够。
+
+    持有量大于 0 仍可能进不了某一张图。cost <= 0 表示这张图不扣钥匙。
+    """
+    try:
+        owned_n = int(owned)
+        cost_n = int(cost)
+    except (TypeError, ValueError):
+        return False
+    if cost_n <= 0:
+        return False
+    return owned_n < cost_n
+
+
+def chapter_ticket_cost(ch: Optional[dict], fallback=None) -> int:
+    """这张图的数据密钥消耗。缺字段时用档案统一标价，再退回旧档 5 把。"""
+    if isinstance(ch, dict) and ch.get('ticket_cost') is not None:
+        try:
+            return max(0, int(ch.get('ticket_cost')))
+        except (TypeError, ValueError):
+            pass
+    if fallback is not None:
+        try:
+            return max(0, int(fallback))
+        except (TypeError, ValueError):
+            pass
+    return LEGACY_REMASTER_TICKET_COST
+
+
+def chapter_keys_cover(ch: Optional[dict], tickets, fallback=None) -> bool:
+    """持有量未知时不拦；已知时必须够付这张图。"""
+    if tickets is None:
+        return True
+    return not data_keys_insufficient(tickets, chapter_ticket_cost(ch, fallback))
+
+
 def _iter_chapters(status: Optional[dict]):
     if not isinstance(status, dict):
         return
@@ -58,18 +100,47 @@ def _iter_chapters(status: Optional[dict]):
 def pick_next_chapter(status: Optional[dict]) -> Optional[dict]:
     """
     First accessible incomplete chapter: remaster id order, then config_data order.
-    Skips locked maps and hide=1 chapters that are already 100% (cannot re-enter).
+    Skips locked maps, hide=1 chapters that are already 100%, and maps whose
+    Data Key cost is higher than the current balance.
     Bonus drop_gain is never a target.
     """
     if not isinstance(status, dict):
         return None
+    tickets = status.get('tickets')
+    fallback = status.get('ticket_cost')
     nxt = status.get('next')
-    if isinstance(nxt, dict) and nxt.get('id') and chapter_targetable(nxt):
+    if isinstance(nxt, dict) and nxt.get('id') and chapter_targetable(nxt) \
+            and chapter_keys_cover(nxt, tickets, fallback):
         return nxt
     for _pack, ch in _iter_chapters(status):
-        if chapter_targetable(ch):
+        if chapter_targetable(ch) and chapter_keys_cover(ch, tickets, fallback):
             return ch
     return None
+
+
+def keys_block_remaining(status: Optional[dict]) -> bool:
+    """
+    还有能进的未完成图，但每一张的钥匙消耗都高于当前持有量。
+
+    持有量未知时不拦。全部完成时返回 False，交给“没有目标”的结束逻辑。
+    """
+    if not isinstance(status, dict) or status.get('tickets') is None:
+        return False
+    tickets = status.get('tickets')
+    fallback = status.get('ticket_cost')
+    saw_target = False
+    for _pack, ch in _iter_chapters(status):
+        if not chapter_targetable(ch):
+            continue
+        saw_target = True
+        if chapter_keys_cover(ch, tickets, fallback):
+            return False
+    nxt = status.get('next')
+    if isinstance(nxt, dict) and chapter_targetable(nxt):
+        if chapter_keys_cover(nxt, tickets, fallback):
+            return False
+        saw_target = True
+    return saw_target
 
 
 def _missing_entries(ch: dict) -> list:

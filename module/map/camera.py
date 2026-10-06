@@ -385,6 +385,37 @@ class Camera(MapOperation):
     def show_camera(self):
         logger.attr_align('摄像机', location2node(self.camera))
 
+    def _edge_swipe_pinned(self, x, y):
+        """滑动方向上画面已经贴边，但对应边缘线仍未识别。
+
+        单应会把列从 A-48 抖到 A-53，姿态比较认成有位移，于是贴着顶边
+        一直 MAP_SWIPE_0_-5（Brad / booty / Margaret 2026-09-30 指挥喵养殖）。
+
+        Args:
+            x (int): 本次横向滑动。
+            y (int): 本次纵向滑动。
+
+        Returns:
+            bool: True 表示这一滑没有朝缺失边缘前进。
+        """
+        try:
+            off = self.view.center_offset
+            upper = self.view.upper_edge
+            lower = self.view.lower_edge
+            left = self.view.left_edge
+            right = self.view.right_edge
+        except Exception:
+            return False
+        if y < 0 and not upper and off[1] < 0.08:
+            return True
+        if y > 0 and not lower and off[1] > 0.92:
+            return True
+        if x < 0 and not left and off[0] < 0.08:
+            return True
+        if x > 0 and not right and off[0] > 0.92:
+            return True
+        return False
+
     def ensure_edge_insight(self, reverse=False, preset=None, swipe_limit=(3, 2), skip_first_update=True):
         """滑动到左下角直到两条边缘可见。
         边缘用于定位相机。
@@ -401,6 +432,18 @@ class Camera(MapOperation):
         logger.info(f'[地图-摄像机] 确保边缘在视野内')
         record = []
         x_swipe, y_swipe = np.multiply(swipe_limit, random_direction(self.config.MAP_ENSURE_EDGE_INSIGHT_CORNER))
+        stalls = 0
+
+        def pose():
+            try:
+                cam = tuple(int(v) for v in self.camera)
+            except Exception:
+                cam = None
+            try:
+                off = tuple(float(np.round(v, 2)) for v in self.view.center_offset)
+            except Exception:
+                off = None
+            return cam, off
 
         while 1:
             if len(record) == 0:
@@ -415,7 +458,19 @@ class Camera(MapOperation):
 
             if len(record) > 0:
                 # 即使两条边缘可见也要滑动，以避免一些尴尬的相机位置。
+                before = pose()
                 self.map_swipe((x, y))
+                # 已在海域顶边时向上滑不会露出新边缘，连滑到 MAP_SWIPE 次数上限后重启
+                # （4_nyan OpSi NA Ocean 2026-09-23 06:20，相机停在 row 0）。
+                # 贴边时另一轴仍会抖，姿态不相等也要计 stall。
+                if (x or y) and (pose() == before or self._edge_swipe_pinned(x, y)):
+                    stalls += 1
+                    if stalls >= 2:
+                        logger.warning('[地图-摄像机] 边缘滑动无位移，停止以免连滑重启')
+                        self.device.click_record_clear()
+                        break
+                else:
+                    stalls = 0
 
             record.append((x, y))
 
@@ -432,13 +487,16 @@ class Camera(MapOperation):
         return record
 
     def _raise_focus_swipe_cap(self, reason):
-        """对向滑动或次数过多时结束聚焦，避免 MAP_SWIPE 点满重启。"""
+        """对向滑动或预测失败时推迟任务，避免 MapDetectionError 重启游戏。"""
         logger.warning(f'[地图-摄像机] {reason}')
         try:
             self.device.click_record_clear()
             self.device.stuck_record_clear()
         except Exception:
             pass
+        if getattr(self, 'config', None) is not None:
+            self.config.task_delay(minute=2)
+            self.config.task_stop(reason)
         raise MapDetectionError(reason)
 
     def focus_to(self, location, swipe_limit=(4, 3)):

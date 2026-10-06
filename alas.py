@@ -780,6 +780,33 @@ class AzurLaneAutoScript:
         )
         exit(1)
 
+    def _pause_for_login_stall(self):
+        """登录页停住时推迟全部已到期任务，避免别的任务在同一画面上重启游戏。
+
+        Returns:
+            str: 'recoverable'。连续达到 Error_GameStuckThreshold 时改为重启模拟器。
+        """
+        self.device._in_app_login = False
+        self.consecutive_game_stuck += 1
+        limit = int(self.config.Error_GameStuckThreshold)
+        logger.warning(
+            f'[Alas] 登录阶段卡住 {self.consecutive_game_stuck}/{limit}，'
+            f'推迟已到期任务，不立即重启游戏'
+        )
+        if self.consecutive_game_stuck >= limit:
+            logger.warning('[Alas] 登录卡住次数过多，正在重启模拟器...')
+            if self._try_restart_emulator():
+                self.consecutive_game_stuck = 0
+                self.config.task_call('Restart')
+                return 'recoverable'
+        self.config.get_next_task()
+        names = [f.command for f in self.config.pending_task]
+        if not names:
+            names = [self.config.task.command]
+        for name in names:
+            self.config.task_delay(minute=10, task=name)
+        return 'recoverable'
+
     def run(self, command, skip_first_screenshot=False):
         """
         执行指定任务命令，捕获异常并决定后续行为。
@@ -800,6 +827,12 @@ class AzurLaneAutoScript:
                 'recoverable' — 可恢复的失败，不计入连续失败限制。
         """
         try:
+            # 登录没走完就进别的任务，会在同一静图上卡死并重启模拟器
+            # （nyan 2026-09-29 04:47–06:26，Commission / goto_main）。
+            if getattr(self.device, '_in_app_login', False) and command != 'restart':
+                self.device._in_app_login = False
+                logger.warning('[Alas] 上次登录未完成，推迟当前任务')
+                return self._pause_for_login_stall()
             if not skip_first_screenshot:
                 self.device.screenshot()
             self.__getattribute__(command)()
@@ -850,22 +883,15 @@ class AzurLaneAutoScript:
             if self._check_sensitive_exit(command, e):
                 return 'recoverable'
 
-            # Restart 任务卡在启动闪屏时，立刻再 Restart 会杀掉尚未完成的登录。
-            if command == 'restart':
-                self.consecutive_game_stuck += 1
-                limit = int(self.config.Error_GameStuckThreshold)
-                logger.warning(
-                    f'[Alas] 登录阶段卡住 {self.consecutive_game_stuck}/{limit}，'
-                    f'不立即重启游戏以免循环'
-                )
-                if self.consecutive_game_stuck >= limit:
-                    logger.warning('[Alas] 登录卡住次数过多，正在重启模拟器...')
-                    if self._try_restart_emulator():
-                        self.consecutive_game_stuck = 0
-                        self.config.task_call('Restart')
-                        return 'recoverable'
-                self.config.task_delay(minute=2)
-                return 'recoverable'
+            # 登录页推不进主界面时，推迟所有已到期任务。只推迟 Restart 会让
+            # Commission / Research 在同一登录画面上连点 LOGIN_CHECK 并重启游戏。
+            in_login = (
+                command == 'restart'
+                or 'LOGIN_CHECK' in str(e)
+                or getattr(self.device, '_in_app_login', False)
+            )
+            if in_login:
+                return self._pause_for_login_stall()
 
             if self.config.Error_GameStuckRestart:
                 self.consecutive_game_stuck += 1
@@ -1986,6 +2012,13 @@ class AzurLaneAutoScript:
                         except Exception:
                             pass
                         leftover = 'ended'
+                    if leftover == 'restart':
+                        logger.warning(
+                            '[Alas] 海图已停住或主界面叠在海图上，重启客户端'
+                        )
+                        self.config.task_call('Restart')
+                        del_cached_property(self, 'config')
+                        continue
                     if leftover == 'timeout':
                         logger.warning(
                             '[Alas] 图上仍有未结束的模组自律寻敌，推迟当前任务以免互相打断'

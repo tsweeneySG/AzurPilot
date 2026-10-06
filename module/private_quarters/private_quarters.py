@@ -34,11 +34,17 @@ Pages:
 
 import module.config.server as server
 from module.base.timer import Timer
+from module.config.utils import current_time, get_server_last_update
 from module.logger import logger
 from module.private_quarters.assets import *
 from module.private_quarters.interact import PQInteract
 from module.private_quarters.shop import PQShop
 from module.ui.page import page_private_quarters, page_dormmenu
+
+# 日切后 ApartmentProxy.stamina 会短暂停在昨日的 0。
+# 这段时间内把 0 当成“今日已用完”会把 NextRun 推到次日，当天体力不再打。
+_PQ_STALE_STAMINA_WINDOW_MIN = 180
+_PQ_STALE_STAMINA_RETRY_MIN = 45
 
 
 class PrivateQuarters(PQInteract, PQShop):
@@ -243,12 +249,38 @@ class PrivateQuarters(PQInteract, PQShop):
             # 执行互动
             self.pq_execute_interact(target_ship)
 
+    def _pq_minutes_since_server_update(self):
+        """
+        距离本任务 ServerUpdate 已过的分钟数。
+
+        Returns:
+            float: 分钟。读不到刷新点时返回一个很大的数，避免误判为日切刚过。
+        """
+        try:
+            trigger = self.config.Scheduler_ServerUpdate
+            last = get_server_last_update(trigger)
+            return (current_time() - last).total_seconds() / 60.0
+        except Exception as e:
+            logger.info(f'[私人休息室] 无法计算日切间隔: {e}')
+            return 10 ** 9
+
+    def _pq_stamina_zero_may_be_stale(self):
+        """
+        桥接体力为 0 时，是否仍可能是日切前的缓存。
+
+        Returns:
+            bool: True 表示应稍后重试，而不是把今天标成已完成。
+        """
+        minutes = self._pq_minutes_since_server_update()
+        return 0 <= minutes < _PQ_STALE_STAMINA_WINDOW_MIN
+
     def _pq_bridge_try(self, buy_roses, buy_cake, target_interact, target_ship):
         """
         优先走 Sweeney 桥接买每周礼物、消耗每日体力，避免打开 Dorm3D。
 
         Returns:
-            tuple[bool, bool]: (shop_done, interact_done)。任一为 False 时截图路径补做该子任务。
+            tuple[bool, bool, bool]: (shop_done, interact_done, retry_later)。
+                retry_later 为 True 时调用方应短延迟重试，不要推到次日刷新。
         """
         shop_needed = bool(self.shop_filter) and server.server not in ['tw']
         interact_needed = bool(target_interact)
@@ -258,8 +290,9 @@ class PrivateQuarters(PQInteract, PQShop):
 
         shop_done = not shop_needed
         interact_done = not interact_needed
+        retry_later = False
         if shop_done and interact_done:
-            return True, True
+            return True, True, False
 
         try:
             from module.alas_bridge.actions import (
@@ -271,18 +304,24 @@ class PrivateQuarters(PQInteract, PQShop):
             )
         except Exception as e:
             logger.info(f'Sweeney PQ bridge import failed: {e}')
-            return shop_done, interact_done
+            return shop_done, interact_done, False
 
         if not bridge_enabled(self.config):
-            return shop_done, interact_done
+            return shop_done, interact_done, False
 
         status = pq_from_heartbeat(self.config) or get_pq_status(self.config)
         if isinstance(status, dict) and 'stamina' in status:
             stamina = int(status.get('stamina') or 0)
             logger.info(f'[私人休息室] 桥接体力={stamina}/{status.get("stamina_max")}')
             if interact_needed and stamina <= 0:
-                logger.info('[私人休息室] 桥接：每日体力已用完')
-                interact_done = True
+                if self._pq_stamina_zero_may_be_stale():
+                    logger.info(
+                        '[私人休息室] 桥接体力为 0，日切后客户端可能尚未刷新，稍后重试'
+                    )
+                    retry_later = True
+                else:
+                    logger.info('[私人休息室] 桥接：每日体力已用完')
+                    interact_done = True
 
         if shop_needed and not shop_done:
             try:
@@ -297,7 +336,7 @@ class PrivateQuarters(PQInteract, PQShop):
             else:
                 logger.info('[私人休息室] 商店桥接未完成，将使用截图路径')
 
-        if interact_needed and not interact_done:
+        if interact_needed and not interact_done and not retry_later:
             try:
                 result = pq_spend_stamina(self.config, ship=target_ship)
             except Exception as e:
@@ -314,7 +353,7 @@ class PrivateQuarters(PQInteract, PQShop):
             else:
                 logger.info('[私人休息室] 体力桥接未完成，将使用截图路径')
 
-        return shop_done, interact_done
+        return shop_done, interact_done, retry_later
 
     def run(self):
         """
@@ -332,9 +371,12 @@ class PrivateQuarters(PQInteract, PQShop):
         target_interact = self.config.PrivateQuarters_TargetInteract
         target_ship = self.config.PrivateQuarters_TargetShip
 
-        shop_done, interact_done = self._pq_bridge_try(
+        shop_done, interact_done, retry_later = self._pq_bridge_try(
             buy_roses, buy_cake, target_interact, target_ship
         )
+        if retry_later:
+            self.config.task_delay(minute=_PQ_STALE_STAMINA_RETRY_MIN)
+            return
         if shop_done and interact_done:
             logger.info('[私人休息室] 通过 Sweeney 桥接完成（未打开宿舍 UI）')
             self.config.task_delay(server_update=True)

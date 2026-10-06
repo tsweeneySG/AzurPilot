@@ -25,6 +25,8 @@ DOCK_PEEK_SECONDS = 8.0
 FIGHTING_BATTLE = ('BATTLE_FIGHT', 'BATTLE_OPENING')
 BATTLE_CLICK_SLEEP = 0.5
 SITBACK_BATTLE_CLICK_CAP = 8
+# 海图上自律开着但舰队格子一直不动。再坐满一小时也不会开打。
+IDLE_RESTART_SECONDS = 180.0
 
 
 def _chapter_dict(state: Optional[dict]) -> dict:
@@ -107,6 +109,9 @@ def handle_sitback_battle_status(config, device, handler=None, state=None) -> bo
     # leftover sit-back (outside run()) and restarted the emulator.
     if hasattr(combat, 'handle_get_items') and combat.handle_get_items():
         logger.info('Sit-back get-items click')
+        return True
+    if hasattr(combat, '_bridge_try_result_advance') and combat._bridge_try_result_advance():
+        logger.info('Sit-back battle_result_advance')
         return True
     if hasattr(combat, 'handle_exp_info') and combat.handle_exp_info():
         logger.info('Sit-back exp-info click')
@@ -262,11 +267,37 @@ def _enable_leftover_autofight(config) -> None:
     set_mod_flags(config, force_auto_fight_without_loop=True)
 
 
-def _resume_active_chapter(config, chapter_id: int) -> bool:
+def _resume_torn(result) -> bool:
+    return isinstance(result, dict) and (
+        result.get('torn') or result.get('reason') == 'main_over_stage'
+    )
+
+
+def _fleet_cell(state) -> tuple:
+    chapter = _chapter_dict(state)
+    return (
+        chapter.get('fleet_row'),
+        chapter.get('fleet_col'),
+        _chapter_id(state),
+    )
+
+
+def _resume_active_chapter(config, chapter_id: int):
+    """
+    Returns:
+        'restart': 主界面叠在海图上，调用方应重启客户端。
+        True: 已经回到海图。
+        False: 几次尝试后仍不在海图。
+    """
     from module.alas_bridge.actions import wa_goto
 
     for attempt in range(RESUME_TRIES):
         result = wa_goto(config, chapter_id=chapter_id)
+        if _resume_torn(result):
+            logger.warning(
+                'Leftover AutoFight map and main UI are both up, restart client'
+            )
+            return 'restart'
         state = _read_state(config, max_age=8.0)
         if isinstance(result, dict) and result.get('pending_battle'):
             logger.info(
@@ -333,7 +364,10 @@ def wait_leftover_autofight(config, device, timeout: float = WAIT_TIMEOUT, handl
     if sitback_on_dock_scene(state):
         logger.info('Leftover AutoFight on dock, retire before resume')
     elif leftover_off_map_ui(state) and chapter_id:
-        if not _resume_active_chapter(config, chapter_id):
+        resumed = _resume_active_chapter(config, chapter_id)
+        if resumed == 'restart':
+            return 'restart'
+        if not resumed:
             logger.warning('Leftover AutoFight resume via wa_goto did not reach map UI')
 
     started = time.time()
@@ -342,6 +376,8 @@ def wait_leftover_autofight(config, device, timeout: float = WAIT_TIMEOUT, handl
     last_resume = 0.0
     last_auto_enable = 0.0
     logged_sit = False
+    idle_cell = None
+    idle_since = None
     retire = handler
     combat = _combat_handler(config, device, handler)
     battle_clicks = 0
@@ -382,8 +418,13 @@ def wait_leftover_autofight(config, device, timeout: float = WAIT_TIMEOUT, handl
                     f'page={state.get("page")} entrance={level.get("entrance")} '
                     f'in_map={level.get("in_map")} — resume into combat'
                 )
-                if _resume_active_chapter(config, cid):
+                resumed = _resume_active_chapter(config, cid)
+                if resumed == 'restart':
+                    return 'restart'
+                if resumed:
                     logged_sit = False
+                    idle_cell = None
+                    idle_since = None
             time.sleep(1)
             continue
         if leftover_needs_enable_auto(state):
@@ -416,6 +457,27 @@ def wait_leftover_autofight(config, device, timeout: float = WAIT_TIMEOUT, handl
         if not logged_sit:
             logger.info('Leftover AutoFight sit-back (heartbeat only, no screenshot)')
             logged_sit = True
+        battle = state.get('battle') if isinstance(state.get('battle'), dict) else {}
+        level = state.get('level') if isinstance(state.get('level'), dict) else {}
+        cell = _fleet_cell(state)
+        # 自律已开、人在海图上、战斗却一直空闲且格子不动：海图是死的。
+        # 继续坐满一小时只会把下一任务再推迟十分钟。
+        if (
+            battle.get('state') == 'BATTLE_IDLE'
+            and level.get('in_map')
+            and _auto_fight_on(state)
+        ):
+            if cell != idle_cell:
+                idle_cell = cell
+                idle_since = now
+            elif idle_since is not None and (now - idle_since) >= IDLE_RESTART_SECONDS:
+                logger.warning(
+                    'Leftover AutoFight idle on map with no fleet move, restart client'
+                )
+                return 'restart'
+        else:
+            idle_cell = None
+            idle_since = None
         if now - last_log >= LOG_EVERY:
             last_log = now
             chapter = _chapter_dict(state)

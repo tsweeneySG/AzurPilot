@@ -327,6 +327,67 @@ class TestOsGlobeGoto(unittest.TestCase):
             om.os_goto_zone = orig_zone
             om.wait_os_arrival = orig_wait
 
+    def test_globe_goto_retries_pending_ap_then_enters(self):
+        from module.alas_bridge import os_missions as om
+
+        class Cfg:
+            Optimization_SweeneyBridge = True
+
+        calls = {'n': 0}
+
+        def zone(*_a, **_k):
+            calls['n'] += 1
+            if calls['n'] == 1:
+                return {
+                    'pending_ap': True,
+                    'used_item': 251,
+                    'used_count': 2,
+                    'current': 10,
+                    'cost': 40,
+                    'zone_id': 13,
+                }
+            return {'sent': True, 'zone_id': 13}
+
+        orig_en = om.bridge_enabled
+        orig_zone = om.os_goto_zone
+        orig_wait = om.wait_os_arrival
+        orig_sleep = om.time.sleep
+        om.bridge_enabled = lambda config: True
+        om.os_goto_zone = zone
+        om.wait_os_arrival = lambda *a, **k: {'in_map': True, 'zone_id': 13, 'ui': 'map'}
+        om.time.sleep = lambda *_a, **_k: None
+        try:
+            self.assertIs(om.run_os_globe_goto(Cfg(), 13), True)
+            self.assertEqual(calls['n'], 2)
+        finally:
+            om.bridge_enabled = orig_en
+            om.os_goto_zone = orig_zone
+            om.wait_os_arrival = orig_wait
+            om.time.sleep = orig_sleep
+
+    def test_globe_goto_ap_short_does_not_wait_for_arrival(self):
+        from module.alas_bridge import os_missions as om
+        from module.os_handler.action_point import ActionPointLimit
+
+        class Cfg:
+            Optimization_SweeneyBridge = True
+
+        orig_en = om.bridge_enabled
+        orig_zone = om.os_goto_zone
+        orig_wait = om.wait_os_arrival
+        om.bridge_enabled = lambda config: True
+        om.os_goto_zone = lambda *a, **k: {'ap_short': True, 'current': 5, 'cost': 40}
+        om.wait_os_arrival = lambda *a, **k: self.fail('should not wait for arrival')
+        try:
+            with self.assertRaises(ActionPointLimit) as caught:
+                om.run_os_globe_goto(Cfg(), 13)
+            self.assertEqual(caught.exception.current, 5)
+            self.assertEqual(caught.exception.cost, 40)
+        finally:
+            om.bridge_enabled = orig_en
+            om.os_goto_zone = orig_zone
+            om.wait_os_arrival = orig_wait
+
     def test_globe_goto_globe_pin_is_not_arrival(self):
         from module.alas_bridge import os_missions as om
 
@@ -345,6 +406,42 @@ class TestOsGlobeGoto(unittest.TestCase):
             om.bridge_enabled = orig_en
             om.os_goto_zone = orig_zone
             om.wait_os_arrival = orig_wait
+
+    def test_peek_safe_uses_complete_chapter_flag(self):
+        from module.alas_bridge import os_missions as om
+
+        class Cfg:
+            Optimization_SweeneyBridge = True
+
+        orig_en = om.bridge_enabled
+        orig_maps = om.os_zone_maps
+        om.bridge_enabled = lambda config: True
+        om.os_zone_maps = lambda config, zone_id, timeout=12.0: {
+            'zone_id': zone_id,
+            'has_safe': zone_id == 12,
+        }
+        try:
+            self.assertTrue(om.peek_os_zone_has_safe(Cfg(), 12))
+            self.assertFalse(om.peek_os_zone_has_safe(Cfg(), 44))
+        finally:
+            om.bridge_enabled = orig_en
+            om.os_zone_maps = orig_maps
+
+    def test_peek_missing_verb_is_unknown(self):
+        from module.alas_bridge import os_missions as om
+
+        class Cfg:
+            Optimization_SweeneyBridge = True
+
+        orig_en = om.bridge_enabled
+        orig_maps = om.os_zone_maps
+        om.bridge_enabled = lambda config: True
+        om.os_zone_maps = lambda *a, **k: None
+        try:
+            self.assertIsNone(om.peek_os_zone_has_safe(Cfg(), 12))
+        finally:
+            om.bridge_enabled = orig_en
+            om.os_zone_maps = orig_maps
 
 
 if __name__ == '__main__':

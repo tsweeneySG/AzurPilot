@@ -90,6 +90,16 @@ class TestPageNameFromState(unittest.TestCase):
             'page_campaign',
         )
 
+    def test_level_remaster_list_is_archives(self):
+        self.assertEqual(
+            page_name_from_state({
+                'page': 'page_campaign_menu',
+                'scene_key': 'LEVEL',
+                'level': {'entrance': True, 'in_map': False, 'archives': True},
+            }),
+            'page_archives',
+        )
+
     def test_overlay_wins(self):
         self.assertEqual(
             page_name_from_state({
@@ -318,6 +328,59 @@ class TestSortieStatus(unittest.TestCase):
         self.assertEqual(chapter_track_expected_stage(MainCfg()), '16-4')
         self.assertEqual(chapter_track_expected_stage(EventCfg()), 'd2')
 
+    def test_chapter_track_main_sends_16_4_not_leftover_catchup(self):
+        from module.alas_bridge import actions
+        from module.alas_bridge.sortie_status import normalize_chapter_name
+
+        self.assertEqual(normalize_chapter_name('16–4'), '16-4')
+
+        seen = {}
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                seen['args'] = args or {}
+                return {
+                    'id': '1',
+                    'ok': True,
+                    'name': name,
+                    'result': {
+                        'sent': True,
+                        'chapter_id': 1604,
+                        'chapter_name': '16-4',
+                        'custom_fleet': False,
+                    },
+                }
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        class Cfg:
+            task = type('T', (), {'command': 'Main'})()
+            Campaign_Name = '16–4'
+            Campaign_Use2xBook = False
+            SweeneySortieChapterName = 'D3'
+            Fleet_Fleet1 = 1
+            Fleet_Fleet2 = 2
+            Submarine_Fleet = 0
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        try:
+            result = actions.chapter_track(Cfg(), auto_fight=True, loop=True)
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = orig_gs
+        self.assertEqual(seen['args']['chapter_name'], '16-4')
+        self.assertTrue(result.get('sent'))
+        self.assertNotEqual(result.get('reason'), 'chapter_mismatch')
+
     def test_hard_roster_family_and_match(self):
         from module.alas_bridge.sortie_status import (
             hard_roster_family,
@@ -435,22 +498,49 @@ class TestSortieStatus(unittest.TestCase):
         self.assertIsNone(eta_until_energy(ships, 40))
 
     def test_level_cap_triggered_without_rpc(self):
+        from unittest.mock import patch
+
         from module.alas_bridge import sortie_status as ss
 
         class Cfg:
+            config_name = '3_asami'
             Optimization_SweeneyBridge = True
             StopCondition_LevelCap = True
             LV_TRIGGERED = False
+            Error_OnePushConfig = 'provider: telegram'
 
         original = ss.fetch_sortie_status
         ss.fetch_sortie_status = lambda config, timeout=8.0: {
             'source': 'regular',
-            'fleets': [{'id': 1, 'ships': [{'name': 'D', 'level': 70, 'max_level': 70, 'at_cap': True}]}],
+            'fleets': [{
+                'id': 1,
+                'ships': [{
+                    'name': 'John Rodgers',
+                    'level': 115,
+                    'max_level': 115,
+                    'hard_cap': False,
+                    'soft_cap': True,
+                    'at_cap': True,
+                }],
+            }],
         }
         try:
             cfg = Cfg()
-            self.assertTrue(ss.level_cap_triggered(cfg))
+            with patch('module.notify.handle_notify', return_value=True) as notify:
+                self.assertTrue(ss.level_cap_triggered(cfg))
+                self.assertTrue(ss.level_cap_triggered(cfg))
             self.assertTrue(cfg.LV_TRIGGERED)
+            self.assertEqual(notify.call_count, 1)
+            content = notify.call_args.kwargs['content']
+            self.assertIn(
+                'Level cap reached: John Rodgers Lv.115/115 hard=False soft=True',
+                content,
+            )
+            self.assertNotIn('等级', content)
+            self.assertEqual(
+                notify.call_args.kwargs['title'],
+                'AzurPilot <3_asami> level cap reached',
+            )
         finally:
             ss.fetch_sortie_status = original
 
@@ -715,11 +805,12 @@ class TestBridgeActions(unittest.TestCase):
                             'current': {'forceAutoFightWithoutLoop': True},
                         },
                     }
-                if name in ('get_wa_status', 'wa_goto'):
+                if name in ('get_wa_status', 'wa_goto', 'goto_level', 'goto_scene', 'chapter_enter',
+                             'battle_result_advance'):
                     return {'id': '1', 'ok': True, 'name': name, 'result': {'ok': True}}
                 if name in (
                     'get_os_missions', 'os_accept_daily', 'os_submit_tasks',
-                    'os_goto_task', 'os_goto_zone',
+                    'os_goto_task', 'os_goto_zone', 'os_zone_maps',
                 ):
                     return {
                         'id': '1', 'ok': True, 'name': name,
@@ -746,6 +837,11 @@ class TestBridgeActions(unittest.TestCase):
             self.assertIsNotNone(actions.chapter_track(object(), auto_fight=True, loop=True))
             self.assertIsNotNone(actions.get_wa_status(object()))
             self.assertIsNotNone(actions.wa_goto(object(), chapter_id=16004, remaster_id=1))
+            cfg = type('Cfg', (), {'Optimization_SweeneyBridge': True})()
+            self.assertIsNotNone(actions.goto_level(cfg, want='event'))
+            self.assertIsNotNone(actions.goto_scene(cfg, 'SHOP'))
+            self.assertIsNotNone(actions.chapter_enter(cfg, chapter_name='d3'))
+            self.assertIsNotNone(actions.battle_result_advance(cfg))
             self.assertIsNotNone(actions.set_mod_flags(
                 object(), force_auto_fight_without_loop=True, auto_fight_clear_before_boss=False))
             self.assertIsNotNone(actions.apply_fleet_preset(object(), swap=True, chapter_id=16004))
@@ -754,6 +850,7 @@ class TestBridgeActions(unittest.TestCase):
             self.assertIsNotNone(actions.os_submit_tasks(object(), ids=[1]))
             self.assertIsNotNone(actions.os_goto_task(object(), task_id=3100))
             self.assertIsNotNone(actions.os_goto_zone(object(), zone_id=44))
+            self.assertIsNotNone(actions.os_zone_maps(object(), zone_id=44))
         finally:
             actions.BridgeRpc = orig_rpc
             actions.GameState = orig_gs
@@ -803,6 +900,101 @@ class TestBridgeActions(unittest.TestCase):
         self.assertTrue(seen['args']['auto_fight'])
         self.assertTrue(seen['args']['loop'])
         self.assertFalse(seen['args']['use_2x_book'])
+        self.assertNotIn('auto_sub', seen['args'])
+
+    def test_chapter_track_submarine_fleet_is_dock_11(self):
+        """Sub Fleet 1 is dock id 11, not surface fleet 1 (6ix7even 16-4)."""
+        from module.alas_bridge import actions
+
+        seen = {}
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                seen['args'] = args or {}
+                return {
+                    'id': '1',
+                    'ok': True,
+                    'name': name,
+                    'result': {'sent': True, 'chapter_id': 16004, 'chapter_name': '16-4'},
+                }
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        class Cfg:
+            Fleet_Fleet1 = 1
+            Fleet_Fleet2 = 2
+            Submarine_Fleet = 1
+            Submarine_Mode = 'do_not_use'
+            Submarine_AutoSearchMode = 'sub_auto_call'
+            Campaign_Use2xBook = False
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        try:
+            result = actions.chapter_track(Cfg(), auto_fight=True, loop=True)
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = orig_gs
+        self.assertIsNotNone(result)
+        self.assertEqual(seen['args']['fleet_ids'], [1, 2, 11])
+        self.assertTrue(seen['args']['auto_sub'])
+
+    def test_chapter_track_submarine_standby_and_explicit_ids(self):
+        from module.alas_bridge import actions
+
+        seen = {}
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                seen['args'] = args or {}
+                return {
+                    'id': '1',
+                    'ok': True,
+                    'name': name,
+                    'result': {'sent': True, 'chapter_id': 16004},
+                }
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        class Cfg:
+            Fleet_Fleet1 = 1
+            Fleet_Fleet2 = 0
+            Submarine_Fleet = 2
+            Submarine_Mode = 'boss_only'
+            Submarine_AutoSearchMode = 'sub_auto_call'
+            Campaign_Use2xBook = False
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        try:
+            result = actions.chapter_track(Cfg(), auto_fight=True, loop=True)
+            self.assertEqual(seen['args']['fleet_ids'], [1, 12])
+            self.assertFalse(seen['args']['auto_sub'])
+            seen.clear()
+            result = actions.chapter_track(
+                Cfg(), auto_fight=True, loop=True, fleet_ids=[5, 6])
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = orig_gs
+        self.assertIsNotNone(result)
+        self.assertEqual(seen['args']['fleet_ids'], [5, 6])
+        self.assertNotIn('auto_sub', seen['args'])
 
     def test_chapter_track_sends_use_2x_book_true(self):
         from module.alas_bridge import actions
@@ -845,6 +1037,261 @@ class TestBridgeActions(unittest.TestCase):
             actions.GameState = orig_gs
         self.assertTrue(seen['args']['use_2x_book'])
         self.assertNotIn('operation_item', seen['args'])
+
+    def test_goto_level_sends_want_event(self):
+        from module.alas_bridge import actions
+        from module.alas_bridge.actions import _goto_level_page_ok
+
+        seen = {}
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                seen['name'] = name
+                seen['args'] = args or {}
+                return {
+                    'id': '1',
+                    'ok': True,
+                    'name': name,
+                    'result': {'already_there': True, 'page': 'page_event'},
+                }
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        class Cfg:
+            Optimization_SweeneyBridge = True
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        try:
+            result = actions.goto_level(Cfg(), want='event')
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = orig_gs
+        self.assertEqual(seen['name'], 'goto_level')
+        self.assertEqual(seen['args']['want'], 'event')
+        self.assertTrue(result.get('already_there'))
+        self.assertTrue(_goto_level_page_ok('event', 'page_event'))
+        self.assertTrue(_goto_level_page_ok('campaign_menu', 'page_event'))
+        self.assertTrue(_goto_level_page_ok('archives', 'page_archives'))
+        self.assertFalse(_goto_level_page_ok('archives', 'page_campaign_menu'))
+        self.assertFalse(_goto_level_page_ok('event', 'page_main'))
+
+    def test_goto_scene_sends_shop(self):
+        from module.alas_bridge import actions
+
+        seen = {}
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                seen['name'] = name
+                seen['args'] = args or {}
+                return {
+                    'id': '1',
+                    'ok': True,
+                    'name': name,
+                    'result': {'pending': True, 'scene': 'scene shop'},
+                }
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        class Cfg:
+            Optimization_SweeneyBridge = True
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        try:
+            result = actions.goto_scene(Cfg(), 'SHOP')
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = orig_gs
+        self.assertEqual(seen['name'], 'goto_scene')
+        self.assertEqual(seen['args']['scene'], 'SHOP')
+        self.assertTrue(result.get('pending'))
+
+    def test_chapter_enter_sends_chapter_name(self):
+        from module.alas_bridge import actions
+
+        seen = {}
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                seen['name'] = name
+                seen['args'] = args or {}
+                return {
+                    'id': '1',
+                    'ok': True,
+                    'name': name,
+                    'result': {'info_showing': True, 'chapter_name': 'd3'},
+                }
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        class Cfg:
+            Optimization_SweeneyBridge = True
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        try:
+            result = actions.chapter_enter(Cfg(), chapter_name='d3')
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = orig_gs
+        self.assertEqual(seen['name'], 'chapter_enter')
+        self.assertEqual(seen['args']['chapter_name'], 'd3')
+        self.assertTrue(result.get('info_showing'))
+
+    def test_chapter_enter_sends_archive_title(self):
+        from module.alas_bridge import actions
+
+        seen = {}
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                seen['args'] = args or {}
+                return {
+                    'id': '1',
+                    'ok': True,
+                    'name': name,
+                    'result': {'info_showing': True},
+                }
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        class Cfg:
+            Optimization_SweeneyBridge = True
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        try:
+            actions.chapter_enter(
+                Cfg(),
+                chapter_name='t6',
+                archive_title='archives Tempesta and the Fountain of Youth',
+            )
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = orig_gs
+        self.assertEqual(seen['args']['chapter_name'], 't6')
+        self.assertEqual(
+            seen['args']['archive_title'],
+            'archives Tempesta and the Fountain of Youth',
+        )
+
+    def test_war_archive_title_tempesta(self):
+        from module.alas_bridge.actions import war_archive_title
+
+        self.assertEqual(
+            war_archive_title('war_archives_20231026_cn'),
+            'archives Tempesta and the Fountain of Youth',
+        )
+        self.assertIsNone(war_archive_title('event_20231026_cn'))
+
+    def test_chapter_track_returns_no_tries(self):
+        from module.alas_bridge import actions
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                return {
+                    'id': '1',
+                    'ok': True,
+                    'name': name,
+                    'result': {
+                        'sent': False,
+                        'reason': 'no_tries',
+                        'remain': 0,
+                        'limit': 1,
+                        'enough_times': False,
+                    },
+                }
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        class Cfg:
+            Optimization_SweeneyBridge = True
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        try:
+            result = actions.chapter_track(Cfg(), auto_fight=True, loop=True)
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = orig_gs
+        self.assertEqual(result.get('reason'), 'no_tries')
+        self.assertFalse(result.get('sent'))
+
+    def test_battle_result_advance_acted(self):
+        from module.alas_bridge import actions
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                return {
+                    'id': '1',
+                    'ok': True,
+                    'name': name,
+                    'result': {'acted': True, 'page': 'NewBattleResultGradePage'},
+                }
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        class Cfg:
+            Optimization_SweeneyBridge = True
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        try:
+            result = actions.battle_result_advance(Cfg())
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = orig_gs
+        self.assertTrue(result.get('acted'))
 
     def test_chapter_track_sends_chapter_name_and_rejects_event_b_for_d(self):
         """Cross-aside B vs D must still mismatch. In-group A/C is switched in Lua."""
@@ -996,6 +1443,40 @@ class TestBridgeActions(unittest.TestCase):
         finally:
             actions.BridgeRpc = orig_rpc
             actions.GameState = orig_gs
+            actions._VERB_FAIL_UNTIL.clear()
+
+    def test_send_verb_skips_after_timeout(self):
+        from module.alas_bridge import actions
+
+        calls = {'n': 0}
+
+        class FakeRpc:
+            def __init__(self, gs):
+                pass
+
+            def send(self, name, args=None, timeout=8.0):
+                calls['n'] += 1
+                return {'id': '1', 'ok': False, 'name': name, 'error': 'timeout'}
+
+        class FakeGS:
+            @staticmethod
+            def from_config(config):
+                return object()
+
+        orig_rpc = actions.BridgeRpc
+        orig_gs = actions.GameState
+        actions.BridgeRpc = FakeRpc
+        actions.GameState = FakeGS
+        actions._VERB_FAIL_UNTIL.clear()
+        try:
+            self.assertIsNone(actions.send_verb(object(), 'goto_level'))
+            self.assertEqual(calls['n'], 1)
+            self.assertIsNone(actions.send_verb(object(), 'goto_level'))
+            self.assertEqual(calls['n'], 1)
+        finally:
+            actions.BridgeRpc = orig_rpc
+            actions.GameState = orig_gs
+            actions._VERB_FAIL_UNTIL.clear()
 
     def test_player_from_heartbeat_keeps_zero_oil(self):
         from module.alas_bridge.actions import player_from_heartbeat
@@ -1492,6 +1973,39 @@ class TestWarArchivesCatchupPolicy(unittest.TestCase):
         skipped = hidden_incomplete(status)
         self.assertEqual(len(skipped), 1)
         self.assertEqual(skipped[0]['id'], 2100187)
+
+    def test_pick_next_skips_map_that_costs_more_than_balance(self):
+        from module.war_archives_catchup.policy import (
+            data_keys_insufficient,
+            keys_block_remaining,
+            pick_next_chapter,
+        )
+
+        self.assertTrue(data_keys_insufficient(1, 5))
+        self.assertTrue(data_keys_insufficient(3, 5))
+        self.assertFalse(data_keys_insufficient(5, 5))
+        self.assertTrue(data_keys_insufficient(8, 15))
+        self.assertFalse(data_keys_insufficient(4, 0))
+
+        expensive = {
+            'id': 1, 'name': 'SP1', 'unlocked': True, 'incomplete': True,
+            'clear_pct': 0, 'stars_earned': 0, 'stars_total': 3,
+            'ticket_cost': 15,
+        }
+        cheap = {
+            'id': 2, 'name': 'T1', 'unlocked': True, 'incomplete': True,
+            'clear_pct': 10, 'stars_earned': 0, 'stars_total': 3,
+            'ticket_cost': 5,
+        }
+        status = self._status([expensive, cheap], nxt=expensive)
+        status['tickets'] = 8
+        picked = pick_next_chapter(status)
+        self.assertEqual(picked['id'], 2)
+        self.assertFalse(keys_block_remaining(status))
+
+        status['tickets'] = 3
+        self.assertIsNone(pick_next_chapter(status))
+        self.assertTrue(keys_block_remaining(status))
 
     def test_flags_no_loop_template_forces_noloop(self):
         from module.war_archives_catchup.policy import flags_for_chapter

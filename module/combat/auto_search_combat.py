@@ -207,37 +207,41 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
         checked_fleet = False
         checked_oil = False
         checked_coin = False
-        for _ in self.loop():
+        # handle_retirement 会先点 GAME_TIPS。移动中出击键会误匹配。
+        self._auto_search_moving = True
+        try:
+            for _ in self.loop():
+                if self.is_auto_search_running():
+                    checked_fleet = self.auto_search_watch_fleet(checked_fleet)
+                    if not checked_oil or not checked_coin:
+                        checked_oil = self.auto_search_watch_oil(checked_oil)
+                        checked_coin = self.auto_search_watch_coin(checked_coin)
+                if self.handle_retirement():
+                    self.map_offensive_auto_search()
+                    # Map offensive ends at is_combat_loading
+                    break
+                if self.handle_auto_search_map_option():
+                    continue
+                if self.handle_combat_low_emotion():
+                    self._auto_search_status_confirm = True
+                    continue
+                if self.handle_story_skip():
+                    continue
+                if self.handle_map_cat_attack():
+                    continue
+                if self.handle_vote_popup():
+                    continue
 
-            if self.is_auto_search_running():
-                checked_fleet = self.auto_search_watch_fleet(checked_fleet)
-                if not checked_oil or not checked_coin:
-                    checked_oil = self.auto_search_watch_oil(checked_oil)
-                    checked_coin = self.auto_search_watch_coin(checked_coin)
-            if self.handle_retirement():
-                self.map_offensive_auto_search()
-                # Map offensive ends at is_combat_loading
-                break
-            if self.handle_auto_search_map_option():
-                continue
-            if self.handle_combat_low_emotion():
-                self._auto_search_status_confirm = True
-                continue
-            if self.handle_story_skip():
-                continue
-            if self.handle_map_cat_attack():
-                continue
-            if self.handle_vote_popup():
-                continue
-
-            # End
-            if self.is_combat_loading():
-                break
-            if self.is_combat_executing():
-                logger.info('[自动搜索-战斗] 战斗执行中')
-                break
-            if self.is_in_auto_search_menu() or self._handle_auto_search_menu_missing():
-                raise CampaignEnd
+                # End
+                if self.is_combat_loading():
+                    break
+                if self.is_combat_executing():
+                    logger.info('[自动搜索-战斗] 战斗执行中')
+                    break
+                if self.is_in_auto_search_menu() or self._handle_auto_search_menu_missing():
+                    raise CampaignEnd
+        finally:
+            self._auto_search_moving = False
 
     def auto_search_combat_execute(self, emotion_reduce, fleet_index, battle=None, expected_end=None):
         """
@@ -439,6 +443,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
         self.device.click_record_clear()
         exp_info = False  # This is for the white screen bug in game
         withdraw_stable_timer = Timer(2)
+        self._bridge_result_advances = 0
 
         for _ in self.loop():
 
@@ -459,6 +464,8 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                 # 结算完成后才会出现FLEET_SWITCH_CONFIRM或WITHDRAW按钮
                 # 沉船D评价流程：OPTS_INFO_D → BATTLE_STATUS_D → EXP_INFO_D → OPTS_INFO_D(再次出现) → FLEET_SWITCH_CONFIRM
                 if self.handle_retirement() or self.retirement_appear():
+                    continue
+                if self._bridge_try_result_advance():
                     continue
                 if self.appear_then_click(OPTS_INFO_D, offset=(30, 30), interval=2):
                     continue
@@ -526,7 +533,9 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             # 只要画面上还有 GET_SHIP 就返回 True，ALAS 原版会走到 handle_retirement。
             if self.handle_retirement() or self.retirement_appear():
                 continue
-            if self.handle_get_ship():
+            if self._bridge_try_result_advance():
+                continue
+            if (not exp_info or self.appear(GET_SHIP)) and self.handle_get_ship():
                 continue
             if not self._withdraw and self.handle_auto_search_map_option():
                 self._auto_search_status_confirm = False
@@ -550,7 +559,8 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             # D评价点击BATTLE_STATUS_D后，会出现OPTS_INFO_D沉船弹窗
             if self.handle_battle_status():
                 continue
-            if self.handle_exp_info():
+            if not exp_info and self.handle_exp_info():
+                exp_info = True
                 continue
             # 检测D评价（沉船）弹窗——这是沉船的确认性标志（二次确认）
             # 只有OPTS_INFO_D出现才确认是真正的D评价并扣心情
@@ -566,7 +576,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
             # Handle low emotion combat
             # Combat status
             if self._auto_search_status_confirm:
-                if not exp_info and self.handle_get_ship():
+                if (not exp_info or self.appear(GET_SHIP)) and self.handle_get_ship():
                     continue
                 if self.handle_get_items():
                     continue
@@ -574,7 +584,7 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                     continue
                 if self.handle_popup_confirm('combat_status'):
                     continue
-                if self.handle_exp_info():
+                if not exp_info and self.handle_exp_info():
                     exp_info = True
                     continue
 

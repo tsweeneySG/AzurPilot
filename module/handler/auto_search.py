@@ -20,7 +20,12 @@ from module.base.timer import Timer
 from module.handler.assets import *
 from module.handler.enemy_searching import EnemySearchingHandler
 from module.logger import logger
-from module.map.assets import FLEET_PREPARATION_CHECK
+from module.map.assets import (
+    FLEET_PREPARATION,
+    FLEET_PREPARATION_CHECK,
+    MAP_PREPARATION,
+    MAP_PREPARATION_HARD,
+)
 
 # 自动搜索设置按钮列表，对应游戏界面中的 6 个选项
 AUTO_SEARCH_SETTINGS = [
@@ -301,7 +306,15 @@ class AutoSearchHandler(EnemySearchingHandler):
         """
         if not self.is_in_auto_search_menu():
             return False
+        # 情绪结束时人还在地图准备界面。继续键的亮度会误匹配，
+        # 退出键点一下就不再出现，循环等到 GameStuck
+        # （3_asami Event2 2026-09-23 10:10）。
+        if self.appear(MAP_PREPARATION, offset=(20, 20)) \
+                or self.appear(MAP_PREPARATION_HARD, offset=(20, 20)) \
+                or self.appear(FLEET_PREPARATION, offset=(20, 50)):
+            return False
 
+        give_up = Timer(12).start()
         with self.stat.new(
                 genre=self.config.campaign_name, method=self.config.DropRecord_CombatRecord
         ) as drop:
@@ -312,10 +325,21 @@ class AutoSearchHandler(EnemySearchingHandler):
                     self.device.screenshot()
 
                 if self.handle_auto_search_exit(drop=drop):
+                    give_up.reset()
                     continue
 
                 # 结束条件
                 if self.is_in_stage():
+                    break
+                if self.appear(MAP_PREPARATION, offset=(20, 20)) \
+                        or self.appear(MAP_PREPARATION_HARD, offset=(20, 20)) \
+                        or self.appear(FLEET_PREPARATION, offset=(20, 50)):
+                    break
+                if not self.is_in_auto_search_menu():
+                    break
+                if give_up.reached():
+                    logger.warning('[自动搜索] 退出菜单无进展，放弃')
+                    self.device.stuck_record_clear()
                     break
 
         return True

@@ -28,7 +28,7 @@ from module.base.decorator import run_once
 from module.base.timer import Timer
 from module.combat.assets import GET_ITEMS_1, GET_ITEMS_2, GET_SHIP
 from module.exception import (GameNotRunningError, GamePageUnknownError,
-                              RequestHumanTakeover)
+                              GameTooManyClickError, RequestHumanTakeover)
 from module.exercise.assets import EXERCISE_PREPARATION
 from module.handler.assets import (AUTO_SEARCH_MENU_EXIT, BATTLE_PASS_NEW_SEASON, BATTLE_PASS_NOTICE, GAME_TIPS,
                                    IN_MAP, LOGIN_ANNOUNCE, LOGIN_ANNOUNCE_2, LOGIN_CHECK, LOGIN_RETURN_SIGN,
@@ -39,12 +39,16 @@ from module.map.assets import (FLEET_PREPARATION, MAP_PREPARATION,
                                MAP_PREPARATION_HARD, MAP_PREPARATION_CANCEL, WITHDRAW)
 from module.meowfficer.assets import MEOWFFICER_BUY
 from module.ocr.ocr import Ocr
-from module.os_handler.assets import (AUTO_SEARCH_REWARD, EXCHANGE_CHECK, RESET_FLEET_PREPARATION, RESET_TICKET_POPUP)
+from module.os_handler.assets import (
+    AUTO_SEARCH_REWARD, EXCHANGE_CHECK, RESET_FLEET_PREPARATION, RESET_TICKET_POPUP,
+)
 from module.raid.assets import *
 from module.shop.assets import NAV_GENERAL, SHOP_REFRESH_CHECK, TAB_GENERAL, TAB_MERIT
 from module.ui.assets import *
-from module.ui.page import (Page, page_academy, page_campaign, page_campaign_menu,
-                            page_event, page_in_map, page_main, page_main_white, page_munitions, page_sp)
+from module.ui.page import (Page, page_academy, page_archives, page_campaign, page_campaign_menu,
+                            page_daily, page_dormmenu, page_event, page_exercise, page_in_map,
+                            page_main, page_main_white, page_munitions, page_os, page_settings,
+                            page_shop, page_sp)
 from module.ui_white.assets import *
 
 
@@ -96,6 +100,15 @@ class UI(InfoHandler):
                 return True
         return self.appear(page.check_button, offset=offset, interval=interval)
 
+    def _ui_pages_equivalent(self, a, b):
+        """同一界面的别名。军需与 NewShop 都是 SCENE.SHOP (supply)。"""
+        if a is None or b is None:
+            return False
+        if a == b:
+            return True
+        pair = {a, b}
+        return pair == {page_main, page_main_white} or pair == {page_munitions, page_shop}
+
     def _ui_goto_needs_fresh_frame(self, destination):
         """导航离开当前页时不能复用截图。
 
@@ -106,7 +119,7 @@ class UI(InfoHandler):
         current = getattr(self, 'ui_current', None)
         if current == destination:
             return False
-        if {current, destination} == {page_main, page_main_white}:
+        if self._ui_pages_equivalent(current, destination):
             return False
         return True
 
@@ -115,7 +128,7 @@ class UI(InfoHandler):
         current = getattr(self, 'ui_current', None)
         if current is None or current == destination:
             return False
-        if {current, destination} == {page_main, page_main_white}:
+        if self._ui_pages_equivalent(current, destination):
             return False
         check = current.check_button
         if check is None:
@@ -129,9 +142,7 @@ class UI(InfoHandler):
         CAMPAIGN_CHECK 会在菜单上误匹配。此时 HARD 开关不在屏幕上，
         SWITCH_1_HARD 会点到作战档案。
         """
-        if bridged is None or bridged == destination:
-            return False
-        if {bridged, destination} == {page_main, page_main_white}:
+        if bridged is None or self._ui_pages_equivalent(bridged, destination):
             return False
         return True
 
@@ -165,28 +176,281 @@ class UI(InfoHandler):
             return True
         return False
 
-    def _ui_click_toward_parent(self, page):
-        """沿 A* parent 点击一跳。受 interval 限制，点击则返回 True。"""
+    def _ui_click_toward_parent(self, page, via_bridge=False):
+        """沿 A* parent 点击一跳。受 interval 限制，点击则返回 True。
+
+        GOTO_MAIN 与主界面设置齿轮同槽。A* 截图路径和心跳路径必须共用
+        同一按钮 interval，否则 EVENT_CHECK 与 SP_CHECK 会在 200ms 内
+        各点一次 HOME，再加心跳第三下，把刚回到的主界面点进设置页。
+        """
         if page is None or page.parent is None:
             return False
-        button = page.links.get(page.parent)
+        parent = page.parent
+        button = page.links.get(parent)
         if button is None:
             return False
         if self._ui_skip_home_click(button):
             logger.info('[UI] 已在主界面，跳过 GOTO_MAIN（避免打开设置）')
             return False
-        timer = self.get_interval_timer(button, interval=5, renew=True)
+        # 情绪延迟会留下 LevelInfoView。HOME 关不掉准备弹窗，再点 CANCEL 就和对打
+        # （2_brad / 5_booty 2026-09-18 晚 Event D3 后 goto_main）。
+        if (
+            button in (GOTO_MAIN, GOTO_MAIN_WHITE)
+            and self._ui_map_prep_visible()
+            and not getattr(self, '_ui_map_prep_cancel_capped', False)
+        ):
+            logger.info('[UI] 地图准备弹窗仍开，跳过 GOTO_MAIN')
+            return False
+        if button in (MAIN_GOTO_CAMPAIGN, MAIN_GOTO_CAMPAIGN_WHITE) and not self._ui_home_chrome_visible():
+            logger.info('[UI] 不在主界面，跳过 MAIN_GOTO_CAMPAIGN（心跳误报 MAIN）')
+            return False
+        # GO_SCENE 过场中不要点 HOME / 出击 / 每日砖。
+        # goto_level pending 以前只挡 MAIN_GOTO，1_67 Daily 从 WORLD 仍点了
+        # GOTO_MAIN 和 CAMPAIGN_MENU_GOTO_DAILY，把 GO_SCENE LEVEL 打断。
+        if self._ui_bridge_nav_pending():
+            return False
+        # 出击入口已达上限：不要再点 MAIN_GOTO / GOTO_MAIN。
+        # BACK 和出击菜单里的演习/每日入口仍要点，否则 Exercise 进不去。
+        # A* 从活动页到演习时 event→main 与 event→campaign 同深，可能选 HOME。
+        if getattr(self, '_ui_main_goto_capped', False):
+            if button in (MAIN_GOTO_CAMPAIGN, MAIN_GOTO_CAMPAIGN_WHITE):
+                return False
+            if button in (GOTO_MAIN, GOTO_MAIN_WHITE):
+                back_dest = None
+                for dest, btn in page.links.items():
+                    if btn is BACK_ARROW:
+                        back_dest = dest
+                        button = btn
+                        break
+                if back_dest is None:
+                    return False
+                parent = back_dest
+        # 心跳报出击菜单但画面不是菜单时，盲点 CAMPAIGN_MENU_GOTO_CAMPAIGN
+        # 会打满 12 次并重启（Hard 1_67 / Brad / Margaret、Main Booty，2026-09-24）。
+        if button is CAMPAIGN_MENU_GOTO_CAMPAIGN:
+            n = getattr(self, '_ui_campaign_menu_goto_clicks', 0)
+            if n >= 3:
+                if not getattr(self, '_ui_campaign_menu_goto_capped_logged', False):
+                    logger.warning(
+                        '[UI] CAMPAIGN_MENU_GOTO_CAMPAIGN 连点无进展，停止点击以免重启'
+                    )
+                    self._ui_campaign_menu_goto_capped_logged = True
+                return False
+        # 设置页 Back 与心跳误报的左上角匹配是同一按钮。两条路径用的
+        # interval 不同，会互相换成未启动的计时器，于是 200ms 一点，
+        # 12 下重启（1_67 / Asami / nyan / booty 2026-09-29 10:21–18:24）。
+        if button in (BACK_ARROW, BACK_ARROW_WHITE) and self._ui_back_arrow_capped():
+            return False
+        if button in (MAIN_GOTO_CAMPAIGN, MAIN_GOTO_CAMPAIGN_WHITE):
+            n = getattr(self, '_ui_main_goto_campaign_clicks', 0)
+            if n >= 2:
+                # 第二次点击后先等 interval，给出击菜单过场。立刻 cap
+                # 会在 1 秒内结束导航，大世界初始化就在主界面空等地球仪
+                # （Margaret 2026-09-18 14:01 OpsiMonthBoss）。
+                timer = self.get_interval_timer(button, interval=5, renew=True)
+                if not timer.reached():
+                    return False
+                self._ui_main_goto_capped = True
+                if not getattr(self, '_ui_main_goto_capped_logged', False):
+                    logger.warning('[UI] MAIN_GOTO_CAMPAIGN 连点无进展，停止点击以免重启')
+                    self._ui_main_goto_capped_logged = True
+                return False
+        dock = (MAIN_GOTO_DORMMENU, MAIN_GOTO_DORMMENU_WHITE)
+        hub_tiles = (
+            DORMMENU_GOTO_ACADEMY, DORMMENU_GOTO_DORM, DORMMENU_GOTO_MEOWFFICER,
+            DORMMENU_GOTO_PRIVATE_QUARTERS, DORMMENU_GOTO_ISLAND,
+        )
+        if button in hub_tiles and self._ui_home_chrome_visible():
+            logger.info('[UI] 主界面仍可见，跳过后宅菜单入口（枢纽未打开）')
+            # DORMMENU_CHECK 与学院砖同槽；误检成枢纽时把当前页打回主界面。
+            if getattr(self, 'ui_current', None) is page_dormmenu:
+                self.ui_current = self._ui_page_from_home_chrome()
+            return False
+        if button in dock:
+            timer = self.get_interval_timer('MAIN_GOTO_DORMMENU', interval=5, renew=True)
+        else:
+            timer = self.get_interval_timer(button, interval=5, renew=True)
         if not timer.reached():
             return False
-        logger.info(f'[UI] 页面切换: {page} -> {page.parent} (Sweeney bridge)')
+        suffix = ' (Sweeney bridge)' if via_bridge else ''
+        logger.info(f'[UI] 页面切换: {page} -> {parent}{suffix}')
         self.ui_current = page
         self.device.click(button)
+        if button in (MAIN_GOTO_CAMPAIGN, MAIN_GOTO_CAMPAIGN_WHITE):
+            self._ui_main_goto_campaign_clicks = getattr(self, '_ui_main_goto_campaign_clicks', 0) + 1
+        if button is CAMPAIGN_MENU_GOTO_CAMPAIGN:
+            self._ui_campaign_menu_goto_clicks = getattr(self, '_ui_campaign_menu_goto_clicks', 0) + 1
+        if button in (BACK_ARROW, BACK_ARROW_WHITE):
+            self._ui_back_arrow_clicks = getattr(self, '_ui_back_arrow_clicks', 0) + 1
         timer.reset()
         self.ui_button_interval_reset(button)
         return True
 
+    def _ui_bridge_confirms_arrival(self, destination, bridged):
+        """心跳到达是否可信。主界面心跳会在设置页打开前仍报 MAIN。"""
+        if bridged is None or not self._ui_pages_equivalent(bridged, destination):
+            return False
+        if destination in (page_main, page_main_white) and not self.is_in_main():
+            logger.info(f'[UI] 忽略 {destination} 心跳到达 (未见主界面 chrome)')
+            return False
+        # goto_scene WORLD 的心跳会在过场画完前就报 page_os。这一帧仍是主界面时
+        # 当成已到达会立刻放弃大世界，下一任务再切场景，WorldScene 退出时
+        # WSPool:Return 对空箭头抛异常（4_nyan 2026-09-23 06:34）。
+        if destination is page_os and self._ui_home_chrome_visible():
+            logger.info('[UI] 忽略 page_os 心跳到达 (仍见主界面)')
+            return False
+        # goto_scene MILITARYEXERCISE 心跳会在过场前报 page_exercise，
+        # 此时截图仍是主界面，OCR 次数会读成 0 并半周期放弃（2_brad / 6_margaret 15:00）。
+        if destination is page_exercise:
+            check = destination.check_button
+            if check is not None and not self.appear(check, offset=(30, 30)):
+                logger.info('[UI] 忽略 page_exercise 心跳到达 (未见演习页)')
+                return False
+        # goto_level archives 的心跳会在列表画完前就报 page_archives。
+        if destination is page_archives:
+            check = destination.check_button
+            if check is not None and not self.appear(check, offset=(30, 30)):
+                logger.info('[UI] 忽略 page_archives 心跳到达 (未见作战档案)')
+                return False
+        return True
+
     def _sweeney_bridge_enabled(self):
-        return bool(getattr(self.config, 'Optimization_SweeneyBridge', False))
+        config = getattr(self, 'config', None)
+        return bool(getattr(config, 'Optimization_SweeneyBridge', False))
+
+    def _ui_bridge_nav_pending(self):
+        """goto_scene / goto_level 过场中不要截图乱点。"""
+        return bool(
+            getattr(self, '_ui_goto_scene_pending', False)
+            or getattr(self, '_ui_goto_level_pending', False)
+        )
+
+    def _ui_world_scene_pending(self):
+        """goto_scene WORLD 过场中。月切剧情未画完时不要点 HOME 或准备取消。"""
+        return bool(
+            getattr(self, '_ui_goto_scene_pending', False)
+            and getattr(self, '_ui_goto_scene_key', None) == 'WORLD'
+        )
+
+    def _ui_tick_bridge_nav_pending(self):
+        """每圈截图推进过场等待。不依赖 A* 是否找到可点按钮。"""
+        if getattr(self, '_ui_goto_level_pending', False):
+            frames = getattr(self, '_ui_goto_level_pending_frames', 0) + 1
+            self._ui_goto_level_pending_frames = frames
+            if frames >= 8:
+                logger.info('[UI] goto_level 未到达，恢复截图导航')
+                self._ui_goto_level_pending = False
+        if not getattr(self, '_ui_goto_scene_pending', False):
+            return
+        if getattr(self, '_ui_goto_scene_key', None) == 'WORLD':
+            timer = getattr(self, '_ui_goto_scene_world_timer', None)
+            if timer is None:
+                self._ui_goto_scene_world_timer = Timer(90).start()
+                return
+            if timer.reached():
+                logger.warning(
+                    '[UI] goto_scene WORLD 超过 90 秒仍未进入大世界，放弃导航以免重启'
+                )
+                self._ui_goto_scene_pending = False
+                self._ui_goto_scene_os_gave_up = True
+            return
+        frames = getattr(self, '_ui_goto_scene_pending_frames', 0) + 1
+        self._ui_goto_scene_pending_frames = frames
+        if frames >= 12:
+            logger.info('[UI] goto_scene 未到达，恢复截图导航')
+            self._ui_goto_scene_pending = False
+
+    def _bridge_goto_scene_key(self, destination):
+        """GAME.GO_SCENE 可直达的页面，跳过港口枢纽误点。"""
+        if destination is page_academy:
+            return 'NAVALACADEMYSCENE'
+        if destination in (page_munitions, page_shop):
+            return 'SHOP'
+        if destination is page_os:
+            return 'WORLD'
+        if destination is page_daily:
+            return 'DAILYLEVEL'
+        if destination is page_exercise:
+            return 'MILITARYEXERCISE'
+        return None
+
+    def _bridge_try_goto_scene(self, destination):
+        key = self._bridge_goto_scene_key(destination)
+        if key is None or not self._sweeney_bridge_enabled():
+            return False
+        try:
+            from module.alas_bridge.actions import goto_scene
+        except Exception:
+            return False
+        data = {'type': 'supply'} if key == 'SHOP' else None
+        result = goto_scene(self.config, key, data=data)
+        if not isinstance(result, dict):
+            return False
+        logger.info(f'Sweeney goto_scene {key}: {result}')
+        self._ui_goto_scene_pending = bool(result.get('pending'))
+        self._ui_goto_scene_pending_frames = 0
+        self._ui_goto_scene_key = key
+        self._ui_goto_scene_os_gave_up = False
+        # 月切进大世界的剧情远长于 12 帧。过场里点 HOME 会把 GO_SCENE 打断，
+        # 未知页面再重启，同一任务立刻再进（2026-10-01 03:06 起五号循环）。
+        if key == 'WORLD' and self._ui_goto_scene_pending:
+            self._ui_goto_scene_world_timer = Timer(90).start()
+            # 正常进场大约 35 秒（6ix7even 08:46）。超过这个时间仍在主界面，
+            # 说明月切预加载停住了，后面会改走 inSave。
+            self._ui_world_insave_timer = Timer(45).start()
+            self._ui_world_insave_sent = False
+        else:
+            self._ui_goto_scene_world_timer = None
+            self._ui_world_insave_timer = None
+            self._ui_world_insave_sent = False
+        return True
+
+    def _bridge_goto_world_insave(self):
+        """跳过月切重置和开场剧情，直接加载大世界。"""
+        if not self._sweeney_bridge_enabled():
+            return False
+        try:
+            from module.alas_bridge.actions import goto_scene
+        except Exception:
+            return False
+        result = goto_scene(self.config, 'WORLD', data={'inSave': True})
+        logger.info(f'Sweeney goto_scene WORLD inSave: {result}')
+        return isinstance(result, dict)
+
+    def _bridge_goto_level_want(self, destination):
+        if destination is page_event:
+            return 'event'
+        if destination is page_sp:
+            return 'sp'
+        if destination is page_campaign_menu:
+            return 'campaign_menu'
+        if destination is page_campaign:
+            return 'campaign'
+        if destination is page_archives:
+            return 'archives'
+        return None
+
+    def _bridge_try_goto_level(self, destination):
+        """GAME.GO_SCENE LEVEL，避免点 MAIN_GOTO_CAMPAIGN 误进活动页。"""
+        want = self._bridge_goto_level_want(destination)
+        if want is None or not self._sweeney_bridge_enabled():
+            return False
+        try:
+            from module.alas_bridge.actions import goto_level
+        except Exception:
+            return False
+        result = goto_level(self.config, want=want, poll=0.0)
+        if not isinstance(result, dict):
+            return False
+        if result.get('pending_battle'):
+            return False
+        logger.info(f'Sweeney goto_level: {result}')
+        # already_there：下一圈用 EVENT_CHECK / 页面检测结束导航。
+        # pending_scene 只挡一两拍，避免心跳仍 MAIN 时永远不点、空等到 GameStuck。
+        self._ui_goto_level_pending = bool(result.get('pending_scene'))
+        self._ui_goto_level_pending_frames = 0
+        self._ui_goto_level_pending_logged = False
+        return True
 
     def _try_sweeney_current_page(self, verbose=True):
         """Return an AzurPilot Page from the mod heartbeat, or None to screenshot-fallback."""
@@ -242,6 +506,103 @@ class UI(InfoHandler):
             return page_event
         return bridged
 
+    def _reject_stale_bridge_main(self, bridged):
+        """心跳 MAIN 但主界面 chrome 不在：不要按主界面出击按钮连点。
+
+        Event D3 `ui_goto_event` 会先去 page_campaign_menu。心跳仍报
+        page_main 时 `_ui_click_toward_parent` 盲点 MAIN_GOTO_CAMPAIGN
+        （1_67 / Brad / Asami / booty 2026-09-17 15:30）。
+        """
+        if bridged is None or bridged not in (page_main, page_main_white):
+            return bridged
+        if self._ui_home_chrome_visible():
+            return bridged
+        if self.appear(CAMPAIGN_MENU_CHECK, offset=(30, 30), interval=0):
+            logger.info('Reject stale bridge page_main (campaign menu)')
+            return page_campaign_menu
+        if self.appear(EVENT_CHECK, offset=(30, 30), interval=0):
+            logger.info('Reject stale bridge page_main (event list)')
+            return page_event
+        if self.appear(SP_CHECK, offset=(30, 30), interval=0):
+            logger.info('Reject stale bridge page_main (sp list)')
+            return page_sp
+        if self.appear(BACK_ARROW, offset=(30, 30), interval=0) \
+                or self.appear(BACK_ARROW_WHITE, offset=(30, 30), interval=0):
+            logger.info('Reject stale bridge page_main (back arrow)')
+            return page_settings
+        logger.info('Reject stale bridge page_main (no home chrome)')
+        return None
+
+    def _ui_overshot_campaign_menu(self):
+        """去出击菜单时已经进了活动/SP 章节列表。
+
+        主界面出击按钮与出击菜单活动入口接近。点 MAIN_GOTO_CAMPAIGN 常
+        直接进活动；A* 再 GOTO_MAIN 打回主界面，12 次后重启
+        （2026-09-17 15:50 Event D3 重启潮）。
+        """
+        return (
+            self.appear(EVENT_CHECK, offset=(30, 30), interval=0)
+            or self.appear(SP_CHECK, offset=(30, 30), interval=0)
+        )
+
+    def _ui_abort_main_goto_capped(self, destination):
+        """MAIN_GOTO 点满后：活动/SP 目标算到达；其余继续等弹窗/过场。
+
+        仍在主界面时不能 abort 假装到达。OpsiMonthBoss 会接着 zone_init，
+        在主界面空等 MAP_GOTO_GLOBE 直到 GameStuck（Margaret 14:01）。
+        """
+        campaign_dests = (page_campaign_menu, page_event, page_sp, page_campaign)
+        if destination in campaign_dests and self._ui_overshot_campaign_menu():
+            logger.info('[UI] MAIN_GOTO 上限后已在活动/SP')
+            if self.appear(EVENT_CHECK, offset=(30, 30), interval=0):
+                self.ui_current = page_event
+            else:
+                self.ui_current = page_sp
+            return 'arrived'
+        # 每日/演习：Combat 进的是 LEVEL，不是 DAILYLEVEL / MILITARYEXERCISE。
+        # 出击菜单砖仍可点；仍在主界面则改走 goto_scene，不要无限 continue
+        # （1_67 2026-09-19 07:02 从 page_os 卡在 MAIN_GOTO 上限）。
+        # 作战档案：出击砖点满后改开 LevelRemasterView，不要放弃 DataKey / WarArchives。
+        if destination is page_archives:
+            if getattr(self, '_ui_goto_level_pending', False):
+                return 'continue'
+            if not getattr(self, '_ui_goto_archives_retry_after_cap', False):
+                self._ui_goto_archives_retry_after_cap = True
+                if self._bridge_try_goto_level(destination):
+                    logger.info('[UI] MAIN_GOTO 上限，改走 goto_level archives')
+                    return 'continue'
+            logger.warning(f'[UI] MAIN_GOTO 上限，放弃导航到 {destination}')
+            return 'abort'
+        if destination in (page_daily, page_exercise):
+            if getattr(self, '_ui_goto_scene_pending', False):
+                return 'continue'
+            if self.appear(CAMPAIGN_MENU_CHECK, offset=(30, 30), interval=0):
+                if not getattr(self, '_ui_abort_continue_logged', False):
+                    logger.info(f'[UI] MAIN_GOTO 上限，出击菜单继续点 {destination}')
+                    self._ui_abort_continue_logged = True
+                return 'continue'
+            if not getattr(self, '_ui_goto_scene_retry_after_cap', False):
+                self._ui_goto_scene_retry_after_cap = True
+                if self._bridge_try_goto_scene(destination):
+                    logger.info(f'[UI] MAIN_GOTO 上限，改走 goto_scene {destination}')
+                    return 'continue'
+            if not getattr(self, '_ui_abort_continue_logged', False):
+                logger.info(f'[UI] MAIN_GOTO 上限，继续导航到 {destination}')
+                self._ui_abort_continue_logged = True
+            return 'continue'
+        # 大世界/出击菜单：已误进活动时用 BACK；仍在主界面则等弹窗或过场。
+        keep = campaign_dests + (page_os,)
+        if destination in keep:
+            if not getattr(self, '_ui_abort_continue_logged', False):
+                logger.info(f'[UI] MAIN_GOTO 上限，继续导航到 {destination}')
+                self._ui_abort_continue_logged = True
+            return 'continue'
+        # 其余页面：继续会把 cap 在下次 ui_goto 清掉再点 2 下，直到重启
+        # （2_brad / 4_nyan / 6_margaret 2026-09-19 03:12 MAIN_GOTO ×12）。
+        # 作战档案在上面单独改走 goto_level，失败才放弃。
+        logger.warning(f'[UI] MAIN_GOTO 上限，放弃导航到 {destination}')
+        return 'abort'
+
     def is_in_main(self, offset=(30, 30), interval=0):
         return (self.ui_page_appear(page_main, offset=offset, interval=interval)
                 or self.ui_page_appear(page_main_white, offset=offset, interval=interval))
@@ -255,6 +616,15 @@ class UI(InfoHandler):
             or self.appear(MAIN_GOTO_FLEET_WHITE, offset=offset, interval=0)
         )
 
+    def _ui_map_prep_visible(self, offset=(30, 30)):
+        """LevelInfo / 舰队准备弹窗。HOME 无效，应点取消。"""
+        return (
+            self.appear(MAP_PREPARATION, offset=offset, interval=0)
+            or self.appear(MAP_PREPARATION_HARD, offset=offset, interval=0)
+            or self.appear(FLEET_PREPARATION, offset=(20, 50), interval=0)
+            or self.appear(RAID_FLEET_PREPARATION, offset=offset, interval=0)
+        )
+
     def _ui_page_from_home_chrome(self):
         if self.appear(MAIN_GOTO_CAMPAIGN_WHITE, offset=(30, 30), interval=0):
             return page_main_white
@@ -266,20 +636,36 @@ class UI(InfoHandler):
             return False
         return self._ui_home_chrome_visible()
 
+    def _ui_back_arrow_visible(self):
+        return (
+            self.appear(BACK_ARROW, offset=(30, 30), interval=0)
+            or self.appear(BACK_ARROW_WHITE, offset=(30, 30), interval=0)
+        )
+
+    def _ui_back_arrow_capped(self):
+        return getattr(self, '_ui_back_arrow_clicks', 0) >= 3
+
     def _ui_unknown_prefer_back(self):
         """设置页有 Back，HOME 六边形无效。Back 可见时不要点 HOME/齿轮。
+
+        interval 必须与页面链接点击一致（5 秒）。2 秒会拆掉正在走的
+        5 秒计时器，Back 就会每帧点一次。
 
         Returns:
             bool: True 表示应继续截图（已点 Back，或 Back 在 interval 内）。
         """
-        if self.appear_then_click(BACK_ARROW, offset=(30, 30), interval=2):
+        if self._ui_back_arrow_capped():
+            return False
+        if self.appear_then_click(BACK_ARROW, offset=(30, 30), interval=5):
+            self._ui_back_arrow_clicks = getattr(self, '_ui_back_arrow_clicks', 0) + 1
             return True
-        if self.appear_then_click(BACK_ARROW_WHITE, offset=(30, 30), interval=2):
+        if self.appear_then_click(BACK_ARROW_WHITE, offset=(30, 30), interval=5):
+            self._ui_back_arrow_clicks = getattr(self, '_ui_back_arrow_clicks', 0) + 1
             return True
-        if self.appear(BACK_ARROW, offset=(30, 30), interval=0):
+        if self._ui_back_arrow_visible():
             return True
-        if self.appear(BACK_ARROW_WHITE, offset=(30, 30), interval=0):
-            return True
+        self._ui_back_arrow_clicks = 0
+        self._ui_back_arrow_capped_logged = False
         return False
 
     def ui_main_appear_then_click(self, page, offset=(30, 30), interval=3):
@@ -413,7 +799,10 @@ class UI(InfoHandler):
                 if page.name == 'page_in_map':
                     page = self._reject_stale_bridge_in_map(page)
                 page = self._reject_stale_bridge_campaign(page)
-                return page
+                page = self._reject_stale_bridge_main(page)
+                if page is not None:
+                    self.ui_current = page
+                    return page
             logger.info("Sweeney bridge miss, screenshot fallback")
 
         @run_once
@@ -527,6 +916,30 @@ class UI(InfoHandler):
         # 初始化页面连接
         Page.init_connection(destination)
         self.interval_clear(list(Page.iter_check_buttons()))
+        # 仍在主界面且已达上限：跨 ui_goto 保持，避免 Freebies 档案每轮再点出击。
+        if getattr(self, '_ui_main_goto_capped', False) and self._ui_home_chrome_visible():
+            pass
+        else:
+            self._ui_main_goto_campaign_clicks = 0
+            self._ui_main_goto_capped = False
+            self._ui_main_goto_capped_logged = False
+        self._ui_campaign_menu_goto_clicks = 0
+        self._ui_campaign_menu_goto_capped_logged = False
+        self._ui_goto_level_pending = False
+        self._ui_goto_level_pending_logged = False
+        self._ui_goto_level_pending_frames = 0
+        self._ui_goto_level_attempted = False
+        self._ui_goto_archives_retry_after_cap = False
+        self._ui_goto_scene_pending = False
+        self._ui_goto_scene_pending_frames = 0
+        self._ui_goto_scene_attempted = False
+        self._ui_goto_scene_retry_after_cap = False
+        self._ui_goto_scene_key = None
+        self._ui_goto_scene_os_gave_up = False
+        self._ui_goto_scene_world_timer = None
+        self._ui_world_insave_timer = None
+        self._ui_world_insave_sent = False
+        self._ui_abort_continue_logged = False
 
         logger.hr(f"UI 导航到 {destination}")
         # 导航超时计时器：长时间无法识别页面时触发恢复
@@ -540,12 +953,48 @@ class UI(InfoHandler):
             else:
                 self.device.screenshot()
 
+            self._ui_tick_bridge_nav_pending()
+
+            if (
+                not getattr(self, '_ui_goto_scene_attempted', False)
+                and self._bridge_goto_scene_key(destination)
+            ):
+                self._ui_goto_scene_attempted = True
+                if self._bridge_try_goto_scene(destination):
+                    continue
+
+            if (
+                not getattr(self, '_ui_goto_level_attempted', False)
+                and self._bridge_goto_level_want(destination)
+            ):
+                self._ui_goto_level_attempted = True
+                if self._bridge_try_goto_level(destination):
+                    continue
+
             bridged = None
             if self._sweeney_bridge_enabled():
                 bridged = self._try_sweeney_current_page(verbose=False)
                 if bridged is not None:
                     bridged = self._reject_stale_bridge_in_map(bridged)
                     bridged = self._reject_stale_bridge_campaign(bridged)
+                    bridged = self._reject_stale_bridge_main(bridged)
+
+            # 去出击菜单时已经进了活动/SP：不要 GOTO_MAIN 打回主界面
+            if destination == page_campaign_menu and self._ui_overshot_campaign_menu():
+                logger.info('[UI] 到达页面: page_campaign_menu (已在活动/SP)')
+                if self.appear(EVENT_CHECK, offset=(30, 30), interval=0):
+                    self.ui_current = page_event
+                else:
+                    self.ui_current = page_sp
+                break
+
+            # MAIN_GOTO 点满：活动/SP 目标算到达；每日/演习改走 goto_scene 或点出击菜单砖。
+            if getattr(self, '_ui_main_goto_capped', False):
+                action = self._ui_abort_main_goto_capped(destination)
+                if action == 'arrived':
+                    break
+                if action == 'abort':
+                    return
 
             # 到达目标页面
             if self.ui_page_appear(page=destination, offset=offset):
@@ -563,7 +1012,7 @@ class UI(InfoHandler):
                     logger.info(f'[UI] 到达页面: {destination}')
                     self.ui_current = destination
                     break
-            if bridged is not None and bridged == destination:
+            if self._ui_bridge_confirms_arrival(destination, bridged):
                 logger.info(f'[UI] 到达页面: {destination} (Sweeney bridge)')
                 self.ui_current = bridged
                 break
@@ -573,46 +1022,92 @@ class UI(InfoHandler):
                 logger.info(f'[UI] 到达页面: {destination}')
                 break
 
-            # 其他页面：按 A* 路径点击导航
+            # 月切过场 90 秒仍未进大世界：离开导航，不要未知页重启。
+            # os_init 会推迟任务。再点 HOME 只会把客户端打进认不出的画面。
+            if (
+                getattr(self, '_ui_goto_scene_os_gave_up', False)
+                and destination is page_os
+            ):
+                logger.warning('[UI] 大世界过场未完成，放弃导航以免重启游戏')
+                Page.clear_connection()
+                return
+
+            # 其他页面：按 A* 路径点击导航（与心跳 hop 共用按钮 interval）
             clicked = False
             for page in Page.iter_pages():
                 if page.parent is None or page.check_button is None:
                     continue
                 if self.appear(page.check_button, offset=offset, interval=5):
-                    button = page.links[page.parent]
-                    if self._ui_skip_home_click(button):
-                        logger.info('[UI] 已在主界面，跳过 GOTO_MAIN（避免打开设置）')
-                        continue
-                    logger.info(f'[UI] 页面切换: {page} -> {page.parent}')
-                    self.device.click(button)
-                    self.ui_button_interval_reset(button)
-                    clicked = True
+                    clicked = self._ui_click_toward_parent(page)
                     break
             if clicked:
                 nav_timeout.reset()
                 continue
+            if getattr(self, '_ui_main_goto_capped', False):
+                action = self._ui_abort_main_goto_capped(destination)
+                if action == 'arrived':
+                    break
+                if action == 'abort':
+                    return
 
             # 处理额外弹窗（先关自律寻敌菜单，再点出击入口）
             if self.ui_additional(get_ship=get_ship):
                 nav_timeout.reset()
                 continue
+            # 月切预加载在进场景之前跑。停在主界面时不要点右上角：
+            # 那是主界面，12 次 CLICK_SAFE_AREA 会在 36 秒重启（Brad 10:22 起，
+            # 旧进程到 12:11 仍在点）。正常进场约 35 秒；45 秒仍见主界面就
+            # 用 inSave 跳过卡死的重置回调或开场剧情。
+            if self._ui_world_scene_pending():
+                self.device.stuck_record_clear()
+                insave_timer = getattr(self, '_ui_world_insave_timer', None)
+                if (
+                    insave_timer is not None
+                    and not getattr(self, '_ui_world_insave_sent', False)
+                    and insave_timer.reached()
+                    and self._ui_home_chrome_visible()
+                ):
+                    self._ui_world_insave_sent = True
+                    logger.info('[UI] 月切预加载停在主界面，跳过开场直接进入大世界')
+                    self._bridge_goto_world_insave()
+                nav_timeout.reset()
+                continue
 
             # 出击菜单新布局不再显示 MAIN，CAMPAIGN_MENU_CHECK 会漏检。
             # 心跳仍是 page_campaign_menu 时，按链接点进章节列表。
-            if self._ui_click_toward_parent(bridged):
+            if self._ui_click_toward_parent(bridged, via_bridge=True):
                 nav_timeout.reset()
                 continue
+            if getattr(self, '_ui_main_goto_capped', False):
+                action = self._ui_abort_main_goto_capped(destination)
+                if action == 'arrived':
+                    break
+                if action == 'abort':
+                    return
             # 设置页无 check_button；心跳丢失时只能点 Back。
             on_settings = (
                 getattr(bridged, 'name', None) == 'page_settings'
                 or getattr(self.ui_current, 'name', None) == 'page_settings'
             )
-            if on_settings and self._ui_unknown_prefer_back():
-                nav_timeout.reset()
-                continue
+            if on_settings:
+                if not self._ui_back_arrow_visible():
+                    self._ui_back_arrow_clicks = 0
+                    self._ui_back_arrow_capped_logged = False
+                elif self._ui_back_arrow_capped():
+                    if not getattr(self, '_ui_back_arrow_capped_logged', False):
+                        logger.warning('[UI] BACK_ARROW 连点无进展，放弃导航以免重启')
+                        self._ui_back_arrow_capped_logged = True
+                    return
+                if self._ui_unknown_prefer_back():
+                    nav_timeout.reset()
+                    continue
 
             # 导航超时：当前页面无法识别，调用 ui_get_current_page 触发恢复
             if nav_timeout.reached():
+                # WORLD 过场自己有 90 秒计时。30 秒导航超时会在剧情中途重启游戏。
+                if self._ui_world_scene_pending():
+                    nav_timeout.reset()
+                    continue
                 logger.warning(f'[UI] 导航到 {destination} 超时，尝试检测当前页面并恢复')
                 Page.clear_connection()
                 current = self.ui_get_current_page(
@@ -626,9 +1121,21 @@ class UI(InfoHandler):
                 if destination in (page_main, page_main_white) and self.is_in_main():
                     logger.info(f'[UI] 到达页面: {destination}')
                     return
-                # 重新初始化导航
+                if self._ui_pages_equivalent(current, destination):
+                    logger.info(f'[UI] 到达页面: {destination}')
+                    self.ui_current = destination
+                    return
+                # 重新初始化导航。仍在主界面时不要清出击上限。
                 Page.init_connection(destination)
                 self.interval_clear(list(Page.iter_check_buttons()))
+                if not (getattr(self, '_ui_main_goto_capped', False) and self._ui_home_chrome_visible()):
+                    self._ui_main_goto_campaign_clicks = 0
+                    self._ui_main_goto_capped = False
+                    self._ui_main_goto_capped_logged = False
+                self._ui_goto_scene_attempted = False
+                self._ui_goto_level_attempted = False
+                self._ui_campaign_menu_goto_clicks = 0
+                self._ui_campaign_menu_goto_capped_logged = False
                 nav_timeout.reset()
 
         # 重置页面连接
@@ -654,9 +1161,10 @@ class UI(InfoHandler):
         if self.ui_current == destination:
             logger.info("[UI] 已在 %s" % destination)
             return False
-        # 主界面新旧主题互为等价
-        if {self.ui_current, destination} == {page_main, page_main_white}:
-            logger.info("[UI] 已在 %s (等效主界面)" % destination)
+        # 主界面新旧主题 / 军需与 NewShop 互为等价
+        if self._ui_pages_equivalent(self.ui_current, destination):
+            logger.info("[UI] 已在 %s (等效页面)" % destination)
+            self.ui_current = destination
             return False
         else:
             logger.info("[UI] 导航到 %s" % destination)
@@ -746,6 +1254,20 @@ class UI(InfoHandler):
 
     _opsi_reset_fleet_preparation_click = 0
 
+    def _sortie_chapter_active(self) -> bool:
+        """出击中的关卡还在。这时主界面模板是误匹配，不能点。"""
+        try:
+            from module.alas_bridge.game_state import GameState
+            state = GameState.from_config(self.config).read(max_age=8.0)
+        except Exception:
+            return False
+        if not isinstance(state, dict):
+            return False
+        if str(state.get('scene_key') or '') != 'LEVEL':
+            return False
+        chapter = state.get('chapter')
+        return isinstance(chapter, dict) and bool(chapter.get('active'))
+
     def ui_page_main_popups(self, get_ship=True):
         """
         处理主界面和奖励页面出现的弹窗。
@@ -766,7 +1288,7 @@ class UI(InfoHandler):
             return True
         if self.appear_then_click(GET_ITEMS_2, offset=True, interval=3):
             return True
-        if get_ship:
+        if get_ship and not self._sortie_chapter_active():
             if self.appear_then_click(GET_SHIP, interval=5):
                 return True
         if self.appear_then_click(LOGIN_RETURN_SIGN, offset=(30, 30), interval=3):
@@ -900,23 +1422,25 @@ class UI(InfoHandler):
             self.interval_reset(GET_SHIP)
             return True
 
-        # 战役准备界面
-        if self.appear(MAP_PREPARATION, offset=(30, 30), interval=3) \
-                or self.appear(MAP_PREPARATION_HARD, offset=(30, 30), interval=3) \
-                or self.appear(FLEET_PREPARATION, offset=(20, 50), interval=3) \
-                or self.appear(RAID_FLEET_PREPARATION, offset=(30, 30), interval=3):
-            self.device.click(MAP_PREPARATION_CANCEL)
-            return True
-        try:
-            from module.alas_bridge.actions import map_prep_showing_from_heartbeat
-            if map_prep_showing_from_heartbeat(self.config):
-                timer = self.get_interval_timer('BRIDGE_MAP_PREP_CANCEL', interval=3)
-                if timer.reached():
-                    timer.reset()
-                    self.device.click(MAP_PREPARATION_CANCEL)
-                    return True
-        except Exception:
+        # 战役准备界面：必须看到取消键再点。
+        # 心跳 level.info_showing 会在商店/主界面/活动列表残留，盲点 MAP_PREPARATION_CANCEL
+        # 与 GOTO_MAIN 对打直到 TooManyClick（2_brad / 5_booty 过夜 ShopFrequent）。
+        # WORLD 月切过场会被准备模板误匹配，取消键落到 y<0，接着 HOME 打断进图。
+        if self._ui_world_scene_pending():
             pass
+        elif self._ui_map_prep_visible():
+            if not getattr(self, '_ui_map_prep_cancel_capped', False):
+                if self.appear_then_click(MAP_PREPARATION_CANCEL, offset=(30, 30), interval=3):
+                    n = getattr(self, '_ui_map_prep_cancel_clicks', 0) + 1
+                    self._ui_map_prep_cancel_clicks = n
+                    if n >= 3:
+                        self._ui_map_prep_cancel_capped = True
+                        logger.warning('[UI] MAP_PREPARATION_CANCEL 连点无进展，停止点击')
+                    return True
+            # 取消键无效时不要一直占着 ui_goto，HOME 才能走。
+        else:
+            self._ui_map_prep_cancel_capped = False
+            self._ui_map_prep_cancel_clicks = 0
         if self.appear_then_click(AUTO_SEARCH_MENU_EXIT, offset=(200, 30), interval=3):
             return True
         if self.appear_then_click(AUTO_SEARCH_REWARD, offset=(50, 50), interval=3):
@@ -940,9 +1464,24 @@ class UI(InfoHandler):
                 logger.warning("[UI-额外] 撤退按钮已不存在")
                 self.interval_reset(WITHDRAW)
 
-        # 登录相关
-        if self.appear_then_click(LOGIN_CHECK, offset=(30, 30), interval=3):
-            return True
+        # 登录画面不是普通弹窗。连点 LOGIN_CHECK 会打满点击上限并重启游戏
+        # （Asami Commission / Margaret Research，2026-09-24）。点几次仍在
+        # 登录页就停，交给调度器推迟已到期任务。
+        if self.appear(LOGIN_CHECK, offset=(30, 30)):
+            if self._sortie_chapter_active():
+                logger.info('[UI] 出击中忽略 LOGIN_CHECK，避免把主界面点到海图上')
+            else:
+                n = getattr(self, '_ui_login_check_clicks', 0)
+                if n >= 3:
+                    logger.warning('[UI] 登录键连点仍未离开登录页')
+                    raise GameTooManyClickError(
+                        '[设备-点击] 按钮点击次数过多: LOGIN_CHECK'
+                    )
+                if self.appear_then_click(LOGIN_CHECK, offset=(30, 30), interval=3):
+                    self._ui_login_check_clicks = n + 1
+                    return True
+        else:
+            self._ui_login_check_clicks = 0
         if self.appear_then_click(MAINTENANCE_ANNOUNCE, offset=(30, 30), interval=3):
             return True
 
@@ -1024,8 +1563,16 @@ class UI(InfoHandler):
         for switch_button in page_main.links.values():
             if button == switch_button:
                 self.interval_reset(GET_SHIP)
-        if button in [MAIN_GOTO_REWARD, MAIN_GOTO_REWARD_WHITE]:
+        if button == MAIN_GOTO_REWARD:
             self.interval_reset(GET_SHIP)
+            # 柔和主题的委托按钮每次点击都重播侧栏展开。新旧主题入口都会
+            # 匹配左侧同一条，0.4 秒内再点一次会把展开动画打回去
+            # （Brad / nyan / booty 2026-10-01 09:02）。间隔必须与点击计时器
+            # 同为 5 秒，否则 renew 会换成未启动的计时器，第二下立刻又能点。
+            self.interval_reset(MAIN_GOTO_REWARD_WHITE, interval=5)
+        elif button == MAIN_GOTO_REWARD_WHITE:
+            self.interval_reset(GET_SHIP)
+            self.interval_reset(MAIN_GOTO_REWARD, interval=5)
         if button == REWARD_GOTO_TACTICAL:
             self.interval_reset(REWARD_GOTO_TACTICAL_WHITE)
         if button == REWARD_GOTO_TACTICAL_WHITE:

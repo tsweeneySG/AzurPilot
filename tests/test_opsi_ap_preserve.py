@@ -8,6 +8,7 @@ from module.os.ap_preserve import (
     STRONGHOLD_KEY,
     mark_coordinate_from_item_name,
     month_end_stepped_preserve,
+    resolve_action_point_preserve,
     should_hold_ap_for_loggers,
 )
 
@@ -70,6 +71,28 @@ class TestMonthEndSteppedPreserve(unittest.TestCase):
     def test_last_day(self):
         self.assertEqual(month_end_stepped_preserve(0), 0)
         self.assertEqual(month_end_stepped_preserve(0, cross_month=True), 300)
+
+
+class TestResolveActionPointPreserve(unittest.TestCase):
+    def test_last_day_drops_user_preserve_to_zero(self):
+        self.assertEqual(resolve_action_point_preserve(200, 0), 0)
+        self.assertEqual(resolve_action_point_preserve(1000, 0), 0)
+
+    def test_last_day_hold_keeps_user_preserve(self):
+        self.assertEqual(resolve_action_point_preserve(200, 0, hold=True), 200)
+
+    def test_last_day_cross_month_caps_at_300(self):
+        self.assertEqual(resolve_action_point_preserve(1000, 0, cross_month=True), 300)
+        self.assertEqual(resolve_action_point_preserve(200, 0, cross_month=True), 200)
+
+    def test_near_reset_does_not_raise_user_preserve(self):
+        self.assertEqual(resolve_action_point_preserve(200, 2), 200)
+        self.assertEqual(resolve_action_point_preserve(1000, 2), 300)
+        self.assertEqual(resolve_action_point_preserve(1000, 2, is_cl1=True), 1000)
+
+    def test_far_from_reset_keeps_user_preserve(self):
+        self.assertEqual(resolve_action_point_preserve(200, 10), 200)
+        self.assertEqual(resolve_action_point_preserve(2500, 10), 2000)
 
 
 class TestHoldApForLoggers(unittest.TestCase):

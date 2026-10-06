@@ -37,7 +37,16 @@ uv run python mcp_server_sse.py                  # 启动 MCP SSE 服务器（�
 uv run ruff check . --select E9,F63,F7,F82 --ignore F821,F722  # CI lint
 uv run -m module.config.config_updater           # 配置生成（修改 YAML 后必须运行）
 uv run -m dev_tools.button_extract               # 从截图提取按钮定义
+uv run python dev_tools/scan_error_logs.py       # 当日日志聚类（见 .agent/LOG-REVIEW.md）
 ```
+
+### 日志审阅循环（scan → TODO → fix）
+
+用户提到 AzurPilot logs / overnight / GameStuck / restarts / 每日错误扫描时，按 [`.agent/LOG-REVIEW.md`](.agent/LOG-REVIEW.md)：
+
+1. `uv run python dev_tools/scan_error_logs.py`（清晨过夜再扫 `--date` 昨天；日日志在本地午夜切文件）
+2. 把簇合并进 `docs/log-review/TODO.md`（按 `cluster_id`，不要重复条目）
+3. 只修排名最高的 1–2 个 `code` / 重复 `ui_stuck` 簇。默认不提交、不 push。
 
 ---
 
@@ -512,6 +521,7 @@ server.server = 'en'
 | `.agent/ARCHITECTURE.md` | 项目整体架构、分层图、依赖关系图 |
 | `.agent/CONVENTIONS.md` | 编码规范、命名规则、状态循环模式 |
 | `.agent/ISSUES.md` | 已知问题清单、优化路线图 |
+| `.agent/LOG-REVIEW.md` | 日志聚类 → TODO → 修复循环（本地 `log/`） |
 | `.agent/MODULE-MAP.md` | 模块映射表、目录结构说明 |
 
 ### 核心模块文档

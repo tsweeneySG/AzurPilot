@@ -17,12 +17,12 @@
 import datetime
 from module.config.time_source import now as current_time
 from module.config.utils import get_server_last_update
+from module.config.utils import get_server_next_update
 from module.exercise.assets import *
 from module.exercise.combat import ExerciseCombat
 from module.logger import logger
 from module.ocr.ocr import Digit, Ocr, OcrYuv
 from module.ui.page import page_exercise
-from module.config.utils import get_server_next_update
 
 class DatedDuration(Ocr):
     """
@@ -107,6 +107,57 @@ ADMIRAL_TRIAL_HOUR_INTERVAL = {
     "sat0": [48, 36],
     "fri18": [56, 48]
 }
+# 刷新点刚过时 fightCount 可能还没到账。短延迟重试，不要半周期放弃。
+EXERCISE_RECOVER_GRACE = datetime.timedelta(minutes=30)
+EXERCISE_MISSING_RECOVER_RETRY_MINUTES = 5
+
+
+def parse_exercise_reset_at(reset_unix):
+    """把桥接 exercise_reset_time（服务器 Unix 秒）转成本地朴素时间。"""
+    if reset_unix is None:
+        return None
+    try:
+        stamp = int(reset_unix)
+    except (TypeError, ValueError):
+        return None
+    if stamp <= 0:
+        return None
+    try:
+        return datetime.datetime.fromtimestamp(stamp)
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def should_retry_missing_exercise_recover(
+        remain, preserve, now, last_update, grace=None, reset_at=None):
+    """次数仍停在保留线时，应短延迟等待恢复到账。
+
+    优先看游戏 season.resetTime：已到期则一直重试，不要用调度器 30 分钟窗口放弃。
+    没有 resetTime 时，退回 Scheduler.ServerUpdate 后的宽限。
+
+    Args:
+        remain (int): 当前剩余次数。
+        preserve (int): 策略保留次数。
+        now (datetime.datetime): 当前时间。
+        last_update (datetime.datetime): 最近一次 Scheduler.ServerUpdate。
+        grace (datetime.timedelta): 无 resetTime 时的等待窗口，默认 30 分钟。
+        reset_at (datetime.datetime): 游戏下次次数恢复时间。
+
+    Returns:
+        bool: True 表示应在数分钟后重试，而不是 half 延迟到下一刷新。
+    """
+    if remain is None or remain > preserve:
+        return False
+    if now is None:
+        return False
+    if reset_at is not None:
+        return now >= reset_at
+    if last_update is None:
+        return False
+    if grace is None:
+        grace = EXERCISE_RECOVER_GRACE
+    delta = now - last_update
+    return datetime.timedelta(0) <= delta < grace
 
 
 class Exercise(ExerciseCombat):
@@ -125,6 +176,7 @@ class Exercise(ExerciseCombat):
     opponent_change_count = 0
     remain = 0
     preserve = 0
+    exercise_reset_unix = None
 
     def _new_opponent(self):
         """
@@ -274,6 +326,37 @@ class Exercise(ExerciseCombat):
 
         return preserve, admiral_interval
 
+    def _read_exercise_remain(self):
+        """读取演习剩余次数。
+
+        桥接 fightCount 与 OCR 取较高值。进页瞬间任一侧可能仍是 0。
+        """
+        bridge_remain = None
+        self.exercise_reset_unix = None
+        try:
+            from module.alas_bridge.actions import bridge_enabled, get_task_remains
+            if bridge_enabled(self.config):
+                remains = get_task_remains(self.config)
+                if remains is not None:
+                    if remains.get('exercise_reset_time') is not None:
+                        self.exercise_reset_unix = remains.get('exercise_reset_time')
+                        logger.attr('演习恢复时间戳', self.exercise_reset_unix)
+                    if remains.get('exercise_waiting') is not None:
+                        logger.attr('演习waiting', remains.get('exercise_waiting'))
+                    if remains.get('exercise') is not None:
+                        bridge_remain = int(remains.get('exercise') or 0)
+                        logger.attr('桥接演习剩余', bridge_remain)
+        except Exception as e:
+            logger.info(f'Sweeney exercise remain miss: {e}')
+        ocr_remain = OCR_EXERCISE_REMAIN.ocr(self.device.image)
+        if bridge_remain is None:
+            return ocr_remain
+        remain = max(bridge_remain, ocr_remain)
+        if ocr_remain != bridge_remain:
+            logger.info(
+                f'[演习-调度] 桥接剩余 {bridge_remain}，OCR {ocr_remain}，采用 {remain}')
+        return remain
+
     def run(self):
         """
         演习任务主入口。
@@ -328,18 +411,9 @@ class Exercise(ExerciseCombat):
         else:
             run = True
 
+        fought = False
         while run:
-            self.remain = None
-            try:
-                from module.alas_bridge.actions import bridge_enabled, get_task_remains
-                if bridge_enabled(self.config):
-                    remains = get_task_remains(self.config)
-                    if remains is not None and remains.get('exercise') is not None:
-                        self.remain = int(remains.get('exercise') or 0)
-            except Exception as e:
-                logger.info(f'Sweeney exercise remain miss: {e}')
-            if self.remain is None:
-                self.remain = OCR_EXERCISE_REMAIN.ocr(self.device.image)
+            self.remain = self._read_exercise_remain()
             if self.remain <= self.preserve:
                 break
 
@@ -348,6 +422,7 @@ class Exercise(ExerciseCombat):
                 success = self._exercise_easiest_else_exp()
             else:
                 success = self._exercise_once()
+            fought = True
             if not success:
                 logger.info('[演习-对手] 对手刷新次数耗尽')
                 break
@@ -357,10 +432,26 @@ class Exercise(ExerciseCombat):
         # 调度器
         with self.config.multi_set():
             self.config.set_record(Exercise_OpponentRefreshValue=self.opponent_change_count)
+            now = current_time()
+            reset_at = parse_exercise_reset_at(self.exercise_reset_unix)
+            if run and not fought and self.remain <= self.preserve:
+                if reset_at is not None and now + datetime.timedelta(seconds=30) < reset_at:
+                    minutes = max(1, int((reset_at - now).total_seconds() / 60) + 1)
+                    logger.info(f'[演习-调度] 次数将于 {reset_at} 恢复，延迟 {minutes} 分钟')
+                    self.config.task_delay(minute=minutes)
+                    return
+                if should_retry_missing_exercise_recover(
+                        self.remain, self.preserve, now,
+                        get_server_last_update(server_update),
+                        reset_at=reset_at):
+                    logger.warning(
+                        f'[演习-调度] 刷新点后次数仍为 {self.remain}（保留 {self.preserve}），'
+                        f'{EXERCISE_MISSING_RECOVER_RETRY_MINUTES} 分钟后重试')
+                    self.config.task_delay(minute=EXERCISE_MISSING_RECOVER_RETRY_MINUTES)
+                    return
             if self.remain <= self.preserve or self.opponent_change_count >= 5:
                 next_run = get_server_next_update(server_update) \
                            - datetime.timedelta(hours=self.config.Exercise_DelayUntilHoursBeforeNextUpdate)
-                now = current_time()
                 if next_run < now or run:
                     self.config.task_delay(server_update=True, half=True)
                     return

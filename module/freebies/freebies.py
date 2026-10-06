@@ -34,9 +34,12 @@ class Freebies(ModuleBase):
             logger.hr('战斗通行证', level=1)
             BattlePass(self.config, self.device).run()
 
+        data_key_nav_failed = False
         if self.config.DataKey_Collect:
             logger.hr('数据钥匙', level=1)
-            DataKey(self.config, self.device).run()
+            data_key = DataKey(self.config, self.device)
+            data_key.run()
+            data_key_nav_failed = bool(getattr(data_key, '_data_key_nav_failed', False))
 
         logger.hr('邮件', level=1)
         MailWhite(self.config, self.device).run()
@@ -44,5 +47,10 @@ class Freebies(ModuleBase):
         if self.config.SupplyPack_Collect:
             logger.hr('补给包', level=1)
             SupplyPack_250814(self.config, self.device).run()
+
+        if data_key_nav_failed:
+            logger.warning('[免费福利] 数据钥匙未进档案，30 分钟后重试')
+            self.config.task_delay(minute=30)
+            return
 
         self.config.task_delay(server_update=True)

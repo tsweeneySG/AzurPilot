@@ -25,7 +25,7 @@ from module.config.time_source import now as current_time
 from module.config.utils import DEFAULT_TIME
 from module.logger import logger
 from module.notify import handle_notify
-from module.ui.assets import CAMPAIGN_MENU_NO_EVENT
+from module.ui.assets import CAMPAIGN_MENU_NO_EVENT, EVENT_CHECK, SP_CHECK
 from module.ui.page import page_campaign_menu, page_coalition, page_event, page_sp
 from module.war_archives.assets import WAR_ARCHIVES_CAMPAIGN_CHECK
 
@@ -226,34 +226,74 @@ class CampaignEvent(CampaignStatus):
             return True
 
     def ui_goto_event(self):
-        # 已在 page_event，跳过活动检查。
-        if self.ui_get_current_page() == page_event:
+        # 已在 page_event，跳过活动检查。不要信心跳 MAIN：
+        # 点 MAIN_GOTO_CAMPAIGN 常直接进活动页。
+        current = self.ui_get_current_page()
+        if current == page_event or self.appear(EVENT_CHECK, offset=(20, 20)):
             if self.appear(WAR_ARCHIVES_CAMPAIGN_CHECK, offset=(20, 20)):
                 logger.info('[活动战役] 在作战档案')
                 self.ui_goto_main()
             else:
                 logger.info('[活动战役] 已在活动页面')
                 return True
+        if self._bridge_goto_event('event'):
+            return True
         self.ui_goto(page_campaign_menu)
+        if self.appear(EVENT_CHECK, offset=(20, 20)):
+            logger.info('[活动战役] 出击菜单跳过，已在活动页面')
+            return True
         # 检查活动是否可用
         if self.is_event_entrance_available():
             self.ui_goto(page_event)
             return True
 
     def ui_goto_sp(self):
-        # 已在 page_sp，跳过活动检查。
-        if self.ui_get_current_page() == page_sp:
+        current = self.ui_get_current_page()
+        if current == page_sp or self.appear(SP_CHECK, offset=(20, 20)):
             if self.appear(WAR_ARCHIVES_CAMPAIGN_CHECK, offset=(20, 20)):
                 logger.info('[活动战役] 在作战档案')
                 self.ui_goto_main()
             else:
                 logger.info('[活动战役] 已在SP页面')
                 return True
+        if self._bridge_goto_event('sp'):
+            return True
         self.ui_goto(page_campaign_menu)
+        if self.appear(SP_CHECK, offset=(20, 20)):
+            logger.info('[活动战役] 出击菜单跳过，已在SP页面')
+            return True
         # 检查活动是否可用
         if self.is_event_entrance_available():
             self.ui_goto(page_sp)
             return True
+
+    def _bridge_goto_event(self, want):
+        """goto_level 进活动/SP 列表。失败则走截图路径。"""
+        try:
+            from module.alas_bridge.actions import (
+                _goto_level_page_ok,
+                bridge_enabled,
+                goto_level,
+            )
+        except Exception:
+            return False
+        if not bridge_enabled(self.config):
+            return False
+        result = goto_level(self.config, want=want, poll=2.0)
+        if not isinstance(result, dict) or result.get('pending_battle'):
+            return False
+        page = result.get('page')
+        if result.get('already_there') or result.get('arrived') or _goto_level_page_ok(want, page):
+            check = EVENT_CHECK if want == 'event' else SP_CHECK
+            if self.appear(check, offset=(20, 20)) or self.appear(EVENT_CHECK, offset=(20, 20)):
+                logger.info(f'[活动战役] goto_level 已在活动/SP want={want}')
+                return True
+            if result.get('already_there') or result.get('arrived'):
+                logger.info(f'[活动战役] goto_level 心跳已到 want={want} page={page}')
+                return True
+        if result.get('already_on_level') or result.get('pending_scene'):
+            logger.info(f'[活动战役] goto_level 已在 LEVEL，继续截图路径 {result}')
+        return False
 
     def ui_goto_coalition(self):
         # 已在 page_coalition，跳过活动检查。

@@ -13,6 +13,11 @@ from module.ocr.ocr import Digit, DigitCounter
 from module.retire.retirement import Retirement
 from module.shop.assets import *
 from module.shop.base import ShopBase
+from module.shop.bridge_snapshot import (
+    VISUAL_REQUIRED_KINDS,
+    bridge_shop_snapshot_looks_empty,
+    bridge_shop_snapshot_skips_buy,
+)
 from module.shop.shop_select_globals import *
 from module.ui.assets import SHOP_BACK_ARROW
 
@@ -343,6 +348,10 @@ class ShopClerk(ShopBase, Retirement):
         获取商品列表、OCR 货币余额，逐个购买直到无可用商品或余额不足。
         最多迭代 12 次防止无限循环。
 
+        功勋与核心月度不因 Sweeney 快照「空/售罄」提前返回。旧快照把
+        buyCount 当成库存，功勋未购买时 buyCount 为 0；kind=core 还会
+        读成功勋商店。提前返回会漏掉月度心智和功勋魔方。
+
         Returns:
             bool: 是否成功（True 表示购买完成或余额不足，False 表示余额为 0）
         """
@@ -352,17 +361,14 @@ class ShopClerk(ShopBase, Retirement):
                 from module.alas_bridge.actions import bridge_enabled, get_shop_items
                 if bridge_enabled(self.config):
                     snap = get_shop_items(self.config, kind=kind)
-                    items = (snap or {}).get('items') if isinstance(snap, dict) else None
-                    if isinstance(items, list):
-                        purchasable = [
-                            row for row in items
-                            if isinstance(row, dict)
-                            and row.get('can_purchase') is not False
-                            and int(row.get('stock') or 0) != 0
-                        ]
-                        if not purchasable:
-                            logger.info(f'[商店-购买] 跳过（Sweeney get_shop_items {kind} 空/售罄）')
-                            return True
+                    if bridge_shop_snapshot_skips_buy(kind, snap):
+                        logger.info(f'[商店-购买] 跳过（Sweeney get_shop_items {kind} 空/售罄）')
+                        return True
+                    if kind in VISUAL_REQUIRED_KINDS and bridge_shop_snapshot_looks_empty(snap):
+                        logger.info(
+                            f'[商店-购买] Sweeney get_shop_items {kind} 报空/售罄，'
+                            f'仍走界面购买（功勋未买时 buyCount=0，核心月度不在该快照里）'
+                        )
             except Exception as e:
                 logger.info(f'Sweeney shop items miss: {e}')
         for _ in range(12):

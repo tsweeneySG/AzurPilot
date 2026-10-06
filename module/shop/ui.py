@@ -150,6 +150,8 @@ class ShopUI(UI):
 
         Sweeney 把 NewShopMainScene 映射为 page_shop，与 page_munitions 是同一界面。
         学院摄像机可能挡住 ACADEMY_GOTO_MUNITIONS 标签，因此以 ACADEMY_CHECK 为准点击。
+        有桥时 `ui_ensure(page_munitions)` 走 GAME.GO_SCENE SHOP（supply），
+        不要点港口后宅枢纽——经典/白主题 Dorm 连点会进设置或商店。
 
         Pages:
             in: Any
@@ -158,6 +160,12 @@ class ShopUI(UI):
         current = self.ui_get_current_page()
         if current in (page_munitions, page_shop):
             logger.info(f'[商店-UI] 已在军需商店 ({current})')
+            self.ui_current = page_munitions
+            return
+
+        # SCENE.SHOP 默认 type=supply，跳过港口后宅枢纽误点（1_67 / nyan 进设置/商店）。
+        self.ui_ensure(page_munitions)
+        if self.ui_current in (page_munitions, page_shop) or self.ui_page_appear(page_munitions, offset=(20, 20)):
             self.ui_current = page_munitions
             return
 

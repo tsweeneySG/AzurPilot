@@ -40,6 +40,23 @@ class CampaignSP(EventBase):
             self.config.task_stop()
 
         try:
+            from module.alas_bridge.actions import bridge_enabled, get_task_remains
+            if bridge_enabled(self.config):
+                remains = get_task_remains(self.config)
+                if isinstance(remains, dict) and remains.get('day_caught_up'):
+                    logger.info('[Sweeney] 客户端错过日切，已补跑 DayCall')
+                sp = remains.get('event_sp') if isinstance(remains, dict) else None
+                if isinstance(sp, dict) and (
+                    sp.get('enough_times') is False
+                    or (sp.get('remain') is not None and int(sp.get('remain') or 0) <= 0)
+                ):
+                    logger.info(f'[活动-SP] 今日次数已用尽: {sp}')
+                    self.config.task_delay(server_update=True, half=True)
+                    return
+        except Exception as e:
+            logger.info(f'Sweeney event_sp remain miss: {e}')
+
+        try:
             super().run(name=self.config.Campaign_Name, folder=self.config.Campaign_Event, total=1)
         except TaskEnd:
             # 捕获任务切换，正常中断

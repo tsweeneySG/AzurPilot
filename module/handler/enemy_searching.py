@@ -9,6 +9,7 @@
 
 from module.base.decorator import del_cached_property
 from module.base.timer import Timer
+from module.combat.assets import EXP_INFO_A, EXP_INFO_B, EXP_INFO_C, EXP_INFO_D, EXP_INFO_S, GET_SHIP
 from module.exception import CampaignEnd
 from module.handler.assets import *
 from module.handler.info_handler import InfoHandler
@@ -85,6 +86,7 @@ class EnemySearchingHandler(InfoHandler):
             CampaignEnd: 确认已回到关卡页面后抛出，终止当前战役流程。
         """
         if self.is_in_stage():
+            self._in_stage_prep_cancel_clicks = 0
             if self.in_stage_timer.reached():
                 logger.info('[处理器-搜索] 已回到关卡页面')
                 self.ensure_no_info_bar(timeout=1.2)
@@ -92,17 +94,24 @@ class EnemySearchingHandler(InfoHandler):
             else:
                 return False
         else:
+            # AwardInfo 还在时准备键是误匹配。点取消会打在屏幕顶外，
+            # 结算层不关（3_asami Event2 2026-09-23 07:35）。
+            if getattr(self, '_bridge_award_open', False):
+                self.in_stage_timer.reset()
+                return False
             if self.appear(MAP_PREPARATION, offset=(20, 20)) \
                     or self.appear(MAP_PREPARATION_HARD, offset=(20, 20)) \
                     or self.appear(FLEET_PREPARATION, offset=(20, 50)):
-                self.device.click(MAP_PREPARATION_CANCEL)
-            else:
-                try:
-                    from module.alas_bridge.actions import map_prep_showing_from_heartbeat
-                    if map_prep_showing_from_heartbeat(self.config):
-                        self.device.click(MAP_PREPARATION_CANCEL)
-                except Exception:
-                    pass
+                n = getattr(self, '_in_stage_prep_cancel_clicks', 0)
+                if n < 3:
+                    # 不用 offset：匹配失败也会改写点击区域，下一帧点到 y<=0。
+                    # 准备键闪一下就清零计数，所以 3 次上限挡不住 12 连点。
+                    MAP_PREPARATION_CANCEL.clear_offset()
+                    if self.appear_then_click(MAP_PREPARATION_CANCEL, interval=2):
+                        self._in_stage_prep_cancel_clicks = n + 1
+                        if self._in_stage_prep_cancel_clicks >= 3:
+                            logger.warning('[处理器-搜索] MAP_PREPARATION_CANCEL 连点无进展，停止点击')
+                            self.device.click_record_clear()
             self.in_stage_timer.reset()
             return False
 
@@ -176,6 +185,22 @@ class EnemySearchingHandler(InfoHandler):
         """
         return False
 
+    def _settlement_overlay_during_map_search(self):
+        """结算 overlay 盖在地图上时不要卡在敌人搜索内循环。
+
+        该循环不处理 GET_SHIP / EXP。IN_MAP 一闪就 reset 5s 超时，
+        会把 combat_status 吞掉几十秒（1_67 2026-09-17 00:23 EXP 后 93s
+        才点到 GET_SHIP）。看见结算画面就退回外层。
+        """
+        if self.appear(GET_SHIP):
+            return True
+        if self.appear(EXP_INFO_S) or self.appear(EXP_INFO_A) or self.appear(EXP_INFO_B) \
+                or self.appear(EXP_INFO_C) or self.appear(EXP_INFO_D):
+            return True
+        if hasattr(self, 'retirement_appear') and self.retirement_appear():
+            return True
+        return False
+
     def handle_in_map_with_enemy_searching(self, drop=None):
         """
         处理地图中敌人搜索动画出现的情况。
@@ -193,6 +218,9 @@ class EnemySearchingHandler(InfoHandler):
         appeared = False
         while 1:
             self.device.screenshot()
+            if self._settlement_overlay_during_map_search():
+                logger.info('[处理器-搜索] 结算 overlay，退出敌人搜索')
+                return False
             if self.is_event_animation():
                 continue
             if self.is_in_map():
@@ -264,6 +292,9 @@ class EnemySearchingHandler(InfoHandler):
         timeout = Timer(1, count=2).start()
         while 1:
             self.device.screenshot()
+            if self._settlement_overlay_during_map_search():
+                logger.info('[处理器-搜索] 结算 overlay，退出敌人搜索')
+                return False
 
             if not self.is_in_map():
                 timeout.reset()

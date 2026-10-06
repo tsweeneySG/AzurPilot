@@ -75,12 +75,11 @@ class Level(ModuleBase):
             status = fetch_sortie_status(self.config)
             ship = any_at_cap(status)
             if ship is not None:
-                logger.info(
-                    f'[等级-上限] {ship.get("name")} '
-                    f'Lv.{ship.get("level")}/{ship.get("max_level")} '
-                    f'hard={ship.get("hard_cap")} soft={ship.get("soft_cap")}'
-                )
+                from module.alas_bridge.sortie_status import level_cap_ship_line, notify_level_cap
+                logger.info(f'[等级-上限] {level_cap_ship_line(ship)}')
                 self.config.LV_TRIGGERED = True
+                # 战役循环退出前就会看到上限。在这里推送，避免退出被打断时 Telegram 收不到。
+                notify_level_cap(self.config, ship)
         return True
 
     @Config.when(SERVER='en')

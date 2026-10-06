@@ -604,6 +604,7 @@ GitHub Actions 使用 `uv sync --frozen` 和 `uv run`。运行：ruff lint、`bu
 | **了解大世界系统** | `.agent/OS-SYSTEM.md` |
 | **了解编码规范** | `.agent/CONVENTIONS.md` |
 | **查看已知问题** | `.agent/ISSUES.md` |
+| **扫描当日/过夜日志并修高发错误** | `.agent/LOG-REVIEW.md` |
 
 ### 文档索引
 
@@ -613,6 +614,7 @@ GitHub Actions 使用 `uv sync --frozen` 和 `uv run`。运行：ruff lint、`bu
 | `.agent/ARCHITECTURE.md` | 项目整体架构、分层图、依赖关系图 |
 | `.agent/CONVENTIONS.md` | 编码规范、命名规则、状态循环模式 |
 | `.agent/ISSUES.md` | 已知问题清单、优化路线图 |
+| `.agent/LOG-REVIEW.md` | 日志聚类 → TODO → 修复循环（本地 `log/`） |
 | `.agent/MODULE-MAP.md` | 模块映射表、目录结构说明 |
 | `.agent/ENTRY-ALAS.md` | alas.py 核心调度器分析 |
 | `.agent/ENTRY-GUI.md` | gui.py WebUI 启动器分析 |

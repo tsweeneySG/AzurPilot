@@ -128,6 +128,8 @@ SCENE_TO_PAGE = {
     'act boss battle': 'page_raid',
     'EXERCISEFORMATION': 'page_exercise',
     'scene exerciseformation': 'page_exercise',
+    'MILITARYEXERCISE': 'page_exercise',
+    'scene militaryexercise': 'page_exercise',
     'LOGIN': 'page_login',
     'scene login': 'page_login',
     'TRANSITION': 'page_transition',
@@ -170,6 +172,9 @@ def _level_page_from_state(state: dict) -> Optional[str]:
         return None
     if level.get('in_map'):
         return 'page_in_map'
+    # LevelRemasterView 叠在出击菜单上，entrance 仍为 true。
+    if level.get('archives'):
+        return 'page_archives'
     if level.get('entrance'):
         return 'page_campaign_menu'
     if level.get('activity') and not level.get('remaster'):

@@ -64,7 +64,7 @@ alwaysApply: true
 - 强制巡逻扫描（`_execute_fixed_patrol_scan`）：多舰队定点移动、视角复位、全图重扫
 - 短猫任务指标（`meow_search_metrics_start/end`）：战斗计时、行动力消耗记录
 - CL1 战斗统计（`on_auto_search_battle_count_add`）：每月战斗计数、遥测提交
-- 行动力月底策略（`cl1_ap_preserve`）：CL1 的 AP 保留值属性（按 5 的倍数与 `OperationCoinsPreserve` 联动），原 `get_action_point_limit` 已移除
+- 行动力月底策略（`get_action_point_limit` / `cl1_ap_preserve`）：耄耋相接在重置前按 300 → 0 下调 `ActionPointPreserve`；隐秘/深渊坐标或要塞仍在时保持用户配置。CL1 另有最低行动力保留
 
 **关键设计模式**：
 - 状态循环模式：所有 UI 交互使用截图-检查循环，不使用 sleep-wait

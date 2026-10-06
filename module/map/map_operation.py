@@ -154,6 +154,9 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         self._enter_map_bar_this_frame = False
         self._enter_map_load_bar_finished = False
         self._enter_map_combat_started = False
+        self._auto_search_continue_timer = None
+        # chapter_track 已发出但海图/自律一直不出现时，不要空等到 GameStuck 重启。
+        self._track_enter_timer = None
         self.stage_entrance = button
         self.map_clear_percentage_prev = -1
         self.map_clear_percentage_timer.reset()
@@ -189,8 +192,12 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                 else:
                     checked_in_map = True
 
-                # 意外点击处理
-                if self.appear(DAILY_CHECK, offset=(20, 20), interval=3):
+                # 意外点击处理。准备页上 DAILY_CHECK 会误匹配，BACK 关掉 LevelInfo
+                # 后 chapter_track 变 not_in_prep（3_asami Hard 14-4 2026-09-21 11:24）。
+                # 进图第一帧模板可能还没跟上，心跳 info_showing 仍为真
+                # （4_nyan / 6_margaret Hard 14-4 2026-10-05 03:15，BACK 后空等至 GameStuck）。
+                if self.appear(DAILY_CHECK, offset=(20, 20), interval=3) \
+                        and not self._enter_map_level_info_open():
                     logger.info(f'{DAILY_CHECK} -> {BACK_ARROW}')
                     self.device.click(BACK_ARROW)
                     continue
@@ -199,6 +206,11 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                 if map_timer.reached() and self.handle_map_mode_switch(mode):
                     prep_button = self.handle_map_preparation()
                 else:
+                    prep_button = None
+                # 刚点过自律继续：截图残留准备页。chapter_track 会 not_in_prep，
+                # 推迟 Main 后空闲回港，未知页重启（5_booty / 6_margaret / 1_67，2026-10-04～05）。
+                if prep_button and self._auto_search_continue_blocks_prep():
+                    logger.info('[地图-操作] 自律继续后忽略残留准备页，等待进图')
                     prep_button = None
                 if prep_button:
                     self.map_get_info()
@@ -213,6 +225,8 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                         map_click += 1
                         map_timer.reset()
                         campaign_timer.reset()
+                        if self._track_enter_timer is None:
+                            self._track_enter_timer = Timer(45).start()
                         continue
                     if self._level_prep_from_bridge() == 'fleet':
                         map_timer.reset()
@@ -277,10 +291,29 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                 # 进入战役。加载条出现后不要再点关卡入口，否则 JP 暂停键误判
                 # 时会连点 16-4 直到 RequestHumanTakeover。
                 if not getattr(self, '_enter_map_saw_load_bar', False):
-                    if campaign_timer.reached() and self.appear_then_click(button):
+                    # 自律继续后的等待窗口里不要再点关卡入口。
+                    if campaign_timer.reached() \
+                            and not self._auto_search_continue_blocks_prep() \
+                            and self.appear_then_click(button):
                         campaign_click += 1
                         campaign_timer.reset()
                         continue
+
+                # 档案 T6：chapter_track 返回 sent 后画面停住，16-4 则 1 秒内
+                # 出现自律。空等会 GameStuck 并重启客户端（6ix7even 74 次、
+                # Brad 32 次，2026-09-27 02:38–09:47）。
+                track_timer = self._track_enter_timer
+                if track_timer is not None and track_timer.reached():
+                    entered = (
+                        self.is_in_map()
+                        or self.is_auto_search_running()
+                        or self._enter_map_saw_load_bar
+                        or self._enter_map_combat_started
+                    )
+                    if not entered:
+                        logger.warning('[地图-操作] chapter_track 已发出但未进入地图')
+                        raise ScriptEnd('chapter_track did not enter map')
+                    self._track_enter_timer = None
 
                 # 结束判断
                 if self.map_is_auto_search:
@@ -391,6 +424,7 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
             bool: 始终返回 True。
         """
         logger.hr('取消进入地图')
+        clicks = 0
         while 1:
             if skip_first_screenshot:
                 skip_first_screenshot = False
@@ -401,12 +435,19 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
             if self.is_in_stage():
                 break
 
-            if self.appear(MAP_PREPARATION, offset=(20, 20), interval=2) \
-                    or self.appear(MAP_PREPARATION_HARD, offset=(20, 20), interval=2):
+            prep = self.appear(MAP_PREPARATION, offset=(20, 20), interval=2) \
+                or self.appear(MAP_PREPARATION_HARD, offset=(20, 20), interval=2) \
+                or self.appear(FLEET_PREPARATION, offset=(20, 50), interval=2)
+            if prep:
+                # offset 模板匹配会把取消键的点击区域留在 y<=0，点不中准备界面，
+                # 直到 GameTooManyClick（3_asami Event2 2026-09-23 07:29）。
+                if clicks >= 3:
+                    logger.warning('[地图] MAP_PREPARATION_CANCEL 连点无进展，放弃进入')
+                    self.device.click_record_clear()
+                    raise CampaignEnd('MAP_PREPARATION_CANCEL gave up')
+                MAP_PREPARATION_CANCEL.clear_offset()
                 self.device.click(MAP_PREPARATION_CANCEL)
-                continue
-            if self.appear(FLEET_PREPARATION, offset=(20, 50), interval=2):
-                self.device.click(MAP_PREPARATION_CANCEL)
+                clicks += 1
                 continue
 
         return True
@@ -518,6 +559,32 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         return sum_ / total > 0.5
 
 
+    def _enter_map_level_info_open(self):
+        """准备页是否还在。截图或心跳任一命中即可。
+
+        Returns:
+            bool: LevelInfo / 舰队准备仍打开。
+        """
+        if self.appear(MAP_PREPARATION, offset=(20, 20)) \
+                or self.appear(MAP_PREPARATION_HARD, offset=(20, 20)):
+            return True
+        return self._level_prep_from_bridge() in ('info', 'fleet')
+
+    def _auto_search_continue_blocks_prep(self):
+        """自律继续后的短窗口内，不要把残留准备页当成 LevelInfo。
+
+        心跳仍报 info 时准备页还在，继续走 chapter_track。
+
+        Returns:
+            bool: True 表示本帧跳过准备页点击和 chapter_track。
+        """
+        timer = getattr(self, '_auto_search_continue_timer', None)
+        if timer is None or timer.reached():
+            return False
+        if self._level_prep_from_bridge() == 'info':
+            return False
+        return True
+
     def _level_prep_from_bridge(self):
         """心跳中的 'info' / 'fleet'，否则 None。"""
         try:
@@ -543,7 +610,8 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         loop = bool(getattr(self, 'map_is_clear_mode', False)
                     or self.config.Campaign_UseClearMode)
         open_fleet = not auto_fight
-        if open_fleet and self._level_prep_from_bridge() == 'fleet':
+        # 舰队准备页 info view 已关；再发 TRACKING 会 not_in_prep，然后误点 MAP_PREPARATION。
+        if self._level_prep_from_bridge() == 'fleet':
             return False
         result = chapter_track(
             self.config,
@@ -554,6 +622,14 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         if not isinstance(result, dict):
             return False
         logger.info(f'Sweeney chapter_track: {result}')
+        if result.get('reason') == 'no_tries':
+            logger.info('Sweeney chapter_track no remaining tries')
+            raise ScriptEnd('No remaining chapter tries')
+        if result.get('reason') == 'not_in_prep':
+            # GAME.TRACKING 需要 LevelInfoView。再点 MAP_PREPARATION 会空等 GameStuck
+            # （5_booty Event D3 2026-09-20 02:20，GAME_TIPS 关掉准备页后 15 次重启）。
+            logger.warning('Sweeney chapter_track not_in_prep, skip MAP_PREPARATION click')
+            raise ScriptEnd('chapter_track not_in_prep')
         if result.get('reason') == 'chapter_mismatch':
             logger.warning('Sweeney chapter_track mismatch, falling back to screenshot click')
             return False

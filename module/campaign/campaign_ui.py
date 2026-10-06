@@ -18,7 +18,7 @@ from module.campaign.campaign_event import CampaignEvent
 from module.campaign.campaign_ocr import CampaignOcr
 from module.exception import CampaignEnd, CampaignNameError, ScriptEnd
 from module.logger import logger
-from module.map.assets import WITHDRAW
+from module.map.assets import MAP_PREPARATION, WITHDRAW
 from module.map.map_operation import MapOperation
 from module.ui.assets import CAMPAIGN_CHECK, CAMPAIGN_MENU_CHECK, EVENT_CHECK
 from module.ui.switch import Switch
@@ -607,6 +607,54 @@ class CampaignUI(MapOperation, CampaignEvent, CampaignOcr):
             return True
         return False
 
+    def _bridge_open_chapter_prep(self, name):
+        """chapter_enter 打开关卡准备页，跳过章节 OCR 和关卡贴图点击。"""
+        try:
+            from module.alas_bridge.actions import (
+                bridge_enabled, chapter_enter, war_archive_title)
+        except Exception:
+            return False
+        if not bridge_enabled(self.config):
+            return False
+        import time
+        archive_title = None
+        event = getattr(self.config, 'Campaign_Event', None)
+        if isinstance(event, str) and event.startswith('war_archives_'):
+            archive_title = war_archive_title(event)
+            if archive_title:
+                logger.info(f'Sweeney chapter_enter archive: {archive_title}')
+        for attempt in range(4):
+            result = chapter_enter(
+                self.config, chapter_name=name, archive_title=archive_title)
+            if not isinstance(result, dict):
+                return False
+            if 'ticket_cost' in result or 'tickets' in result:
+                self._wa_data_key_gate = {
+                    'tickets': result.get('tickets'),
+                    'ticket_cost': result.get('ticket_cost'),
+                }
+            if result.get('reason') == 'chapter_not_found':
+                logger.info(f'Sweeney chapter_enter not found: {name}')
+                return False
+            if result.get('reason') == 'no_tries':
+                logger.info(f'Sweeney chapter_enter no tries: {result}')
+                raise ScriptEnd('No remaining chapter tries')
+            if result.get('reason') == 'panel_error':
+                logger.warning(f'Sweeney chapter_enter panel error: {result}')
+                return False
+            if result.get('info_showing') or result.get('already_active') or result.get('already_in_map'):
+                logger.info(f'Sweeney chapter_enter: {result}')
+                return True
+            if result.get('pending_battle'):
+                logger.info(f'Sweeney chapter_enter pending battle: {result}')
+                return True
+            logger.info(
+                f'Sweeney chapter_enter pending try={attempt + 1} '
+                f'scene={result.get("pending_scene")} map={result.get("pending_map")}'
+            )
+            time.sleep(1.0)
+        return False
+
     def ensure_campaign_ui(self, name, mode='normal', skip_first_screenshot=True):
         """
         确保进入指定战役的 UI 界面。
@@ -619,6 +667,9 @@ class CampaignUI(MapOperation, CampaignEvent, CampaignOcr):
         Raises:
             ScriptEnd: 重试后仍切换失败时抛出。
         """
+        if self._bridge_open_chapter_prep(name):
+            self.ENTRANCE = MAP_PREPARATION
+            return True
         timeout = Timer(5, count=20).start()
         while 1:
             if skip_first_screenshot:

@@ -34,6 +34,7 @@ from module.base.button import Button
 from module.base.timer import Timer
 from module.base.utils import color_similarity_2d, crop
 from module.config.deep import deep_get
+from module.exception import GameTooManyClickError
 from module.handler.assets import *
 from module.logger import logger
 from module.map.assets import *
@@ -93,6 +94,7 @@ class LoginHandler(UI):
         confirm_timer = Timer(1.5, count=4).start()
         orientation_timer = Timer(5)
         login_success = False
+        login_taps = 0
         self.device.stuck_record_clear()
         self.device.click_record_clear()
 
@@ -113,8 +115,21 @@ class LoginHandler(UI):
             else:
                 confirm_timer.reset()
 
-            # 登录处理
+            # 维护公告盖在登录键上。先关公告，避免点到屏幕中部把弹窗留住。
+            if self.appear_then_click(MAINTENANCE_ANNOUNCE, offset=(30, 30), interval=5):
+                continue
+            if self.appear_then_click(LOGIN_GAME_UPDATE, offset=(30, 30), interval=5):
+                continue
+            # 登录处理。点过「进入」仍不在主界面时停手，交给调度器推迟队列，
+            # 而不是连点到点击上限再把游戏杀掉（Asami/Margaret 2026-09-24）。
             if self.match_template_color(LOGIN_CHECK, offset=(30, 30), interval=5):
+                if login_success:
+                    login_taps += 1
+                    if login_taps > 3:
+                        logger.warning('[登录] 多次点击登录键仍未进入主界面')
+                        raise GameTooManyClickError(
+                            '[设备-点击] 按钮点击次数过多: LOGIN_CHECK'
+                        )
                 self.device.click(LOGIN_CHECK)
                 if not login_success:
                     logger.info('[登录] 登录成功')
@@ -132,11 +147,6 @@ class LoginHandler(UI):
             if self.appear(EVENT_LIST_CHECK, offset=(30, 30), interval=5):
                 self.device.click(BACK_ARROW)
                 continue
-            # 更新和维护
-            if self.appear_then_click(MAINTENANCE_ANNOUNCE, offset=(30, 30), interval=5):
-                continue
-            if self.appear_then_click(LOGIN_GAME_UPDATE, offset=(30, 30), interval=5):
-                continue
             if server.server == 'cn' and not login_success:
                 if self.handle_cn_user_agreement():
                     continue
@@ -152,9 +162,13 @@ class LoginHandler(UI):
                 continue
             if self.handle_urgent_commission():
                 continue
-            # 主界面弹窗
-            if self.ui_page_main_popups(get_ship=login_success):
-                return True
+            # 主界面弹窗。登录键还在时 GET_SHIP 是误匹配，点下去会让本函数
+            # 提前返回，下一个任务又在同一画面上连点 LOGIN_CHECK
+            # （Booty OpsiDaily / 6ix7even OpsiMeowfficerFarming，2026-09-25 03:17）。
+            # 弹窗点掉后继续等到主界面，不要在这里结束登录。
+            ship_popup = login_success and not self.appear(LOGIN_CHECK, offset=(30, 30))
+            if self.ui_page_main_popups(get_ship=ship_popup):
+                continue
             # 始终尝试返回主界面
             if self.appear_then_click(GOTO_MAIN, offset=(30, 30), interval=5):
                 continue
@@ -294,6 +308,8 @@ class LoginHandler(UI):
         self.device.screenshot_interval_set(1.0)
         login_wait_timeout = self._login_wait_timeout()
         logger.info(f'[登录] 登录等待宽容时间 {login_wait_timeout:g} 秒')
+        # 异常离开时保持标记，调度器据此推迟队列而不是立刻杀进程。
+        self.device._in_app_login = True
         try:
             # 登录等待阶段放宽卡死检测，避免后台模拟器慢启动时
             # 静态画面超过默认 30 秒就被误判为 GameStuckError 而陷入重启循环。
@@ -301,6 +317,7 @@ class LoginHandler(UI):
                     image_stuck=login_wait_timeout,
                     long_wait=max(login_wait_timeout, self.device.stuck_timer_long.limit)):
                 self._handle_app_login()
+            self.device._in_app_login = False
         finally:
             self.device.screenshot_interval_set()
 

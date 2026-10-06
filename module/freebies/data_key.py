@@ -78,6 +78,13 @@ class DataKey(UI):
             out: page_main
         """
         self.ui_ensure(page_archives)
+        # MAIN_GOTO 上限会放弃 page_archives，随后 OCR 主界面数字当成 0/0
+        # 并推迟到次日（6_margaret 2026-09-21/22，钥匙未领）。
+        if not self.appear(WAR_ARCHIVES_CHECK, offset=(20, 20)):
+            logger.warning('[免费福利-钥匙] 未到达作战档案，跳过 OCR，稍后重试')
+            self._data_key_nav_failed = True
+            return
+        self._data_key_nav_failed = False
 
         self.data_key_collect()
 

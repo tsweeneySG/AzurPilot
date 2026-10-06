@@ -136,11 +136,14 @@ class CampaignRun(CampaignEvent, ShopStatus):
             )
             logger.hr(f'触发停止条件: {label}')
             self.config.Scheduler_Enable = False
-            handle_notify(
-                self.config.Error_OnePushConfig,
-                title=f"AzurPilot <{self.config.config_name}> campaign finished",
-                content=f"<{self.config.config_name}> {self.name} reached level limit"
+            # 战斗中已经推送过则不再发第二条。OCR 达到等级时这里补发英文通知。
+            already = (
+                getattr(self.campaign.config, 'LEVEL_CAP_NOTIFIED', False)
+                or getattr(self.config, 'LEVEL_CAP_NOTIFIED', False)
             )
+            if not already:
+                from module.alas_bridge.sortie_status import notify_level_cap
+                notify_level_cap(self.config, stage=self.name)
             return True
         # 石油限制
         if oil_check:
@@ -456,11 +459,27 @@ class CampaignRun(CampaignEvent, ShopStatus):
                 '无法进入关卡，推迟任务而非重启模拟器')
             self.config.task_delay(minute=30)
             self.config.task_stop('Cannot enter map')
+        elif str(e) == 'chapter_track did not enter map':
+            logger.warning(
+                'chapter_track 已发出但未进图，推迟任务而非重启游戏')
+            self.config.task_delay(minute=30)
+            self.config.task_stop('chapter_track did not enter map')
+        elif str(e) == 'chapter_track not_in_prep':
+            # 准备页已关时立刻重开同一任务会连刷 ScriptEnd。
+            # Brad WarArchives T6 2026-09-27 06:40–07:59，265 次，间隔约 7 秒。
+            logger.warning(
+                'chapter_track 不在准备页，推迟任务而非马上重开')
+            self.config.task_delay(minute=30)
+            self.config.task_stop('chapter_track not_in_prep')
         elif str(e) == 'Campaign name error':
             logger.warning(
                 '无法识别关卡名，推迟任务而非重启游戏')
             self.config.task_delay(minute=30)
             self.config.task_stop('Campaign name error')
+        elif str(e) == 'No remaining chapter tries':
+            logger.info('关卡今日次数已用尽，推迟到服务器刷新')
+            self.config.task_delay(server_update=True, half=True)
+            self.config.task_stop('No remaining chapter tries')
 
     def run(self, name, folder='campaign_main', mode='normal', total=0):
         """

@@ -419,6 +419,8 @@ class FastForwardHandler(AutoSearchHandler):
             else:
                 # handle_2x_book_setting() 之后 AUTO_SEARCH_MENU_CONTINUE 可能已消失
                 pass
+            # 继续键已离开 LevelInfo。下一帧截图仍像准备页时不要 chapter_track。
+            self._auto_search_continue_timer = Timer(20).start()
             return True
         return False
 

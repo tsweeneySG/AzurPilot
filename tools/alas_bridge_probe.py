@@ -6,6 +6,8 @@ Examples:
   python tools/alas_bridge_probe.py --list
   python tools/alas_bridge_probe.py --config 6_margaret
   python tools/alas_bridge_probe.py -i 6 get_resources
+  python tools/alas_bridge_probe.py --config 1_67 goto_level event
+  python tools/alas_bridge_probe.py --config 1_67 chapter_enter d3
 """
 from __future__ import annotations
 
@@ -112,6 +114,10 @@ def main():
     extra = {}
     if args.verb == 'goto_scene' and args.scene:
         extra = {'scene': args.scene}
+    elif args.verb == 'goto_level':
+        extra = {'want': args.scene or 'event'}
+    elif args.verb == 'chapter_enter':
+        extra = {'chapter_name': args.scene} if args.scene else {}
     elif args.verb == 'harvest_res':
         extra = {'kind': args.scene or 'oil'}
     elif args.verb == 'echo':

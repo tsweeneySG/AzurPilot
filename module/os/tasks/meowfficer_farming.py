@@ -284,7 +284,9 @@ class OpsiMeowfficerFarming(MeowfficerTargetZoneMixin, CoinTaskMixin, OSMap):
             self.config.OpsiMeowfficerFarming_ActionPointPreserve = 500
 
         if ap_preserve is None:
-            preserve = self.config.OpsiMeowfficerFarming_ActionPointPreserve
+            # 月末阶梯下调只作用于耄耋相接自己的保留值。
+            # 智能调度、防溢出、月末清理会传入明确保留值，这里不再改写。
+            preserve = self.get_action_point_limit()
         else:
             preserve = int(ap_preserve)
         if preserve == 0:

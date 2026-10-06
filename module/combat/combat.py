@@ -606,19 +606,51 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         logger.info(f'[战斗-结算] Sweeney BATTLE_REPORT 点击 ({name})')
         return True
 
+    def _bridge_try_result_advance(self):
+        """用 Lua triggerButton 翻结算页，替代点 S 评价 / GET_SHIP 白条。"""
+        n = int(getattr(self, '_bridge_result_advances', 0) or 0)
+        if n >= 8:
+            return False
+        interval = max(float(getattr(self, 'battle_status_click_interval', 0) or 0), 0.5)
+        timer = self.get_interval_timer('SWEENEY_BATTLE_RESULT_ADVANCE', interval=interval)
+        if not timer.reached():
+            return False
+        try:
+            from module.alas_bridge.actions import battle_result_advance
+        except Exception:
+            return False
+        result = battle_result_advance(self.config)
+        if not isinstance(result, dict):
+            return False
+        if result.get('reason') == 'dock_full':
+            return False
+        if not result.get('acted'):
+            self._bridge_award_open = False
+            timer.reset()
+            reason = result.get('reason')
+            if reason and reason != 'fighting':
+                logger.info(f'[战斗-结算] Sweeney battle_result_advance: {result}')
+            return False
+        timer.reset()
+        self._bridge_result_advances = n + 1
+        self._bridge_award_open = result.get('page') == 'AwardInfo'
+        logger.info(f'[战斗-结算] Sweeney battle_result_advance: {result}')
+        return True
+
     def _get_ship_blocks_settlement(self):
-        """新船 overlay 闪烁时不要点评价 / 经验 / 心跳盲点。"""
-        if self.appear(GET_SHIP):
-            self._hold_exp_for_get_ship()
-            return True
-        return not self._exp_hold_reached()
+        """新船卡当前帧可见时不要点评价 / 经验 / 心跳盲点。
+
+        不要用墙钟 hold：游戏结算本身不会卡 90s。挡点击只看当前画面，
+        前进靠 combat_status 的 exp_info 单向锁，不再回头点 EXP。
+        """
+        return self.appear(GET_SHIP)
 
     def handle_battle_status(self, drop=None):
         """
         处理战斗结算画面（S/A/B/C/D 评价）。
 
         检测战斗是否仍在执行，然后按优先级匹配各评价等级的结算画面。
-        GET_SHIP 可见或刚见过时不要点 S 评价：心跳会停在 BATTLE_REPORT，
+        GET_SHIP 当前可见时不要点 S 评价：心跳会停在 BATTLE_REPORT，
         模板又把新船卡误判成 BATTLE_STATUS_S，与 GET_SHIP 对打
         （nyan 16-4 2026-09-16 01:43 / 11:44 / 14:58）。
 
@@ -715,28 +747,13 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
 
         return False
 
-    def _hold_exp_for_get_ship(self):
-        """新船 overlay 出现后，短时禁止点 EXP / S 评价。"""
-        timer = getattr(self, '_get_ship_exp_hold', None)
-        if timer is None:
-            timer = Timer(20, count=30)
-            self._get_ship_exp_hold = timer
-        timer.reset()
-
-    def _exp_hold_reached(self):
-        timer = getattr(self, '_get_ship_exp_hold', None)
-        if timer is None:
-            return True
-        return timer.reached()
-
     def handle_exp_info(self):
         """
         处理经验结算画面（S/A/B/C/D 评价）。
 
-        GET_SHIP 仍可见时不要点经验结算：无 interval 时会与 GET_SHIP
-        对打触发 GameTooManyClickError（16-4 进图即战斗后的结算）。
-        新船 overlay 会闪，GET_SHIP 不是每帧都匹配；看见过后还要
-        再挡几秒，避免 EXP 与 GET_SHIP 交替点满阈值。
+        GET_SHIP 当前可见时不要点经验结算，避免与新船确认对打。
+        是否已经点过 EXP 由 combat_status 的 exp_info 单向锁负责，
+        本方法不再用墙钟 hold。
 
         Returns:
             是否点击了经验结算画面。
@@ -779,7 +796,6 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         """
         if not self.appear(GET_SHIP):
             return False
-        self._hold_exp_for_get_ship()
         if self.handle_popup_confirm('GET_SHIP'):
             logger.info('[战斗-舰船] 锁定新舰船')
             self.config.GET_SHIP_TRIGGERED = True
@@ -832,9 +848,10 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         self.device.screenshot_interval_set()
         self.device.stuck_record_clear()
         self.device.click_record_clear()
-        self._get_ship_exp_hold = None
         battle_status = False
-        exp_info = False  # 用于处理游戏白屏 bug
+        exp_info = False  # 用于处理游戏白屏 bug；点过 EXP 后不再回头点
+        self._bridge_result_advances = 0
+        self._bridge_award_open = False
         for _ in self.loop():
             if self.handle_story_skip(drop=drop):
                 continue
@@ -843,12 +860,16 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             # handle_retirement 返回 False，弹窗仍在时也要挡住结算点击。
             if self.handle_retirement() or self.retirement_appear():
                 continue
-            if self.handle_get_ship(drop=drop):
+            if self._bridge_try_result_advance():
+                continue
+            # 新船在 EXP 之前；EXP 点过后只在当前还能看见 GET_SHIP 时再处理
+            # （晚到的新船卡）。ALAS 是 `if not exp_info and handle_get_ship`。
+            if (not exp_info or self.appear(GET_SHIP)) and self.handle_get_ship(drop=drop):
                 continue
 
             # IN_MAP / 关卡页必须在 overlay 之后：船坞满或新船卡会误匹配
             # IN_MAP，随后卡在敌人搜索循环（1_67 2026-09-16 14:22）。
-            overlayed = (not self._exp_hold_reached()) or self.retirement_appear()
+            overlayed = self.appear(GET_SHIP) or self.retirement_appear()
             if not overlayed:
                 if isinstance(expected_end, str):
                     if expected_end == 'in_stage' and self.handle_in_stage():
@@ -875,12 +896,12 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
                 if not exp_info and self.handle_battle_status(drop=drop):
                     battle_status = True
                     continue
-                if self.handle_exp_info():
+                if not exp_info and self.handle_exp_info():
                     exp_info = True
                     continue
             else:
-                # 战斗评价已点击后，优先检测经验结算画面
-                if self.handle_exp_info():
+                # 战斗评价已点击后，优先检测经验结算；点过一次就锁住
+                if not exp_info and self.handle_exp_info():
                     exp_info = True
                     continue
                 if not exp_info and self.handle_battle_status(drop=drop):

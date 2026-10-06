@@ -324,6 +324,9 @@ class RewardDorm(UI):
 
         Pages:
             in: DORM_FEED_CHECK
+
+        Returns:
+            bool: 回到食物界面为 True。未回到则 False，避免接着乱点。
         """
         logger.info(f'[宿舍-喂食] 喂食 {button} x {count}')
         if count <= 3:
@@ -336,13 +339,24 @@ class RewardDorm(UI):
             skip_first_screenshot = True
 
         self.popup_interval_clear()
+        # 点食物后若确认框或高亮把 DORM_FEED_CHECK 盖住，不能干等到 GameStuck
+        # （Margaret 2026-10-01 08:46 FOOD_5_0 后截图 60 秒不变）。
+        feed_back = Timer(8, count=16).start()
         for _ in self.loop(skip_first=skip_first_screenshot):
             # 结束
             if self.appear(DORM_FEED_CHECK, offset=(20, 20)):
                 break
             # 点击
-            if self.handle_popup_cancel('DORM_FEED'):
+            if self.handle_popup_confirm('DORM_FEED'):
+                feed_back.reset()
                 continue
+            if self.handle_popup_cancel('DORM_FEED'):
+                feed_back.reset()
+                continue
+            if feed_back.reached():
+                logger.warning('[宿舍-喂食] 喂食后未回到食物界面，停止以免卡死')
+                return False
+        return True
 
     def dorm_food_get(self):
         """
@@ -401,8 +415,7 @@ class RewardDorm(UI):
             button = self._dorm_food.buttons[food.index(selected)]
             if selected.amount > 0 and fill > selected.feed:
                 count = min(fill // selected.feed, selected.amount)
-                self._dorm_feed_click(button=button, count=count)
-                return True
+                return bool(self._dorm_feed_click(button=button, count=count))
 
         return False
 

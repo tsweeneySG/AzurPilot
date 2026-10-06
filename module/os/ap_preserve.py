@@ -28,6 +28,35 @@ def _as_datetime(value):
     return DEFAULT_TIME
 
 
+def resolve_action_point_preserve(user_preserve, remain, is_cl1=False, cross_month=False, hold=False):
+    """
+    把用户配置的行动力保留和月末阶梯上限合成最终保留值。
+
+    阶梯返回 2000 表示不覆盖用户配置。hold 为真时同样保持用户配置，
+    供仍有隐秘/深渊坐标或塞壬要塞的月份使用。结果不会高于用户配置，也不会高于 2000。
+
+    Args:
+        user_preserve: 用户配置的 ActionPointPreserve。
+        remain (int): 距大世界重置的剩余天数。
+        is_cl1 (bool): 侵蚀 1 练级是否启用。
+        cross_month (bool): 跨月每日是否启用。
+        hold (bool): 高耗行动力内容仍未清空。
+
+    Returns:
+        int: 本轮应使用的行动力保留。
+    """
+    try:
+        user = int(user_preserve)
+    except (TypeError, ValueError):
+        user = 0
+    if user < 0:
+        user = 0
+    stepped = month_end_stepped_preserve(remain, is_cl1=is_cl1, cross_month=cross_month)
+    if stepped >= 2000 or hold:
+        return min(user, 2000)
+    return min(stepped, user)
+
+
 def month_end_stepped_preserve(remain, is_cl1=False, cross_month=False):
     """
     Vanilla month-end preserve. 2000 means "do not override the user value".
