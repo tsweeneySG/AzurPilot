@@ -140,6 +140,13 @@
       "FleetInfo"
     ]
   },
+  "RunParams": {
+    "menu": "collapse",
+    "page": "setting",
+    "tasks": [
+      "RunParams"
+    ]
+  },
   "Tool": {
     "menu": "collapse",
     "page": "tool",

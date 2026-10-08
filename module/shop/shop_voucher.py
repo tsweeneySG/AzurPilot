@@ -256,6 +256,10 @@ class VoucherShop(ShopClerk, ShopStatus):
         """
         success = False
         confirmed_purchase = False
+        from module.statistics.resource_tracking import receipt_totals
+        receipts = receipt_totals(self.config)
+        # 每次成交独立记录；数量选择框确认后再覆盖默认的一次购买。
+        item._resource_purchase_quantity = 1
         if self.shop_strategy_enabled():
             # 未出现数量选择框时，游戏只会执行一次兑换确认。
             item._shop_strategy_executed_quantity = min(
@@ -297,6 +301,9 @@ class VoucherShop(ShopClerk, ShopStatus):
 
             # 结束条件
             if success and self.appear(BACK_ARROW, offset=(30, 30)):
+                if confirmed_purchase:
+                    from module.statistics.resource_tracking import record_purchase
+                    record_purchase(self.config, item, item._resource_purchase_quantity, receipts)
                 return confirmed_purchase if self.shop_strategy_enabled() else True
 
     def run(self):

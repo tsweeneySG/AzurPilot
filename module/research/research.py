@@ -385,6 +385,9 @@ class RewardResearch(ResearchSelector, ResearchQueue, StorageHandler):
                 raise GameTooManyClickError
             if self._research_start_detected(popup_confirmed=available):
                 # RESEARCH_STOP 是半透明按钮，颜色会随背景变化
+                if available:
+                    from module.statistics.resource_tracking import record_research_cost
+                    record_research_cost(self.config, project)
                 if add_queue:
                     if not self.research_queue_add():
                         self.research_project_started = None

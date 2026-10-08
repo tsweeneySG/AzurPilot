@@ -234,6 +234,7 @@ class ShopClerk(ShopBase, Retirement):
         self.ui_ensure_index(limit, letter=shop_buy_select_ensure_index, prev_button=SELECT_MINUS,
                              next_button=SELECT_PLUS,
                              skip_first_screenshot=True)
+        item._resource_purchase_quantity = limit
         self.device.click(SHOP_BUY_CONFIRM_SELECT)
         return True
 
@@ -286,6 +287,7 @@ class ShopClerk(ShopBase, Retirement):
 
         self.ui_ensure_index(limit, letter=OCR_SHOP_AMOUNT, prev_button=AMOUNT_MINUS, next_button=AMOUNT_PLUS,
                              skip_first_screenshot=True)
+        item._resource_purchase_quantity = limit
         self.device.click(SHOP_BUY_CONFIRM_AMOUNT)
         return True
 
@@ -322,6 +324,10 @@ class ShopClerk(ShopBase, Retirement):
         """
         success = False
         confirmed_purchase = False
+        from module.statistics.resource_tracking import receipt_totals
+        receipts = receipt_totals(self.config)
+        # 每次成交独立记录；数量选择框确认后再覆盖默认的一次购买。
+        item._resource_purchase_quantity = 1
         if self.shop_strategy_enabled():
             # 无数量选择框的商品默认只会确认一次；有数量框时由对应处理器覆盖。
             item._shop_strategy_executed_quantity = min(
@@ -363,6 +369,9 @@ class ShopClerk(ShopBase, Retirement):
 
             # 结束条件
             if success and self.appear(SHOP_BACK_ARROW, offset=(30, 30)):
+                if confirmed_purchase:
+                    from module.statistics.resource_tracking import record_purchase
+                    record_purchase(self.config, item, item._resource_purchase_quantity, receipts)
                 return confirmed_purchase if self.shop_strategy_enabled() else True
 
     def shop_buy(self):

@@ -290,6 +290,14 @@ class ConfigService:
                             if 'KeepCommonCV' not in fields and isinstance(legacy, bool):
                                 merged[task][group]['KeepCommonCV'] = legacy
                             merged[task][group].pop('SkipSingleCommonCV', None)
+        from module.config.redirect_utils.shop import migrate_shop_options
+
+        merged, shop_warnings = migrate_shop_options(data, merged)
+        if shop_warnings:
+            from module.logger import logger
+
+            for task, reason in shop_warnings:
+                logger.warning(f'{task}：{reason}，已暂停任务，请检查购买配置后重新启用')
         return merged, hashlib.sha256(raw).hexdigest()
 
     def schema(self, language='zh-CN'):
@@ -386,6 +394,108 @@ class ConfigService:
                 raise
             return self.get(name)
 
+
+    def validate(self, path, value):
+        """严格校验单项参数的修改路径与取值范围。
+
+        Args:
+            path (str): 参数路径（格式为 Task.Group.Argument）。
+            value (Any): 修改后的新值。
+
+        Returns:
+            list[str]: 解析后的 [Task, Group, Argument] 列表。
+
+        Raises:
+            ApiError: 路径格式错误、只读参数、类型不匹配或超出校验规则时抛出。
+        """
+        parts = path.split('.')
+        if len(parts) != 3:
+            raise ApiError('INVALID_PARAMS', '配置路径必须为 Task.Group.Argument')
+        field = self.args
+        for part in parts:
+            field = field.get(part, {})
+        # 开荒进度仍只读，只允许按钮清空；断点由下方事务同步重置。
+        if path in OPSI_EXPLORE_PROGRESS and field and type(value) is str and value == '':
+            return parts
+        # 存储区禁止编辑内容，但允许通过同一配置事务显式清空。
+        if field.get('mode') == 'restricted_lua':
+            self.validate_shop_strategy(value)
+        if field.get('type') == 'storage' and field.get('display') != 'hide' and type(value) is dict and not value:
+            return parts
+        if not field or field.get('display') in ('hide', 'disabled', 'readonly') or field.get('type') in ('storage', 'stored', 'state', 'lock'):
+            raise ApiError('READ_ONLY', f'参数不存在或不允许修改：{path}')
+        default, kind = field.get('value'), field.get('type')
+        options = field.get('option')
+        if kind == 'multiselect':
+            if not isinstance(value, list) or len(value) > len(options or []) or any(
+                not any(type(selected) is type(item) and selected == item for item in options or [])
+                for selected in value
+            ) or len(set(map(str, value))) != len(value):
+                raise ApiError('INVALID_PARAMS', f'多选参数包含无效或重复选项：{path}')
+            return parts
+        if options and not any(type(value) is type(item) and value == item for item in options):
+            raise ApiError('INVALID_PARAMS', f'请选择有效选项：{path}')
+        if kind == 'checkbox' or isinstance(default, bool):
+            valid = isinstance(value, bool)
+        elif isinstance(default, int):
+            valid = type(value) is int
+        elif isinstance(default, float):
+            valid = type(value) in (float, int)
+        else:
+            valid = isinstance(value, str) or (default is None and value is None)
+        if not valid or (isinstance(value, str) and len(value) > 20000) or (type(value) is float and not math.isfinite(value)):
+            raise ApiError('INVALID_PARAMS', f'参数类型或长度不正确：{path}')
+        rule = field.get('validate')
+        if rule == 'datetime' or kind == 'datetime':
+            try:
+                if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', value):
+                    raise ValueError()
+                datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+            except (ValueError, TypeError) as exc:
+                raise ApiError('INVALID_PARAMS', f'日期格式应为 YYYY-MM-DD HH:mm:ss：{path}') from exc
+        elif isinstance(rule, list) and len(rule) == 2:
+            if type(value) not in (int, float) or not rule[0] <= value <= rule[1]:
+                raise ApiError('INVALID_PARAMS', f'参数必须在 {rule[0]} 到 {rule[1]} 之间：{path}')
+        elif isinstance(rule, str) and isinstance(value, (str, int, float)):
+            if not re.fullmatch(rule, str(value)):
+                raise ApiError('INVALID_PARAMS', f'参数格式不正确：{path}')
+        if field.get('mode') == 'yaml' or kind == 'yaml':
+            try:
+                parsed = yaml.safe_load(value)
+            except (yaml.YAMLError, ValueError, RecursionError) as exc:
+                mark = getattr(exc, 'problem_mark', None)
+                location = f'（第 {mark.line + 1} 行，第 {mark.column + 1} 列）' if mark else ''
+                raise ApiError('INVALID_PARAMS', f'YAML 格式不正确{location}：{path}') from exc
+            if parsed is not None and not isinstance(parsed, dict):
+                raise ApiError('INVALID_PARAMS', f'YAML 顶层必须是键值映射：{path}')
+        return parts
+
+    def _field(self, path):
+        """按 Task.Group.Argument 取出参数定义；路径不完整时返回空字典。"""
+        field = self.args
+        for part in path.split('.'):
+            if not isinstance(field, dict):
+                return {}
+            field = field.get(part, {})
+        return field if isinstance(field, dict) else {}
+
+    def _apply_changes(self, data, changes):
+        """把一批修改写进一份内存配置，并做与单实例保存相同的字段规则校验。"""
+        seen = set()
+        affected_shop_tasks = set()
+        for change in changes:
+            task, group, arg = self.validate(change.path, change.value)
+            if change.path in seen:
+                raise ApiError('INVALID_PARAMS', '同一次保存不能重复修改同一个参数')
+            seen.add(change.path)
+            data.setdefault(task, {}).setdefault(group, {})[arg] = change.value
+            if change.path in OPSI_EXPLORE_PROGRESS:
+                self._reset_opsi_explore_progress(data, change.path)
+            self._sync_record_time(data[task][group], arg)
+            if group == 'ShopAdvanced':
+                affected_shop_tasks.add(task)
+        self.validate_shop_advanced_groups(data, affected_shop_tasks)
+
     @staticmethod
     def validate_shop_strategy(script):
         """校验受限 Lua 风格商店策略，不执行脚本。
@@ -433,107 +543,6 @@ class ConfigService:
                     f'{task} 的高级模式需要先保存非空且有效的策略脚本',
                 )
             self.validate_shop_strategy(script)
-
-    def validate(self, path, value):
-        """严格校验单项参数的修改路径与取值范围。
-
-        Args:
-            path (str): 参数路径（格式为 Task.Group.Argument）。
-            value (Any): 修改后的新值。
-
-        Returns:
-            list[str]: 解析后的 [Task, Group, Argument] 列表。
-
-        Raises:
-            ApiError: 路径格式错误、只读参数、类型不匹配或超出校验规则时抛出。
-        """
-        parts = path.split('.')
-        if len(parts) != 3:
-            raise ApiError('INVALID_PARAMS', '配置路径必须为 Task.Group.Argument')
-        field = self.args
-        for part in parts:
-            field = field.get(part, {})
-        # 开荒进度仍只读，只允许按钮清空；断点由下方事务同步重置。
-        if path in OPSI_EXPLORE_PROGRESS and field and type(value) is str and value == '':
-            return parts
-        # 存储区禁止编辑内容，但允许通过同一配置事务显式清空。
-        if field.get('type') == 'storage' and field.get('display') != 'hide' and type(value) is dict and not value:
-            return parts
-        if not field or field.get('display') in ('hide', 'disabled', 'readonly') or field.get('type') in ('storage', 'stored', 'state', 'lock'):
-            raise ApiError('READ_ONLY', f'参数不存在或不允许修改：{path}')
-        default, kind = field.get('value'), field.get('type')
-        options = field.get('option')
-        if kind == 'multiselect':
-            if not isinstance(value, list) or len(value) > len(options or []) or any(
-                not any(type(selected) is type(item) and selected == item for item in options or [])
-                for selected in value
-            ) or len(set(map(str, value))) != len(value):
-                raise ApiError('INVALID_PARAMS', f'多选参数包含无效或重复选项：{path}')
-            return parts
-        if options and not any(type(value) is type(item) and value == item for item in options):
-            raise ApiError('INVALID_PARAMS', f'请选择有效选项：{path}')
-        if kind == 'checkbox' or isinstance(default, bool):
-            valid = isinstance(value, bool)
-        elif isinstance(default, int):
-            valid = type(value) is int
-        elif isinstance(default, float):
-            valid = type(value) in (float, int)
-        else:
-            valid = isinstance(value, str) or (default is None and value is None)
-        if not valid or (isinstance(value, str) and len(value) > 20000) or (type(value) is float and not math.isfinite(value)):
-            raise ApiError('INVALID_PARAMS', f'参数类型或长度不正确：{path}')
-        rule = field.get('validate')
-        if rule == 'datetime' or kind == 'datetime':
-            try:
-                if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', value):
-                    raise ValueError()
-                datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
-            except (ValueError, TypeError) as exc:
-                raise ApiError('INVALID_PARAMS', f'日期格式应为 YYYY-MM-DD HH:mm:ss：{path}') from exc
-        elif isinstance(rule, list) and len(rule) == 2:
-            if type(value) not in (int, float) or not rule[0] <= value <= rule[1]:
-                raise ApiError('INVALID_PARAMS', f'参数必须在 {rule[0]} 到 {rule[1]} 之间：{path}')
-        elif isinstance(rule, str) and isinstance(value, (str, int, float)):
-            if not re.fullmatch(rule, str(value)):
-                raise ApiError('INVALID_PARAMS', f'参数格式不正确：{path}')
-        if field.get('mode') == 'restricted_lua':
-            self.validate_shop_strategy(value)
-        if field.get('mode') == 'yaml' or kind == 'yaml':
-            try:
-                parsed = yaml.safe_load(value)
-            except (yaml.YAMLError, ValueError, RecursionError) as exc:
-                mark = getattr(exc, 'problem_mark', None)
-                location = f'（第 {mark.line + 1} 行，第 {mark.column + 1} 列）' if mark else ''
-                raise ApiError('INVALID_PARAMS', f'YAML 格式不正确{location}：{path}') from exc
-            if parsed is not None and not isinstance(parsed, dict):
-                raise ApiError('INVALID_PARAMS', f'YAML 顶层必须是键值映射：{path}')
-        return parts
-
-    def _field(self, path):
-        """按 Task.Group.Argument 取出参数定义；路径不完整时返回空字典。"""
-        field = self.args
-        for part in path.split('.'):
-            if not isinstance(field, dict):
-                return {}
-            field = field.get(part, {})
-        return field if isinstance(field, dict) else {}
-
-    def _apply_changes(self, data, changes):
-        """把一批修改写进一份内存配置，并做与单实例保存相同的字段规则校验。"""
-        seen = set()
-        affected_shop_tasks = set()
-        for change in changes:
-            task, group, arg = self.validate(change.path, change.value)
-            if change.path in seen:
-                raise ApiError('INVALID_PARAMS', '同一次保存不能重复修改同一个参数')
-            seen.add(change.path)
-            data.setdefault(task, {}).setdefault(group, {})[arg] = change.value
-            if change.path in OPSI_EXPLORE_PROGRESS:
-                self._reset_opsi_explore_progress(data, change.path)
-            self._sync_record_time(data[task][group], arg)
-            if group == 'ShopAdvanced':
-                affected_shop_tasks.add(task)
-        self.validate_shop_advanced_groups(data, affected_shop_tasks)
 
     def patch(self, name, revision, changes):
         """批量修改实例配置项，并在文件事务中原子写回。

@@ -60,6 +60,9 @@ class OSShop(PortShop, AkashiShop):
             in: PORT_SUPPLY_CHECK
         """
         success = False
+        from module.statistics.resource_tracking import receipt_totals
+        receipts = receipt_totals(self.config)
+        button._resource_purchase_quantity = 1
         if self._opsi_shop_strategy_enabled():
             button._shop_strategy_executed_quantity = min(
                 getattr(button, '_shop_strategy_quantity', 1), 1,
@@ -121,6 +124,8 @@ class OSShop(PortShop, AkashiShop):
 
             # 结束条件
             if success and self.appear(PORT_SUPPLY_CHECK, offset=(20, 20)):
+                from module.statistics.resource_tracking import record_purchase
+                record_purchase(self.config, button, button._resource_purchase_quantity, receipts)
                 break
 
         return success
@@ -273,6 +278,7 @@ class OSShop(PortShop, AkashiShop):
         if count <= 0:
             return False
         item._shop_strategy_executed_quantity = count
+        item._resource_purchase_quantity = getattr(item, "_shop_strategy_executed_quantity", 1)
 
         if count == 1:
             return True
