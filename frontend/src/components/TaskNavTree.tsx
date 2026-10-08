@@ -64,6 +64,8 @@ export function TaskNavTree({ defaultOpenKey, onNavigate }: { defaultOpenKey?: s
         />
       </div>}
 
+      <SearchHits search={search} onNavigate={onNavigate}/>
+
       <nav className="task-nav">
         {schema &&
           Object.entries(schema.menu).map(([key, group]) => {
@@ -118,8 +120,6 @@ export function TaskNavTree({ defaultOpenKey, onNavigate }: { defaultOpenKey?: s
             )
           })}
       </nav>
-
-      <SearchHits search={search} onNavigate={onNavigate}/>
     </div>
   )
 }
