@@ -19,6 +19,7 @@ import { LogPanel } from '../components/LogPanel'
 import { MeowfficerScorePanel } from '../components/MeowfficerScorePanel'
 import { OpsiSimulatorPanel } from '../components/OpsiSimulatorPanel'
 import { FieldInput } from '../components/FieldInput'
+import { ShopStrategyHelp } from '../components/ShopStrategyHelp'
 import { StorageField } from '../components/StorageField'
 import { SchedulerWidget } from '../components/SchedulerWidget'
 import { TaskQueue } from '../components/TaskQueue'
@@ -29,6 +30,7 @@ import { AccountPanel } from '../components/AccountPanel'
 import { isFieldVisible } from './configVisibility'
 import { isAllPath } from '../app/allRoute'
 
+const RestrictedLuaEditor = lazy(() => import('../components/RestrictedLuaEditor').then(module => ({default: module.RestrictedLuaEditor})))
 export function TaskConfig() {
   const params = useParams()
   const location = useLocation()
@@ -46,6 +48,7 @@ export function TaskConfig() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirmRun, setConfirmRun] = useState(false)
+  const [shopModeError, setShopModeError] = useState('')
 
   const queue = editor(allMode ? 'config:common' : `config:${instance}`)
   const {edits, storageError} = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot)
@@ -214,6 +217,9 @@ export function TaskConfig() {
           <h2 data-text={t(`${group}._info.name`)}>{t(`${group}._info.name`)}</h2>
         </div>
       </div>
+      {group === 'ShopAdvanced' && (
+        <ShopStrategyHelp task={task} language={language}/>
+      )}
       {visible.map(([arg, field]) => {
         const path = `${task}.${group}.${arg}`
         const edit = edits[path]
@@ -230,7 +236,7 @@ export function TaskConfig() {
         const runNow = !allMode && group === 'Scheduler' && arg === 'NextRun' && !readonly
         const clearProgress = path === 'OpsiExplore.OpsiExplore.ExploreProgress'
           || path === 'OpsiScheduling.OpsiSmartExplore.Progress'
-        const isMultiline = ['textarea', 'task_priority', 'yaml', 'storage'].includes(field.type) || field.mode === 'yaml'
+        const isMultiline = ['textarea', 'task_priority', 'yaml', 'storage'].includes(field.type) || field.mode === 'yaml' || restrictedLua
 
         return (
           <div className={`field-row ${isMultiline ? 'field-row-multiline' : ''}`} key={arg}>
@@ -257,8 +263,8 @@ export function TaskConfig() {
                     label={label}
                     disabled={readonly}
                     offline={connection !== 'ready'}
-                    onCheck={script => api.request('shop_strategy.validate', {instance: allMode ? consensus!.instances[0] : instance, task: task as 'EventShop' | 'ShopFrequent' | 'ShopOnce' | 'PrivateQuarters' | 'OpsiShop' | 'OpsiVoucher', script})}
-                    onApply={async script => {
+                    onCheck={(script: string) => api.request('shop_strategy.validate', {instance: allMode ? consensus!.instances[0] : instance, task: task as 'EventShop' | 'ShopFrequent' | 'ShopOnce' | 'PrivateQuarters' | 'OpsiShop' | 'OpsiVoucher', script})}
+                    onApply={async (script: string) => {
                       if (allMode) queue.change(path, script)
                       else setConfig(await api.request('config.patch', {instance, changes: [{path, value: script}]}))
                       setShopModeError('')
@@ -274,7 +280,7 @@ export function TaskConfig() {
                   options={field.option}
                   disabled={readonly}
                   preserveText
-                  invalid={edit?.status === 'error'}
+                  invalid={edit?.status === 'error' || (shopMode && !!shopModeError)}
                   label={label}
                   mixed={fieldMixed}
                   mixedOptions={field.type === 'multiselect' ? consensus?.partial[path] : undefined}
@@ -310,7 +316,9 @@ export function TaskConfig() {
                     onClick={() => queue.change(path, '')}><RotateCcw size={15}/></button>
                 </div>
               )}
-              {!isMultiline && <EditStatus id={path} edit={edit} retry={queue.retry} queue={queue} />}
+              {!isMultiline && (shopMode && shopModeError && !edit ? (
+                <div id={`${path}-status`} className="edit-status edit-error" role="alert">{shopModeError}</div>
+              ) : <EditStatus id={path} edit={edit} retry={queue.retry} queue={queue} />)}
             </div>
           </div>
         )
@@ -324,10 +332,6 @@ export function TaskConfig() {
   // 只有紧凑主题把搜索框并进左列（跳转栏下方），其余主题保持标题下方的原样。
   const condensed = theme === 'extreme'
   // 启动开关挂在系统设置（Alas）任务页顶部；搜索时只显示匹配项。
-
-      {group === 'ShopAdvanced' && (
-        <ShopStrategyHelp task={task} language={language}/>
-      )}
   const startupPanel = !allMode && task === 'Alas' && !search && <section className="panel config-group">
     <div className="panel-heading">
       <div>

@@ -8,7 +8,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirro
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { bracketMatching } from '@codemirror/language'
 import { Check, CircleAlert, LoaderCircle, Save } from 'lucide-react'
-import type { ShopStrategyValidation } from '../api/types'
+import type { ScriptDiagnostic, ShopStrategyValidation } from '../api/types'
 import { useApp } from '../app/context'
 import { canApplyRestrictedLua, diagnosticLocation, diagnosticSeverity, validationFromError } from './restrictedLuaState'
 
@@ -189,7 +189,7 @@ export function RestrictedLuaEditor({
       {storageError && <span>{ui('edit.draftPersistError')}</span>}
     </div>
     {!!diagnostics.length && <ul className="restricted-lua-diagnostics" aria-label={ui('script.diagnostics')}>
-      {diagnostics.map((diagnostic, index) => {
+      {diagnostics.map((diagnostic: ScriptDiagnostic, index: number) => {
         const location = diagnosticLocation(diagnostic)
         const severity = diagnosticSeverity(diagnostic, !!validation?.valid)
         return <li key={`${diagnostic.code ?? diagnostic.message}-${index}`} className={`is-${severity}`}>

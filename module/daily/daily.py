@@ -18,6 +18,7 @@ from module.base.utils import get_color
 from module.combat.assets import BATTLE_PREPARATION
 from module.combat.combat import Combat
 from module.daily.assets import *
+from module.daily.remain import bridge_daily_remain_for_id, daily_template_id
 from module.logger import logger
 from module.ocr.ocr import Digit
 from module.ui.assets import BACK_ARROW, DAILY_CHECK
@@ -365,17 +366,20 @@ class Daily(Combat):
                 continue
             remain = OCR_REMAIN.ocr(self.device.image)
             if remain == 0:
+                # OCR 偶发读成 0；用桥接确认「当前」每日的剩余次数，勿取任意正数行。
                 try:
                     from module.alas_bridge.actions import bridge_enabled, get_task_remains
                     if bridge_enabled(self.config):
                         remains = get_task_remains(self.config)
                         daily = (remains or {}).get('daily') if isinstance(remains, dict) else None
-                        if isinstance(daily, list):
-                            for row in daily:
-                                if isinstance(row, dict) and int(row.get('remain') or 0) > 0:
-                                    remain = int(row.get('remain') or 0)
-                                    logger.attr('剩余次数', remain)
-                                    break
+                        template_id = daily_template_id(
+                            self.daily_current, self.emergency_module_development)
+                        bridge_remain = bridge_daily_remain_for_id(daily, template_id)
+                        if bridge_remain is not None and bridge_remain > 0:
+                            remain = bridge_remain
+                            logger.attr('剩余次数', remain)
+                        elif bridge_remain == 0:
+                            logger.attr('剩余次数', 0)
                 except Exception as e:
                     logger.info(f'Sweeney daily remain miss: {e}')
             if remain == 0:
