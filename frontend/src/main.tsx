@@ -48,6 +48,15 @@ const router = createHashRouter([
     {path: 'logs', element: <Navigate to="../overview" replace/>}, {path: 'statistics', element: <Statistics/>}, {path: 'scheduler', element: <Navigate to="../task/SchedulerProgram" replace/>}, {path: 'settings', element: <Navigate to="/settings" replace/>},
     {path: 'task/SchedulerProgram', element: <Suspense fallback={<div>{translateCurrentUi('common.loading')}</div>}><SchedulerProgram/></Suspense>},
   ]},
+  {path: '/all', element: <App/>, errorElement: <ErrorPage/>, children: [
+    {index: true, element: <Navigate to="/all/task/Alas" replace/>},
+    {path: 'overview', element: <Navigate to="/all/task/Alas" replace/>},
+    {path: 'statistics', element: <Navigate to="/all/task/Alas" replace/>},
+    {path: 'stock-exchange', element: <Navigate to="/all/task/Alas" replace/>},
+    {path: 'task/SchedulerProgram', element: <Navigate to="/all/task/Alas" replace/>},
+    {path: 'task/:task', element: <TaskConfig/>},
+    {path: '*', element: <Navigate to="/all/task/Alas" replace/>},
+  ]},
   {path: '*', element: <Navigate to="/" replace/>},
 ])
 // 先读取偏好并加载当前主题，再挂载页面，避免简约首屏短暂请求壁纸或玻璃库。

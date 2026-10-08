@@ -3,10 +3,10 @@
  */
 
 import { Suspense, lazy, useCallback, useEffect, useState, useSyncExternalStore } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { CalendarClock, Clock3, ListTree, Play, RotateCcw, Search, Settings2, Ship, Terminal } from 'lucide-react'
 import { api } from '../api/client'
-import type { Config } from '../api/types'
+import type { Config, Consensus } from '../api/types'
 import { useApp, useConnection } from '../app/context'
 import { usesLegacyLayout } from '../app/theme'
 import { htmlToPlainText } from '../app/htmlText'
@@ -27,23 +27,29 @@ import { editor, prepareValue } from '../config/editors'
 import { EditStatus } from '../components/EditStatus'
 import { AccountPanel } from '../components/AccountPanel'
 import { isFieldVisible } from './configVisibility'
+import { isAllPath } from '../app/allRoute'
 
 const RestrictedLuaEditor = lazy(() => import('../components/RestrictedLuaEditor').then(module => ({default: module.RestrictedLuaEditor})))
 export function TaskConfig() {
-  const {instance = '', task = ''} = useParams()
+  const params = useParams()
+  const location = useLocation()
+  const allMode = isAllPath(location.pathname)
+  const instance = allMode ? '' : params.instance ?? ''
+  const task = params.task ?? ''
   const {schema, t, ui, notify, language, theme} = useApp()
   const connection = useConnection()
   const railView = useSyncExternalStore(subscribeRailView, readRailView, readRailView)
   // 只在真的切到调度器时才请求总览数据，否则这一页白拉一份队列。
-  const [railData, setRailData] = useInstanceOverview(instance, railView === 'scheduler')
+  const [railData, setRailData] = useInstanceOverview(instance, !allMode && railView === 'scheduler')
   const [config, setConfig] = useState<Config>()
+  const [consensus, setConsensus] = useState<Consensus>()
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirmRun, setConfirmRun] = useState(false)
   const [shopModeError, setShopModeError] = useState('')
 
-  const queue = editor(`config:${instance}`)
+  const queue = editor(allMode ? 'config:common' : `config:${instance}`)
   const {edits, storageError} = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot)
   const startupQueue = editor(`startup:${instance}`)
   const startupEdits = useSyncExternalStore(startupQueue.subscribe, startupQueue.getSnapshot, startupQueue.getSnapshot)
@@ -53,19 +59,23 @@ export function TaskConfig() {
   const reload = useCallback(async () => {
     try {
       const confirmed = queue.confirmed()
-      setConfig(await api.request('config.get', {instance}))
+      if (allMode) setConsensus(await api.request('config.consensus', {}))
+      else setConfig(await api.request('config.get', {instance}))
       queue.reconcile(confirmed)
       setError('')
     } catch (error) {
       setError((error as Error).message)
     }
-  }, [instance, queue])
+  }, [allMode, instance, queue])
 
   // 字段保存成功后用服务端回传的整份配置替换本地副本。
   useEffect(() => {
-    queue.onSaved = data => setConfig(data as Config)
+    queue.onSaved = data => {
+      if (allMode) setConsensus(data as Consensus)
+      else setConfig(data as Config)
+    }
     return () => { queue.onSaved = undefined }
-  }, [queue])
+  }, [allMode, queue])
 
   // 启动开关保存成功后用服务端回传的状态替换本地值，队列丢弃已保存条目后开关不回弹。
   useEffect(() => {
@@ -81,21 +91,26 @@ export function TaskConfig() {
     if (connection !== 'ready') return
     let active = true
     const confirmed = queue.confirmed()
-    void api.request('config.get', {instance}).then(value => {
-      if (active) { setConfig(value); queue.reconcile(confirmed); setError('') }
+    const request = allMode ? api.request('config.consensus', {}) : api.request('config.get', {instance})
+    void request.then(value => {
+      if (!active) return
+      if (allMode) setConsensus(value as Consensus)
+      else setConfig(value as Config)
+      queue.reconcile(confirmed)
+      setError('')
     }).catch(error => { if (active) setError(error.message) })
     return () => { active = false }
-  }, [connection, instance, task, queue])
+  }, [allMode, connection, instance, task, queue])
   /* 开关状态取自部署层的运行列表，不在任务配置里。 */
   useEffect(() => {
-    if (connection !== 'ready' || task !== 'Alas') return
+    if (allMode || connection !== 'ready' || task !== 'Alas') return
     let active = true
     const confirmed = startupQueue.confirmed()
     void api.request('startup.get', {instance}).then(value => {
       if (active) { setStartupEnabled(value.enabled); setStartupRemember(value.remember); startupQueue.reconcile(confirmed) }
     }).catch(error => { if (active) setError(error.message) })
     return () => { active = false }
-  }, [connection, instance, task, startupQueue])
+  }, [allMode, connection, instance, task, startupQueue])
   useEffect(() => { setShopModeError('') }, [instance, task])
 
   async function run() {
@@ -112,11 +127,12 @@ export function TaskConfig() {
     }
   }
 
+  const values = allMode ? consensus?.values : config?.values
   const groups = schema?.args[task]
   const visibleGroups = Object.entries(groups ?? {}).map(([group, fields]) => {
     const visible = Object.entries(fields).filter(([arg, field]) => {
       const edit = edits[`${task}.${group}.${arg}`]
-      const value = edit?.status === 'saved' ? edit.value : config?.values[task]?.[group]?.[arg] ?? field.value
+      const value = edit?.status === 'saved' ? edit.value : values?.[task]?.[group]?.[arg] ?? field.value
       return isFieldVisible(arg, field, value) && `${t(`${group}.${arg}.name`)} ${group}.${arg}`.toLowerCase().includes(search.toLowerCase())
     })
     return {group, visible}
@@ -124,7 +140,7 @@ export function TaskConfig() {
 
   const tool = Object.values(schema?.menu ?? {}).some(group => group.page === 'tool' && group.tasks.includes(task))
   // 指挥喵评分保留参数卡（评分来源、截图目录等），报告面板挂在参数卡上方。
-  const scorePanel = task === 'MeowfficerScore' ? <MeowfficerScorePanel instance={instance}/> : null
+  const scorePanel = !allMode && task === 'MeowfficerScore' ? <MeowfficerScorePanel instance={instance}/> : null
   const showConfigToolbar = task !== 'FleetInfo' && Boolean(groups) && (visibleGroups.length > 0 || Boolean(search))
 
   // 侧栏搜索点进来的定位：字段要等配置加载、分组渲染完才存在，所以轮询等它出现。
@@ -163,9 +179,25 @@ export function TaskConfig() {
       unsubscribe()
       if (find) window.clearInterval(find)
     }
-  }, [config, task])
+  }, [config, consensus, task])
 
-  if (!config) return error ? <ErrorBox message={error} retry={reload} /> : <Loading />
+  const loaded = allMode ? consensus : config
+  if (!loaded) return error ? <ErrorBox message={error} retry={reload} /> : <Loading />
+  const formValues = loaded.values
+  const mixedPaths = new Set(allMode && consensus ? consensus.mixed : [])
+  const lockedPaths = new Set(allMode && consensus ? consensus.locked : [])
+  const noProfiles = allMode && consensus!.instances.length === 0
+  const savedCount = Object.values(edits).filter(edit => edit.status === 'saved' && queue.savedVisible(edit)).length
+  const commonNote = allMode && consensus && <section className="panel common-note">
+    <p>{noProfiles ? ui('common.none') : ui('common.editing', {count: consensus.instances.length, names: consensus.instances.join(', ')})}</p>
+    <p className="muted">{ui('common.help')}</p>
+    {savedCount > 0 && <p>{ui('common.saved', {count: consensus.instances.length})}</p>}
+  </section>
+  if (allMode && tool) return <>
+    {commonNote}
+    {error && <ErrorBox message={error} retry={reload} />}
+    <Empty icon={<Settings2 size={30} />} title={ui('common.toolNeedsProfile')}>{ui('common.help')}</Empty>
+  </>
 
   const modal = confirmRun && (
     <Modal title={ui('task.runTitle', {task: t(`Task.${task}.name`)})} onClose={() => setConfirmRun(false)}>
@@ -190,14 +222,16 @@ export function TaskConfig() {
       {visible.map(([arg, field]) => {
         const path = `${task}.${group}.${arg}`
         const edit = edits[path]
-        const value = edit ? edit.value : config.values[task]?.[group]?.[arg] ?? field.value
+        const stored = formValues[task]?.[group]?.[arg] ?? field.value
+        const fieldMixed = allMode && !edit && mixedPaths.has(path)
+        const value = edit ? edit.value : fieldMixed && field.type === 'multiselect' ? stored : fieldMixed ? field.type === 'checkbox' || typeof stored === 'boolean' ? false : stored : stored
         const label = t(`${group}.${arg}.name`)
         const help = t(`${group}.${arg}.help`)
-        const readonly = ['disabled', 'readonly'].includes(field.display ?? '') || ['storage', 'stored', 'state', 'lock'].includes(field.type)
+        const readonly = noProfiles || lockedPaths.has(path) || ['disabled', 'readonly'].includes(field.display ?? '') || ['storage', 'stored', 'state', 'lock'].includes(field.type)
         const restrictedLua = field.mode === 'restricted_lua'
         const shopMode = group === 'ShopAdvanced' && arg === 'Mode'
         // 「立刻运行」只对每个任务的调度时间有意义，其他时间字段（如仪表盘记录时间）不显示。
-        const runNow = group === 'Scheduler' && arg === 'NextRun' && !readonly
+        const runNow = !allMode && group === 'Scheduler' && arg === 'NextRun' && !readonly
         const clearProgress = path === 'OpsiExplore.OpsiExplore.ExploreProgress'
           || path === 'OpsiScheduling.OpsiSmartExplore.Progress'
         const isMultiline = ['textarea', 'task_priority', 'yaml', 'storage'].includes(field.type) || field.mode === 'yaml' || restrictedLua
@@ -211,13 +245,13 @@ export function TaskConfig() {
               </label>
               {help && help !== 'help' && help !== arg && <p>{htmlToPlainText(help)}</p>}
               {/* 优先级调整直接跳到图形调度编辑器：它才是真正编排顺序的地方。 */}
-              {task === 'General' && group === 'YukikazeTaskManager' && arg === 'TaskPriorityAdjustment' && <Link className="button secondary" to={`/i/${instance}/task/SchedulerProgram`}>{ui('nav.schedulerProgram')}</Link>}
+              {!allMode && task === 'General' && group === 'YukikazeTaskManager' && arg === 'TaskPriorityAdjustment' && <Link className="button secondary" to={`/i/${instance}/task/SchedulerProgram`}>{ui('nav.schedulerProgram')}</Link>}
               {/* 多行控件的提示跟标题同一行，浮在它右端。 */}
               {isMultiline && <EditStatus id={path} edit={edit} retry={queue.retry} queue={queue} />}
             </div>
             <div className="field-control">
               {field.type === 'storage' ? (
-                <StorageField value={value} disabled={false} onClear={() => queue.change(path, {})} />
+                <StorageField value={value} disabled={allMode || readonly} hideClear={allMode} onClear={() => queue.change(path, {})} />
               ) : restrictedLua ? (
                 <Suspense fallback={<div role="status">{ui('field.loadingEditor')}</div>}>
                   <RestrictedLuaEditor
@@ -227,9 +261,10 @@ export function TaskConfig() {
                     label={label}
                     disabled={readonly}
                     offline={connection !== 'ready'}
-                    onCheck={script => api.request('shop_strategy.validate', {instance, task: task as 'EventShop' | 'ShopFrequent' | 'ShopOnce' | 'PrivateQuarters' | 'OpsiShop' | 'OpsiVoucher', script})}
+                    onCheck={script => api.request('shop_strategy.validate', {instance: allMode ? consensus!.instances[0] : instance, task: task as 'EventShop' | 'ShopFrequent' | 'ShopOnce' | 'PrivateQuarters' | 'OpsiShop' | 'OpsiVoucher', script})}
                     onApply={async script => {
-                      setConfig(await api.request('config.patch', {instance, changes: [{path, value: script}]}))
+                      if (allMode) queue.change(path, script)
+                      else setConfig(await api.request('config.patch', {instance, changes: [{path, value: script}]}))
                       setShopModeError('')
                     }}
                   />
@@ -245,10 +280,12 @@ export function TaskConfig() {
                   preserveText
                   invalid={edit?.status === 'error' || (shopMode && !!shopModeError)}
                   label={label}
+                  mixed={fieldMixed}
+                  mixedOptions={field.type === 'multiselect' ? consensus?.partial[path] : undefined}
                   translateOption={option => t(`${group}.${arg}.${option}`)}
                   onChange={next => {
                     if (shopMode && next === 'advanced') {
-                      const script = String(config.values[task]?.ShopAdvanced?.Script ?? '')
+                      const script = String(formValues[task]?.ShopAdvanced?.Script ?? '')
                       if (!script.trim()) {
                         setShopModeError(ui('script.modeRequiresScript'))
                         return
@@ -293,7 +330,7 @@ export function TaskConfig() {
   // 只有紧凑主题把搜索框并进左列（跳转栏下方），其余主题保持标题下方的原样。
   const condensed = theme === 'extreme'
   // 启动开关挂在系统设置（Alas）任务页顶部；搜索时只显示匹配项。
-  const startupPanel = task === 'Alas' && !search && <section className="panel config-group">
+  const startupPanel = !allMode && task === 'Alas' && !search && <section className="panel config-group">
     <div className="panel-heading">
       <div>
         <span className="group-indicator"/>
@@ -322,7 +359,7 @@ export function TaskConfig() {
     </div>
   </section>
 
-  const groupCardsBlock = <div className="config-groups">{startupPanel}{task === 'Alas' && !search && <AccountPanel key={instance} instance={instance}/>} {groupCards}</div>
+  const groupCardsBlock = <div className="config-groups">{startupPanel}{!allMode && task === 'Alas' && !search && <AccountPanel key={instance} instance={instance}/>} {groupCards}</div>
   const groupNav = <nav className="group-nav">
     {visibleGroups.map(({group}) => (
       <a
@@ -341,7 +378,8 @@ export function TaskConfig() {
 
   // 有分组导航时，搜索框随导航一起放进左列（导航下方）；没有导航时才留在标题下方。
   // 右列默认是任务设置的锚点目录，点右上角切到调度器；两种视图共用同一个外壳。
-  const railToggle = <button
+  const shownRail = allMode ? 'directory' : railView
+  const railToggle = !allMode && <button
     type="button"
     className="task-rail-toggle icon-button"
     aria-pressed={railView === 'scheduler'}
@@ -350,8 +388,8 @@ export function TaskConfig() {
     onClick={() => setRailView(railView === 'scheduler' ? 'directory' : 'scheduler')}
   >{railView === 'scheduler' ? <CalendarClock size={17}/> : <ListTree size={17}/>}</button>
 
-  const rail = <aside className={`task-config-rail is-${railView}`} aria-label={railView === 'scheduler' ? ui('scheduler.rail') : ui('task.groupNav')}>
-    {railView === 'scheduler'
+  const rail = <aside className={`task-config-rail is-${shownRail}`} aria-label={shownRail === 'scheduler' ? ui('scheduler.rail') : ui('task.groupNav')}>
+    {shownRail === 'scheduler'
       ? <div className="task-rail-scheduler">
           <SchedulerWidget instance={instance} data={railData} onData={setRailData} action={railToggle}/>
           <section className="rail-schedule" aria-label={ui('scheduler.plan')}>
@@ -380,20 +418,21 @@ export function TaskConfig() {
     </div>
 
   const head = <>
+    {commonNote}
     {error && <ErrorBox message={error} retry={reload} />}
     {storageError && <ErrorBox message={storageError} />}
     {(!hasGroups || !condensed) && configToolbar}
   </>
 
   const groupsSection = task === 'FleetInfo' ? (
-    <FleetInfo value={config.values.FleetInfo?.FleetInfo?.Result} />
+    <FleetInfo value={formValues.FleetInfo?.FleetInfo?.Result} />
   ) : !hasGroups ? (
     (search || !tool) && <Empty icon={<Settings2 size={30} />} title={ui(search ? 'task.noConfigFound' : 'task.noConfig')}>
       {search ? ui('task.tryOtherKeyword') : ui('task.viewRelated')}
     </Empty>
   ) : groupCardsBlock
 
-  const toolPanel = task === 'OpsiSimulator'
+  const toolPanel = allMode ? null : task === 'OpsiSimulator'
     ? <OpsiSimulatorPanel key={instance} instance={instance} beforeStart={() => queue.settled()}/>
     : tool && <section className="panel tool-log-panel" aria-label={ui('monitor.logs')}>
     <div className="panel-heading">

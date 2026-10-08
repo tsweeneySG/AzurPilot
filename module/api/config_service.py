@@ -9,6 +9,7 @@ import json
 import math
 import re
 import threading
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 
@@ -16,7 +17,14 @@ import yaml
 
 from deploy.atomic import atomic_write
 from module.api.protocol import ApiError
+from module.config.deep import deep_get
 from module.config.transaction import config_transaction
+from module.webui.common_editor import (
+    MIXED_SENTINEL,
+    common_editor_instances,
+    consensus,
+    is_locked_in_all,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = 'template'
@@ -501,6 +509,32 @@ class ConfigService:
                 raise ApiError('INVALID_PARAMS', f'YAML 顶层必须是键值映射：{path}')
         return parts
 
+    def _field(self, path):
+        """按 Task.Group.Argument 取出参数定义；路径不完整时返回空字典。"""
+        field = self.args
+        for part in path.split('.'):
+            if not isinstance(field, dict):
+                return {}
+            field = field.get(part, {})
+        return field if isinstance(field, dict) else {}
+
+    def _apply_changes(self, data, changes):
+        """把一批修改写进一份内存配置，并做与单实例保存相同的字段规则校验。"""
+        seen = set()
+        affected_shop_tasks = set()
+        for change in changes:
+            task, group, arg = self.validate(change.path, change.value)
+            if change.path in seen:
+                raise ApiError('INVALID_PARAMS', '同一次保存不能重复修改同一个参数')
+            seen.add(change.path)
+            data.setdefault(task, {}).setdefault(group, {})[arg] = change.value
+            if change.path in OPSI_EXPLORE_PROGRESS:
+                self._reset_opsi_explore_progress(data, change.path)
+            self._sync_record_time(data[task][group], arg)
+            if group == 'ShopAdvanced':
+                affected_shop_tasks.add(task)
+        self.validate_shop_advanced_groups(data, affected_shop_tasks)
+
     def patch(self, name, revision, changes):
         """批量修改实例配置项，并在文件事务中原子写回。
 
@@ -519,22 +553,100 @@ class ConfigService:
             # revision 仅为旧客户端兼容参数。字段赋值合并到锁内最新快照，
             # 无关字段的运行状态更新不应拒绝用户输入；同字段按事务顺序生效。
             data, _ = self.read(name)
-            seen = set()
-            affected_shop_tasks = set()
-            for change in changes:
-                task, group, arg = self.validate(change.path, change.value)
-                if change.path in seen:
-                    raise ApiError('INVALID_PARAMS', '同一次保存不能重复修改同一个参数')
-                seen.add(change.path)
-                data.setdefault(task, {}).setdefault(group, {})[arg] = change.value
-                if change.path in OPSI_EXPLORE_PROGRESS:
-                    self._reset_opsi_explore_progress(data, change.path)
-                self._sync_record_time(data[task][group], arg)
-                if group == 'ShopAdvanced':
-                    affected_shop_tasks.add(task)
-            self.validate_shop_advanced_groups(data, affected_shop_tasks)
+            self._apply_changes(data, changes)
             atomic_write(str(self.path(name)), json.dumps(data, ensure_ascii=False, indent=2))
             return self.get(name)
+
+    def _screen_common(self, changes):
+        """共用编辑在写任何文件之前拒绝混合哨兵、身份字段和重复路径。"""
+        seen = set()
+        for change in changes:
+            if change.path in seen:
+                raise ApiError('INVALID_PARAMS', '同一次保存不能重复修改同一个参数')
+            seen.add(change.path)
+            if change.value == MIXED_SENTINEL:
+                raise ApiError('INVALID_PARAMS', '混合状态不能写入配置')
+            if is_locked_in_all(change.path, self._field(change.path).get('type')):
+                raise ApiError('READ_ONLY', f'共用编辑不能修改该参数：{change.path}')
+
+    def _consensus_from(self, names, configs):
+        """按参数表比较各配置，标出一致值、混合路径和锁定路径。"""
+        values = {}
+        mixed = []
+        locked = []
+        partial = {}
+        for task, groups in self.args.items():
+            if not isinstance(groups, dict):
+                continue
+            for group, fields in groups.items():
+                if not isinstance(fields, dict):
+                    continue
+                for arg, field in fields.items():
+                    if not isinstance(field, dict) or 'type' not in field:
+                        continue
+                    path = f'{task}.{group}.{arg}'
+                    widget = field.get('type')
+                    default = field.get('value')
+                    if is_locked_in_all(path, widget):
+                        locked.append(path)
+                    if not names:
+                        continue
+                    value, is_mixed = consensus(configs, [task, group, arg], default)
+                    if widget == 'multiselect' and is_mixed:
+                        lists = []
+                        for cfg in configs:
+                            current = deep_get(cfg, [task, group, arg], default)
+                            lists.append(current if isinstance(current, list) else [])
+                        value = [item for item in lists[0] if all(
+                            any(other == item for other in rest) for rest in lists[1:])]
+                        union = []
+                        for current in lists:
+                            for item in current:
+                                if not any(seen == item for seen in union):
+                                    union.append(item)
+                        partial[path] = [item for item in union if not any(common == item for common in value)]
+                    values.setdefault(task, {}).setdefault(group, {})[arg] = value
+                    if is_mixed:
+                        mixed.append(path)
+        return {'instances': list(names), 'values': values, 'mixed': mixed, 'locked': locked, 'partial': partial}
+
+    def consensus(self):
+        """读取全部普通配置的共识值。
+
+        Returns:
+            dict: instances、values、mixed、locked、partial。
+        """
+        with self.lock:
+            names = common_editor_instances(self.names())
+            configs = [self.read(name)[0] for name in names]
+            return self._consensus_from(names, configs)
+
+    def patch_common(self, changes):
+        """把同一批修改写入每一个普通配置。未出现在 changes 里的混合字段保持原样。
+
+        Args:
+            changes (list): 包含 path 和 value 的修改条目列表。
+
+        Returns:
+            dict: 写入后的共识快照。
+
+        Raises:
+            ApiError: 没有可编辑配置、字段锁定或校验失败时抛出。
+        """
+        self._screen_common(changes)
+        with self.lock:
+            names = common_editor_instances(self.names())
+            if not names:
+                raise ApiError('NOT_FOUND', '没有可编辑的配置')
+            with ExitStack() as stack:
+                for name in sorted(names):
+                    stack.enter_context(config_transaction(self.path(name)))
+                snapshots = [(name, self.read(name)[0]) for name in names]
+                for _name, data in snapshots:
+                    self._apply_changes(data, changes)
+                for name, data in snapshots:
+                    atomic_write(str(self.path(name)), json.dumps(data, ensure_ascii=False, indent=2))
+            return self._consensus_from(names, [data for _name, data in snapshots])
 
     @staticmethod
     def _reset_opsi_explore_progress(data, path):

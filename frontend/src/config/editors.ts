@@ -23,7 +23,9 @@ export function editor(scope: string) {
         ? api.request('startup.set', path === 'remember'
           ? {instance: scope.slice(8), remember: value as boolean}
           : {instance: scope.slice(8), enabled: value as boolean})
-        : api.request('config.patch', {instance: scope.slice(7), changes: [{path, value}]}),
+        : scope === 'config:common'
+          ? api.request('config.patchCommon', {changes: [{path, value}]})
+          : api.request('config.patch', {instance: scope.slice(7), changes: [{path, value}]}),
   }, storage)
   queues.set(scope, queue)
   return queue

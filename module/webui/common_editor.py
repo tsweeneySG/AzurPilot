@@ -4,12 +4,13 @@
 SweeneyBridge 账号等身份字段锁定，避免一次保存改写全部模拟器身份。
 """
 
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from module.config.deep import deep_get
 from module.config.utils import alas_instance
-from module.submodule.utils import get_config_mod
+from module.submodule.utils import MOD_DICT, get_config_mod
 
 ALL_ASIDE = "All"
 MIXED_SENTINEL = "__ALAS_MIXED__"
@@ -36,15 +37,23 @@ def is_all_mode(name: Optional[str]) -> bool:
     return name == ALL_ASIDE
 
 
-def common_editor_instances() -> List[str]:
-    """普通 AzurPilot 实例名（排除 MAA/FPY 与 template）。"""
-    out = []
-    for name in alas_instance():
-        if name == ALL_ASIDE:
-            continue
-        if get_config_mod(name) == "alas":
-            out.append(name)
-    return out
+def instance_mod(name: str) -> str:
+    """文件名带 `.maa` / `.fpy` 时直接认定子模块，否则查模块登记。"""
+    _stem, ext = os.path.splitext(name)
+    mod = ext[1:]
+    if mod in MOD_DICT:
+        return mod
+    return get_config_mod(name)
+
+
+def common_editor_instances(names: Optional[Sequence[str]] = None) -> List[str]:
+    """普通 AzurPilot 实例名（排除 MAA/FPY、template 与 All）。
+
+    Args:
+        names: 候选实例名。缺省时扫描当前工作目录下的 config/。
+    """
+    chosen = alas_instance() if names is None else names
+    return [name for name in chosen if name not in (ALL_ASIDE, "template") and instance_mod(name) == "alas"]
 
 
 def is_identity_path(path: str) -> bool:

@@ -57,6 +57,8 @@
 | `instances.delete` | instance、revision | 停止状态下将配置移至备份 |
 | `config.get` | instance | 当前值及 revision |
 | `config.patch` | instance、changes、可选 revision | 锁内合并指定字段，校验后原子保存 |
+| `config.consensus` | 无 | 全部普通配置的共识：`instances`、`values`、`mixed`、`locked`、`partial` |
+| `config.patchCommon` | changes | 把同一批字段写入每份普通配置；拒绝锁定路径和混合哨兵 |
 | `shop_strategy.validate` | instance、task、script | 只读校验高级商店策略，返回可定位的诊断，不执行脚本也不写入配置 |
 | `overview.get` | instance | 资源、任务计划、连接配置与状态 |
 | `scheduler.start` | instance | 启动调度器，返回当前总览 |
@@ -116,7 +118,7 @@
 
 ## 配置事务
 
-revision 是磁盘 JSON 内容的 SHA-256，仅用于读取快照和删除保护；配置保存接受旧版客户端传入 revision，但不再据此拒绝写入。`config.patch` 仅接受 `Task.Group.Argument` 形式的叶子路径，最多 200 项修改。完整校验成功后一次性原子替换；失败不保存任何字段。
+revision 是磁盘 JSON 内容的 SHA-256，仅用于读取快照和删除保护；配置保存接受旧版客户端传入 revision，但不再据此拒绝写入。`config.patch` 仅接受 `Task.Group.Argument` 形式的叶子路径，最多 200 项修改。完整校验成功后一次性原子替换；失败不保存任何字段。`config.consensus` 不带实例名，返回全部普通配置（跳过 template、All、MAA/FPY）的共识；`config.patchCommon` 使用同一 `changes` 列表，先对每份配置校验，再逐份原子写入。锁定路径和 `__ALAS_MIXED__` 会被拒绝，未出现在 changes 里的字段保持各配置原值。
 
 ```json
 {"v":1,"type":"request","id":"save-1","method":"config.patch","params":{"instance":"alas","changes":[{"path":"Alas.Emulator.Serial","value":"127.0.0.1:5555"},{"path":"Main.Scheduler.Enable","value":true}]}}

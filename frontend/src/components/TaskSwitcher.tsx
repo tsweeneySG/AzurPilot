@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { Check, ChevronDown } from 'lucide-react'
 import { useApp } from '../app/context'
-import { taskNavItems, taskLabel } from './taskNavItems'
+import { SCHEDULER_EDITOR, taskNavItems, taskLabel } from './taskNavItems'
+import { isAllPath, taskConfigBase } from '../app/allRoute'
 
 /**
  * 顶栏的「任务配置」下拉：列出该实例的全部任务，点一下直接跳到对应任务页。
@@ -23,6 +24,8 @@ export function TaskSwitcher() {
   const container = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const currentTask = location.pathname.match(/\/task\/([^/]+)/)?.[1] ?? null
+  const base = taskConfigBase(location.pathname, instance)
+  const allMode = isAllPath(location.pathname)
 
   useEffect(() => {
     if (!open) return
@@ -55,9 +58,9 @@ export function TaskSwitcher() {
     {open && <div className="task-picker-menu" id="task-picker-menu" role="menu" aria-label={ui('nav.taskJump')}>
       {groups.length ? groups.map(([key, group]) => <div className="task-picker-group" key={key}>
         <span className="task-picker-group-name">{t(`Menu.${key}.name`)}</span>
-        {taskNavItems(key, group.tasks).map(task => <button key={task} role="menuitemradio" aria-checked={task === currentTask} onClick={() => {
+        {taskNavItems(key, group.tasks).filter(task => !(allMode && task === SCHEDULER_EDITOR)).map(task => <button key={task} role="menuitemradio" aria-checked={task === currentTask} onClick={() => {
           setOpen(false); trigger.current?.focus()
-          if (task !== currentTask) navigate(`/i/${instance}/task/${task}`)
+          if (task !== currentTask) navigate(`${base}/task/${task}`)
         }}><span>{taskLabel(task, ui, t)}</span>{task === currentTask && <Check size={15}/>}</button>)}
       </div>) : <div className="task-picker-empty">{ui('nav.taskJumpEmpty')}</div>}
     </div>}

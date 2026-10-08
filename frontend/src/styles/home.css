@@ -70,10 +70,10 @@
 /* 展开：指针落在左边那片悬停区上、或已进入展开的开关盒内 —— 两者合起来才算悬停区，
    否则指针一挪到开关上就掉出去，展开的开关根本点不到；键盘焦点同理。鼠标点击留下的
    焦点不算 —— 它会一直留着，盒子就再也折不回去。 */
-/* 三枚开关：3×2 个图标宽 + 2×.5 个间隙。 */
+/* 两枚开关：2×2 个图标宽 + 1×.5 个间隙。一键启停不在这只盒子里。 */
 :root[data-tab-size] .app-shell .breadcrumb .topbar-actions:has(> .topbar-actions-hover:hover) .topbar-actions-buttons,
 :root[data-tab-size] .app-shell .breadcrumb .topbar-actions:has(> .topbar-actions-buttons:hover) .topbar-actions-buttons,
-:root[data-tab-size] .app-shell .breadcrumb .topbar-actions:has(:focus-visible) .topbar-actions-buttons {width: calc(var(--instance-tab-icon) * 7)}
+:root[data-tab-size] .app-shell .breadcrumb .topbar-actions:has(:focus-visible) .topbar-actions-buttons {width: calc(var(--instance-tab-icon) * 4.5)}
 :root[data-tab-size] .app-shell .breadcrumb .topbar-actions:has(> .topbar-actions-hover:hover) .topbar-actions-buttons > *,
 :root[data-tab-size] .app-shell .breadcrumb .topbar-actions:has(> .topbar-actions-buttons:hover) .topbar-actions-buttons > *,
 :root[data-tab-size] .app-shell .breadcrumb .topbar-actions:has(:focus-visible) .topbar-actions-buttons > * {visibility: visible; pointer-events: auto}

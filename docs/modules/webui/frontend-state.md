@@ -75,6 +75,7 @@ queued ──drain 取最旧──▶ saving ──成功──▶ saved（ready
 | `deploy` | `settings.patch` | 部署设置 |
 | `startup:<instance>` | `startup.set` | 实例启动开关 |
 | `config:<instance>` | `config.patch` | 任务配置（instance 取自路由参数） |
+| `config:common` | `config.patchCommon` | `/all` 共用编辑；未改动的混合字段不在 changes 里，不会从第一份配置抄到其余配置 |
 
 实例切换即切换 scope——两个实例的队列互不可见，草稿也按 scope 分别持久化（`azurpilot.edits.<scope>` 键）。
 

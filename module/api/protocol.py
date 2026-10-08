@@ -166,6 +166,11 @@ class PatchParams(InstanceParams):
     changes: list[ConfigChange] = Field(min_length=1, max_length=200)
 
 
+class CommonPatchParams(Params):
+    """把同一批修改写入全部普通配置，不绑定单个实例。"""
+    changes: list[ConfigChange] = Field(min_length=1, max_length=200)
+
+
 class RevisionParams(InstanceParams):
     """带版本校验的请求参数模型。"""
     revision: StrictStr

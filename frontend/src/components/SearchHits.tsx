@@ -6,18 +6,20 @@
  */
 
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { useApp } from '../app/context'
 import { setSearchTarget } from '../app/searchTarget'
 import { ownerTaskOf } from './taskNavItems'
+import { taskConfigBase } from '../app/allRoute'
 import type { SearchContentHit } from '../api/types'
 
 export function SearchHits({search, onNavigate}: {search: string; onNavigate?: () => void}) {
   const {schema, ui} = useApp()
   const {instance} = useParams()
+  const location = useLocation()
   const navigate = useNavigate()
-  const base = instance ? `/i/${instance}` : ''
+  const base = taskConfigBase(location.pathname, instance)
   const [hits, setHits] = useState<SearchContentHit[]>([])
   const keyword = search.trim()
 

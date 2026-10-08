@@ -6,7 +6,7 @@ import type {Catalog, ProgramSaved, ProgramSimulation, ProgramValidation, Runtim
 
 export type Scalar = string | number | boolean | null
 export type Value = Scalar | Value[] | {[key: string]: Value}
-type Values = Record<string, Record<string, Record<string, Value>>>
+export type Values = Record<string, Record<string, Record<string, Value>>>
 export type Status = 'running' | 'stopped' | 'error' | 'updating'
 export interface Instance { name: string; status: Status; serial: string; server: string; currentTask?: string | null }
 export interface UpdateStatus {
@@ -39,6 +39,14 @@ export interface Schema {
   translations: Record<string, unknown>
 }
 export interface Config { instance: string; revision: string; values: Values }
+/** 全部普通配置的共识。mixed 是取值不一致的路径，partial 是多选里只出现在部分配置中的选项。 */
+export interface Consensus {
+  instances: string[]
+  values: Values
+  mixed: string[]
+  locked: string[]
+  partial: Record<string, Value[]>
+}
 export interface OpsiSimulatorResult {
   cl1Count: number; meowCount: number; crashedProbability: number
   cl1Time: number; meowTime: number; ap: number; coin: number
@@ -173,6 +181,8 @@ export interface Results {
   'instances.delete': {deleted: string}
   'config.get': Config
   'config.patch': Config
+  'config.consensus': Consensus
+  'config.patchCommon': Consensus
   'shop_strategy.validate': ShopStrategyValidation
   'overview.get': Overview
   'scheduler.start': Overview

@@ -406,6 +406,8 @@ input, select, textarea {border-radius: 10px; min-height: 40px}
 .toggle > span {width: 22px; height: 22px; box-shadow: 0 2px 4px #0003}
 .toggle.on {background: #34c759}
 .toggle.on > span {transform: translateX(18px)}
+.toggle.mixed > span {transform: translateX(9px)}
+.toggle.mixed {background: color-mix(in srgb, #34c759 42%, #bcbcc2)}
 .modal::backdrop {background: #11111b2b}
 .modal h2 {font-size: 20px; letter-spacing: -.4px}
 .toast {border-radius: 22px; background: var(--text); color: var(--surface); box-shadow: 0 8px 32px #0002; font-size: 13px}

@@ -17,4 +17,10 @@ describe('一键启停', () => {
     expect(bulkTargets(instances, 'start')).toEqual(['b', 'c'])
     expect(bulkTargets(instances, 'stop')).toEqual(['a'])
   })
+
+  it('启动时跳过正在更新的实例', () => {
+    const instances = [make('a', 'updating'), make('b', 'stopped'), make('c', 'running')]
+    expect(bulkTargets(instances, 'start')).toEqual(['b'])
+    expect(bulkTargets(instances, 'stop')).toEqual(['c'])
+  })
 })

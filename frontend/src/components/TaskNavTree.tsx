@@ -8,6 +8,7 @@ import { NavLink, useLocation, useParams } from 'react-router-dom'
 import { Anchor, CalendarDays, ChevronDown, Compass, Gift, Palmtree, Search, Settings2, Ship, Sparkles, Swords, Wrench, type LucideIcon } from 'lucide-react'
 import { useApp } from '../app/context'
 import { taskNavItems, taskLabel } from './taskNavItems'
+import { taskConfigBase } from '../app/allRoute'
 import { SearchHits } from './SearchHits'
 
 const groupIcons: Record<string, LucideIcon> = {
@@ -25,7 +26,7 @@ export function TaskNavTree({ defaultOpenKey, onNavigate }: { defaultOpenKey?: s
   const { schema, t, ui } = useApp()
   const { instance } = useParams()
   const location = useLocation()
-  const base = instance ? `/i/${instance}` : ''
+  const base = taskConfigBase(location.pathname, instance)
 
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)

@@ -12,7 +12,9 @@ export function bulkAction(instances: Instance[]): BulkAction {
     return instances.length > 0 && instances.every(item => item.status === 'running') ? 'stop' : 'start'
 }
 
-/** 挑出真正需要改变状态的实例：已在目标状态里的不再发请求。 */
+/** 挑出真正需要改变状态的实例：已在目标状态里的不再发请求。更新中的实例不接受就地启动。 */
 export function bulkTargets(instances: Instance[], action: BulkAction): string[] {
-    return instances.filter(item => action === 'start' ? item.status !== 'running' : item.status === 'running').map(item => item.name)
+    return instances.filter(item => action === 'start'
+        ? item.status !== 'running' && item.status !== 'updating'
+        : item.status === 'running').map(item => item.name)
 }

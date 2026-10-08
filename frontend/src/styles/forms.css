@@ -77,6 +77,11 @@ input[aria-invalid='true']:focus, select[aria-invalid='true']:focus, textarea[ar
 .checkbox-mark input:checked {background: var(--theme-primary-bg); border-color: var(--theme-primary-bg)}
 .checkbox-mark > svg {position: absolute; left: 2.5px; top: 2.5px; color: var(--theme-on-accent); pointer-events: none; visibility: hidden}
 .checkbox-mark:has(:checked) > svg {visibility: visible}
+.checkbox-control.is-mixed .checkbox-mark input {background: color-mix(in srgb, var(--theme-primary-bg) 55%, var(--theme-input-bg)); border-color: var(--theme-primary-bg)}
+.checkbox-control.is-mixed .checkbox-mark::after {content: ''; position: absolute; left: 4px; right: 4px; top: 8px; height: 2px; background: var(--theme-on-accent)}
+.checkbox-control.is-mixed .checkbox-mark > svg {visibility: hidden}
+.common-note {display: flex; flex-direction: column; gap: 6px}
+.common-note p {margin: 0}
 input[type='radio'] {accent-color: var(--theme-primary-bg); width: 18px; height: 18px; min-height: 0; padding: 0}
 
 /* 开关的实际焦点及触控区域为 52×44，轨道由 ::before 画并在其中垂直居中。 */
@@ -86,6 +91,8 @@ input[type='radio'] {accent-color: var(--theme-primary-bg); width: 18px; height:
 .toggle.on::before {background: var(--theme-toggle-on)}
 .toggle > span {width: 26px; height: 26px; background: var(--theme-toggle-knob); box-shadow: var(--theme-toggle-shadow)}
 .toggle.on > span {transform: translateX(20px)}
+.toggle.mixed::before {background: color-mix(in srgb, var(--theme-toggle-on) 42%, var(--theme-toggle-off))}
+.toggle.mixed > span {transform: translateX(10px)}
 .toggle:active:not(:disabled) > span {width: 29px}
 .toggle.on:active:not(:disabled) > span {transform: translateX(17px)}
 

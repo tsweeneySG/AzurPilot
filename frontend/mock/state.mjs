@@ -16,6 +16,13 @@ const locales = Object.fromEntries(['zh-CN', 'zh-TW', 'en-US', 'ja-JP', 'zh-MIAO
 const ajv = new Ajv({ strict: false, useDefaults: true })
 const validators = Object.fromEntries(Object.entries(contract.methods).map(([method, entry]) => [method, ajv.compile(entry.params)]))
 const revision = values => createHash('sha256').update(JSON.stringify(values)).digest('hex')
+const MIXED_SENTINEL = '__ALAS_MIXED__'
+const IDENTITY_PATHS = new Set([
+  'Alas.Emulator.Serial', 'Alas.Emulator.PackageName', 'Alas.Emulator.ServerName',
+  'Alas.EmulatorInfo.name', 'Alas.EmulatorInfo.path', 'Alas.Optimization.SweeneyBridgeAccount',
+  'Alas.DropRecord.AzurStatsID',
+])
+const lockedInAll = (path, type) => IDENTITY_PATHS.has(path) || ['storage', 'lock', 'state', 'stored'].includes(type)
 const timestamp = date => date.toISOString().slice(0, 19).replace('T', ' ')
 const translate = key => key.split('.').reduce((value, part) => value?.[part], locales['zh-CN']) ?? key
 export const fail = (code, message, details = null) => { throw Object.assign(new Error(message), { code, details }) }
@@ -245,6 +252,40 @@ export function createMockState({ empty = false } = {}) {
   }
   const get = name => instances.get(name) ?? fail('NOT_FOUND', '实例不存在')
   const snapshot = name => ({ instance: name, revision: revision(get(name).values), values: structuredClone(get(name).values) })
+  const commonNames = () => [...instances.keys()].filter(name => name !== 'All' && !name.endsWith('.maa') && !name.endsWith('.fpy'))
+  function consensusView() {
+    const names = commonNames()
+    const configs = names.map(name => get(name).values)
+    const values = {}
+    const mixed = []
+    const locked = []
+    const partial = {}
+    for (const [task, groups] of Object.entries(args)) {
+      for (const [group, fields] of Object.entries(groups)) {
+        for (const [arg, field] of Object.entries(fields)) {
+          if (!field || typeof field !== 'object' || !('type' in field)) continue
+          const path = `${task}.${group}.${arg}`
+          if (lockedInAll(path, field.type)) locked.push(path)
+          if (!configs.length) continue
+          const picked = configs.map(cfg => cfg?.[task]?.[group]?.[arg] ?? field.value)
+          const same = picked.every(item => JSON.stringify(item) === JSON.stringify(picked[0]))
+          let value = picked[0]
+          if (!same && field.type === 'multiselect') {
+            const lists = picked.map(item => Array.isArray(item) ? item : [])
+            value = lists[0].filter(item => lists.every(list => list.includes(item)))
+            const union = []
+            for (const list of lists) for (const item of list) if (!union.some(seen => JSON.stringify(seen) === JSON.stringify(item))) union.push(item)
+            partial[path] = union.filter(item => !value.some(seen => JSON.stringify(seen) === JSON.stringify(item)))
+          }
+          values[task] ??= {}
+          values[task][group] ??= {}
+          values[task][group][arg] = value
+          if (!same) mixed.push(path)
+        }
+      }
+    }
+    return {instances: names, values, mixed, locked, partial}
+  }
   // 日志时间与真实后端一致使用本地时区（timestamp() 供调度比较，保持 UTC）。
   const logTime = date => [date.getHours(), date.getMinutes(), date.getSeconds()].map(n => String(n).padStart(2, '0')).join(':')
     + '.' + String(date.getMilliseconds()).padStart(3, '0')
@@ -569,6 +610,31 @@ export function createMockState({ empty = false } = {}) {
         instances.delete(name); startup.delete(name); programs.delete(name); simulations.delete(name)
         return { deleted: name }
       case 'config.get': return snapshot(name)
+      case 'config.consensus': return consensusView()
+      case 'config.patchCommon': {
+        const names = commonNames()
+        if (!names.length) fail('NOT_FOUND', '没有可编辑的配置')
+        const seen = new Set()
+        for (const {path, value} of params.changes) {
+          if (seen.has(path)) fail('INVALID_PARAMS', '同一次保存不能重复修改同一个参数')
+          seen.add(path)
+          if (value === MIXED_SENTINEL) fail('INVALID_PARAMS', '混合状态不能写入配置')
+          const [task, group, arg] = path.split('.')
+          const field = args[task]?.[group]?.[arg]
+          if (lockedInAll(path, field?.type)) fail('READ_ONLY', `共用编辑不能修改该参数：${path}`)
+          validateField(path, value)
+        }
+        for (const profile of names) {
+          const data = get(profile)
+          for (const {path, value} of params.changes) {
+            const [task, group, arg] = path.split('.')
+            data.values[task] ??= {}
+            data.values[task][group] ??= {}
+            data.values[task][group][arg] = value
+          }
+        }
+        return consensusView()
+      }
       case 'config.export': {
         if (!programs.has(name)) return snapshot(name).values
         const {mode, draft, active} = program(name)

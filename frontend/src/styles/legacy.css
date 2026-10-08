@@ -84,6 +84,8 @@ input[aria-invalid='true'], textarea[aria-invalid='true'], .select-trigger[aria-
   background: var(--theme-toggle-knob);
   transform: translateX(24px);
 }
+.toggle.mixed::before {background: color-mix(in srgb, var(--theme-toggle-on) 42%, var(--surface-muted)); border-color: var(--theme-toggle-on)}
+.toggle.mixed > span {transform: translateX(16px)}
 .toggle:active:not(:disabled) > span {
   width: 28px;
 }

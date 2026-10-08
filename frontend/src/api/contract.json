@@ -277,6 +277,62 @@
         "type": "object"
       }
     },
+    "config.consensus": {
+      "mutates": false,
+      "params": {
+        "additionalProperties": false,
+        "description": "API 入参基础模型，禁止额外字段并启用严格类型校验。",
+        "properties": {},
+        "title": "Params",
+        "type": "object"
+      }
+    },
+    "config.patchCommon": {
+      "mutates": true,
+      "params": {
+        "$defs": {
+          "ConfigChange": {
+            "additionalProperties": false,
+            "description": "单个配置项修改条目模型。",
+            "properties": {
+              "path": {
+                "maxLength": 180,
+                "minLength": 1,
+                "title": "Path",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "path",
+              "value"
+            ],
+            "title": "ConfigChange",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "把同一批修改写入全部普通配置，不绑定单个实例。",
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/$defs/ConfigChange"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Changes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "changes"
+        ],
+        "title": "CommonPatchParams",
+        "type": "object"
+      }
+    },
     "shop_strategy.validate": {
       "mutates": false,
       "params": {

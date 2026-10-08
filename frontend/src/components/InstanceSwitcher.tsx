@@ -6,12 +6,15 @@ import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState }
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { Check, ChevronDown, Plus, Ship } from 'lucide-react'
 import { useApp, useConnection } from '../app/context'
+import { allTaskPath, isAllPath, pageSuffix } from '../app/allRoute'
 import { createPortal } from 'react-dom'
 
 export function InstanceSwitcher({onCreate}: {onCreate: () => void}) {
-  const {instances, ui} = useApp()
+  const {instances, schema, ui} = useApp()
   const {instance} = useParams()
   const location = useLocation()
+  const allMode = isAllPath(location.pathname)
+  const isTool = (task: string) => Object.values(schema?.menu ?? {}).some(group => group.page === 'tool' && group.tasks.includes(task))
   const navigate = useNavigate()
   const connection = useConnection()
   const [open, setOpen] = useState(false)
@@ -58,18 +61,24 @@ export function InstanceSwitcher({onCreate}: {onCreate: () => void}) {
     if (!event.currentTarget.contains(next) && !menu.current?.contains(next)) setOpen(false)
   }} onKeyDown={onKeyDown}>
     <div className="instance-switcher">
-      <Link className="instance-caption" to={`/i/${instance}/overview`} title={ui('instance.backOverview')}>
-        <strong>{instance}</strong>
+      <Link className="instance-caption" to={allMode ? location.pathname : `/i/${instance}/overview`} title={allMode ? ui('nav.all') : ui('instance.backOverview')}>
+        <strong>{allMode ? ui('nav.all') : instance}</strong>
       </Link>
       <button ref={trigger} type="button" className="instance-toggle" aria-label={ui('instance.switch')} title={ui('instance.switch')} aria-haspopup="menu" aria-expanded={open} aria-controls="instance-menu" onClick={() => setOpen(!open)}>
         <ChevronDown size={12}/>
       </button>
     </div>
     {open && createPortal(<div className="instance-menu" id="instance-menu" role="menu" aria-label={ui('instance.configInstances')} ref={menu} onKeyDown={onKeyDown} style={{position: 'fixed', top: menuPos.top, left: menuPos.left}}>
-      <div className="instance-options">{instances.map(item => <button key={item.name} role="menuitemradio" aria-checked={item.name === instance} onClick={() => {
-        setOpen(false); trigger.current?.focus()
-        if (item.name !== instance) navigate(`/i/${item.name}/${location.pathname.split('/').slice(3).join('/') || 'overview'}`)
-      }}><Ship size={16}/><span>{item.name}</span>{item.name === instance && <Check size={16}/>}</button>)}</div>
+      <div className="instance-options">
+        <button role="menuitemradio" aria-checked={allMode} onClick={() => {
+          setOpen(false); trigger.current?.focus()
+          if (!allMode) navigate(allTaskPath(location.pathname, isTool))
+        }}><span>{ui('nav.all')}</span>{allMode && <Check size={16}/>}</button>
+        {instances.map(item => <button key={item.name} role="menuitemradio" aria-checked={!allMode && item.name === instance} onClick={() => {
+          setOpen(false); trigger.current?.focus()
+          if (allMode || item.name !== instance) navigate(`/i/${item.name}/${pageSuffix(location.pathname)}`)
+        }}><Ship size={16}/><span>{item.name}</span>{!allMode && item.name === instance && <Check size={16}/>}</button>)}
+      </div>
       <button
         className="instance-create"
         role="menuitem"

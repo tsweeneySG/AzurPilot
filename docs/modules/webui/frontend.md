@@ -18,7 +18,8 @@ frontend/README.md 与 frontend/API.md 已经是本前端的详细文档：前�
 
 ### 负责
 
-- 渲染单页应用（hash 路由）：主页、实例总览、任务配置、统计、系统设置、更新器等页面
+- 渲染单页应用（hash 路由）：主页、实例总览、任务配置、统计、系统设置、更新器等页面。`/all/task/:task` 是共用配置编辑，不是名为 All 的实例；总览、统计、交易所和图形调度器仍只属于单个实例
+- 顶栏的全部启动 / 全部停止对每个普通实例串行执行：先写完该实例的配置队列，再 `scheduler.start` 或 `scheduler.stop`；启动时跳过正在更新的实例
 - WebSocket 连接管理：认证、心跳、请求关联、超时与重连（`src/api/client.ts`）
 - 配置表单展示与保存：字段保存队列、草稿恢复、重试与数值校验（`src/config/EditQueue.ts`）
 - 任务优先级字段的拖动排序与解析：`src/app/taskPriority.ts`（纯函数：解析/合并/移动）+ `src/components/TaskPriorityField.tsx`（拖拽交互），写入 `Scheduler_Scheduler_Tasks`，提交值用 `

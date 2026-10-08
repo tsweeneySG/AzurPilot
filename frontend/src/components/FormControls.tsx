@@ -2,15 +2,17 @@
  * @fileoverview 基础表单控件封装（密码输入框、复选框与数值步进器等）。
  */
 
-import { useEffect, useState, type ComponentProps } from 'react'
+import { useEffect, useRef, useState, type ComponentProps } from 'react'
 import { Check, Eye, EyeOff } from 'lucide-react'
 import { useApp } from '../app/context'
 
 export { Select } from './Select'
 
-/** 使用真实复选框承载焦点和表单语义，图标只负责呈现。 */
-export function Checkbox({children, ...props}: ComponentProps<'input'>) {
-  return <label className="checkbox-control"><span className="checkbox-mark"><input {...props} type="checkbox"/><Check size={13} strokeWidth={3} aria-hidden="true"/></span><span>{children}</span></label>
+/** 使用真实复选框承载焦点和表单语义，图标只负责呈现。indeterminate 表示多选里只在部分配置中出现。 */
+export function Checkbox({children, indeterminate, ...props}: ComponentProps<'input'> & {indeterminate?: boolean}) {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (ref.current) ref.current.indeterminate = Boolean(indeterminate) }, [indeterminate, props.checked])
+  return <label className={`checkbox-control${indeterminate ? ' is-mixed' : ''}`}><span className="checkbox-mark"><input ref={ref} {...props} type="checkbox" aria-checked={indeterminate ? 'mixed' : props.checked ? 'true' : 'false'}/><Check size={13} strokeWidth={3} aria-hidden="true"/></span><span>{children}</span></label>
 }
 
 export function PasswordInput(props: ComponentProps<'input'>) {

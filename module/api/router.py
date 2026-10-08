@@ -59,6 +59,8 @@ class Router:
             'config.get': Method(p.InstanceParams, lambda x: configs.get(x.instance)),
             'config.export': Method(p.InstanceParams, lambda x: configs.export(x.instance)),
             'config.patch': Method(p.PatchParams, lambda x: configs.patch(x.instance, x.revision, x.changes), True),
+            'config.consensus': Method(p.Params, lambda _: configs.consensus()),
+            'config.patchCommon': Method(p.CommonPatchParams, lambda x: configs.patch_common(x.changes), True),
             'shop_strategy.validate': Method(p.ShopStrategyValidateParams, self.validate_shop_strategy),
             'overview.get': Method(p.InstanceParams, lambda x: runtime.overview(x.instance)),
             'stock.status': Method(p.InstanceParams, lambda x: self.stock_exchange.status(x.instance)),

@@ -269,7 +269,7 @@ API 模块自身的行为参数来自部署配置 `config/deploy.yaml`（经 `St
 | 更新 | UPDATE_FAILED、UPDATE_BUSY、UPDATE_UNAVAILABLE |
 | 内部 | INTERNAL_ERROR（meowfficer_service 另用 'INTERNAL'，见第 17 节） |
 
-自动恢复与终止的边界：参数错误、业务错误都不断开连接（客户端可继续下一个请求）；只有读超时、队列溢出、Origin 不符、连接数超限会终止会话。`config.patch` 的校验是全有全无——任一字段失败则整个事务不落盘。
+自动恢复与终止的边界：参数错误、业务错误都不断开连接（客户端可继续下一个请求）；只有读超时、队列溢出、Origin 不符、连接数超限会终止会话。`config.patch` 的校验是全有全无——任一字段失败则整个事务不落盘。`config.patchCommon` 同样先校验每一份普通配置，全部通过后才逐份原子写入。
 
 ## 12. 并发与线程模型
 
@@ -342,6 +342,7 @@ lifespan 关闭（顺序有讲究，测试固化）：
 - **静态资源 MIME 是写死的**（`static.py`）：Windows 上 Python 的 `mimetypes` 读注册表文件关联并直接覆盖标准表，`.js` 被关联成 `text/plain` 的机器会让前端整片白屏（2026-09 实机事故）。不要「简化」回系统映射。
 - **SPA 回退只对无后缀 404 生效**：缺失的 `.js`/图片必须返回真实 404，否则错误页会被当作 JS 执行；`.开头` 的路径段（构建指纹等）永远 404。
 - **`config.patch` 的 revision 只是兼容参数**：字段赋值合并到锁内最新快照，不因旧 revision 拒绝写入；但 `delete` 仍校验 revision 防误删。改这块要同时看 `module/config/transaction.py` 与运行器的待写字段机制。
+- **`config.consensus` / `config.patchCommon` 编辑全部普通配置**：共识按 `module/webui/common_editor.py` 收集 `get_config_mod == "alas"` 的配置，跳过 `template`、名为 `All` 的配置以及 MAA/FPY。返回 `{instances, values, mixed, locked, partial}`；取值一致的字段给出该值，不一致的路径列入 `mixed`，多选的交集放在 `values`、只出现在部分配置中的选项放在 `partial`。身份路径和 `storage` / `lock` / `state` / `stored` 列入 `locked`。`patchCommon` 不接收实例名，拒绝锁定路径和混合哨兵 `__ALAS_MIXED__`；changes 里没有的字段保持各配置原值。前端入口是 `/all/task/:task`，不要做成名为 All 的实例路由。
 - **读操作不得触发配置写回**：`ConfigService.read` 若发现磁盘配置与模板合并后有差异，只在内存补齐，不落盘——迁移写回是核心运行器的职责。
 - **实例名规则与上游一致**：`config/` 下除 `template` 外任何含 `Alas` 段的 `*.json` 都算实例；收紧 `validate_name` 会让上游认可的名字在 WebUI 里消失。
 - **`preview.capture` 与 `preview` topic 都只读 hub**：任何「顺手截一张」的改动都会让浏览器流量变成设备负载，破坏 7×24 运行假设。

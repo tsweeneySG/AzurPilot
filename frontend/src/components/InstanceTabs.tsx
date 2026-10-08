@@ -2,7 +2,7 @@
  * @fileoverview 顶栏多实例平铺标签页组件。
  */
 
-import { matchPath, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, LoaderCircle, Play, Plus, Square, Trash2, X } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
 import { api } from '../api/client'
@@ -11,6 +11,7 @@ import { editor } from '../config/editors'
 import type { Status } from '../api/types'
 import type { UiKey } from '../i18n'
 import { ErrorBox, Modal } from './ui'
+import { allTaskPath, isAllPath, pageSuffix } from '../app/allRoute'
 
 type StatusIconType = ComponentType<{className?: string; size?: number; 'aria-hidden'?: boolean | 'true' | 'false'}>
 
@@ -47,16 +48,22 @@ const STATUS_LABEL: Record<Status, UiKey> = {
 
 /** 实例分页条：所有实例平铺在顶栏一行，一点即切，不用展开下拉。 */
 export function InstanceTabs({onCreate}: {onCreate: () => void}) {
-  const {instances, ui} = useApp()
+  const {instances, schema, ui} = useApp()
   const {instance} = useParams()
   const navigate = useNavigate()
   const {pathname} = useLocation()
   /* 标签跳到目标实例的同一页型；不在实例页内（如主页）时统一落到总览。 */
-  const suffix = matchPath('/i/:instance/*', pathname)?.params['*'] || 'overview'
+  const suffix = pageSuffix(pathname)
   const [pendingDelete, setPendingDelete] = useState<string>()
   const jump = (name: string) => { if (name !== instance) navigate(`/i/${name}/${suffix}`) }
+  const allMode = isAllPath(pathname)
+  const isTool = (task: string) => Object.values(schema?.menu ?? {}).some(group => group.page === 'tool' && group.tasks.includes(task))
+  const openAll = () => { if (!allMode) navigate(allTaskPath(pathname, isTool)) }
 
   return <div className="instance-tabs" role="tablist" aria-label={ui('nav.instanceTabs')}>
+    <button type="button" role="tab" aria-selected={allMode} className={`instance-tab instance-tab-all${allMode ? ' current' : ''}`} title={ui('nav.all')} onClick={openAll}>
+      <span className="instance-tab-name">{ui('nav.all')}</span>
+    </button>
     {instances.map(item => {
       const StatusIcon = STATUS_ICON[item.status]
       const current = item.name === instance

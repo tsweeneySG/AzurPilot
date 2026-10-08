@@ -11,6 +11,8 @@ export interface Parameters {
   "config.get": { instance: string }
   "config.export": { instance: string }
   "config.patch": { instance: string; revision?: string | null; changes: Array<{ path: string; value: unknown }> }
+  "config.consensus": Record<string, never>
+  "config.patchCommon": { changes: Array<{ path: string; value: unknown }> }
   "shop_strategy.validate": { instance: string; task: "EventShop" | "ShopFrequent" | "ShopOnce" | "PrivateQuarters" | "OpsiShop" | "OpsiVoucher"; script: string }
   "overview.get": { instance: string }
   "stock.status": { instance: string }
