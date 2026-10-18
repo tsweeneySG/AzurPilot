@@ -109,15 +109,23 @@ def record_purchase(config, item, quantity=1, receipts=None):
 
 
 def record_research_cost(config, project):
-    """已启动的科研项目按现有项目目录中的明确消耗记账，未知用量不填零。"""
+    """已启动的科研项目按现有项目目录中的明确消耗记账，未知用量不填零。
+
+    第 6 项和挂起的 T 类会传入槽位索引而不是项目对象。没有名称和目录时跳过，
+    避免 AttributeError 把科研任务打进重启。
+    """
+    data = getattr(project, 'data', None)
+    project_name = getattr(project, 'name', None)
+    if not isinstance(data, dict) or not isinstance(project_name, str):
+        return False
     changes = {}
-    for item in getattr(project, 'data', {}).get('input', []):
+    for item in data.get('input', []):
         name = {'Coins': 'Coin', 'Cubes': 'Cube', 'Wisdom Cube': 'Cube',
                 'Cognitive Chips': 'Chip'}.get(item.get('name'))
         amount = item.get('amount')
         if name and type(amount) is int and amount > 0:
             changes[name] = changes.get(name, 0) - amount
-    return resource_flow.record(config, changes, f'启动科研 {project.name}')
+    return resource_flow.record(config, changes, f'启动科研 {project_name}')
 
 
 def observe_campaign_end(config, device):

@@ -134,6 +134,9 @@ class FleetOperator:
         """
         main = self.main
         click_timer = Timer(3, count=6)
+        # 不在编队页时清空按钮一直不可见。旧循环既不点也不退出，等到 GameStuck
+        # （4_nyan / 5_booty 16-4 2026-10-09，心跳已离开编队页）。
+        absent_timer = Timer(3, count=6).start()
         while 1:
             if skip_first_screenshot:
                 skip_first_screenshot = False
@@ -146,6 +149,7 @@ class FleetOperator:
 
             # 检查清空按钮以避免在弹窗显示动画时过早停止
             if self.allow():
+                absent_timer.reset()
                 # 结束判定
                 if not self.in_use():
                     break
@@ -154,6 +158,9 @@ class FleetOperator:
                 if click_timer.reached():
                     main.device.click(self._clear)
                     click_timer.reset()
+            elif absent_timer.reached():
+                logger.warning(f'[地图-编队] {self} 清空按钮不可见，跳过清空')
+                break
 
     def recommend(self, skip_first_screenshot=True):
         """点击推荐配队按钮。

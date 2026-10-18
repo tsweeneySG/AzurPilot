@@ -191,6 +191,11 @@ class ResourceFlowTests(unittest.TestCase):
             record_research_cost(self.config, project)
         self.assertEqual({'Coin': 1500, 'Cube': 2}, {row['resource']: row['expense'] for row in self.report()['flows']})
 
+    def test_research_slot_index_skips_cost_without_crashing(self):
+        with flow.task_session('testpilot', 'Research') as state:
+            self.assertFalse(record_research_cost(self.config, 2))
+            self.assertEqual({}, state['rewards'])
+
     def test_shop_and_voucher_keep_confirmed_bulk_accounting_without_scripts(self):
         from module.shop.clerk import ShopClerk
         from module.shop.shop_voucher import VoucherShop

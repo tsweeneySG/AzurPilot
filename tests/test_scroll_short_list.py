@@ -20,3 +20,14 @@ class TestScrollShortList(unittest.TestCase):
         scroll = Scroll((1176, 210, 1180, 720), color=(255, 255, 255), name='OS_SHOP_SCROLL')
         scroll.length = 136
         self.assertFalse(scroll.thumb_fills_track())
+
+    def test_five_pixel_gap_cannot_be_dragged(self):
+        scroll = Scroll((1176, 210, 1180, 720), color=(255, 255, 255), name='OS_SHOP_SCROLL')
+        # Booty 15:24: length 505 / total 510，位置被夹成 1.00，空滑直到重启
+        scroll.length = 505
+        self.assertTrue(scroll.thumb_fills_track())
+
+    def test_eleven_pixel_gap_can_still_drag(self):
+        scroll = Scroll((1176, 210, 1180, 720), color=(255, 255, 255), name='OS_SHOP_SCROLL')
+        scroll.length = 499
+        self.assertFalse(scroll.thumb_fills_track())

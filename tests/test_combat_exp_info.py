@@ -73,6 +73,27 @@ class TestHandleExpInfo(unittest.TestCase):
         self.assertIn('not exp_info or self.appear(GET_SHIP)', src)
         self.assertGreaterEqual(src.count('if not exp_info and self.handle_exp_info()'), 2)
         self.assertIn('_bridge_try_result_advance', src)
+        self.assertIn('_resume_if_next_combat_started', src)
+
+    def test_resume_next_combat_resets_settlement_flags(self):
+        src = inspect.getsource(Combat.combat_status)
+        resume = src.find('_resume_if_next_combat_started')
+        self.assertGreater(resume, 0)
+        self.assertIn('下一场战斗已开始', inspect.getsource(Combat._resume_if_next_combat_started))
+
+    def test_resume_if_next_combat_calls_execute(self):
+        combat = Combat.__new__(Combat)
+        combat.config = object()
+        combat.is_combat_loading_bar = lambda: False
+        combat.is_combat_executing = lambda: True
+        called = {'n': 0}
+
+        def execute(**kwargs):
+            called['n'] += 1
+
+        combat.combat_execute = execute
+        self.assertTrue(combat._resume_if_next_combat_started(auto='combat_auto'))
+        self.assertEqual(called['n'], 1)
 
     def test_enemy_searching_aborts_on_settlement_overlay(self):
         src = inspect.getsource(EnemySearchingHandler.handle_in_map_with_enemy_searching)

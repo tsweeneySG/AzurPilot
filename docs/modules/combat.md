@@ -185,7 +185,7 @@ flowchart TD
 
 1. **准备**：入口为战斗准备页，出口为暂停按钮可见。自动化开关（`AUTOMATION_ON/OFF`）按配置切换，带 1 秒防抖计时器；确认弹窗、低情绪、船坞满、紧急维修都在此消化。
 2. **执行**：出口为结算画面。自动模式只确认摇杆消失（切自动）；手动模式执行一次预设走位（居中/左下/左上），非纯自动模式下还会定时释放空袭/鱼雷（`handle_combat_weapon_release`）。
-3. **结算**：按「战斗评价 → 经验 → 掉落 → 新船」推进，`battle_status`/`exp_info` 两个标记处理游戏白屏 bug（评价页可能闪现两次）；直到 `expected_end`（`in_stage`/`with_searching`/`no_searching`/`in_ui`/回调）满足。
+3. **结算**：按「战斗评价 → 经验 → 掉落 → 新船」推进，`battle_status`/`exp_info` 两个标记处理游戏白屏 bug（评价页可能闪现两次）；直到 `expected_end`（`in_stage`/`with_searching`/`no_searching`/`in_ui`/回调）满足。若心跳已是 `COMBATLOAD` / 下一场 `BATTLE`（非 REPORT），或暂停键/战斗加载条已出现，则 `combat_status` 回到 `combat_execute` 打完这一场再继续结算（进图即战斗后自律连战，否则会空等到 GameStuck）。
 
 ### 自律寻敌战斗（AutoSearchCombat）
 
@@ -193,7 +193,7 @@ flowchart TD
 
 - `auto_search_moving()`：等待期间监视石油/物资 OCR（触发 `auto_search_oil/coin_limit_triggered`）与舰队等级，处理退役、低情绪弹窗；自动搜索菜单出现则抛 `CampaignEnd`。
 - `auto_search_combat_execute()`：加载期处理弹窗；进入战斗后先扣基础情绪，然后与手动模式类似的循环（潜艇/自动切换/弹窗），但**不点战斗评价**——自律寻敌会自动过渡结算，脚本只识别评价等级用于情绪记账（非 S 评价记沉船），`OPTS_INFO_D` 弹窗是沉船的确认性标志。
-- `auto_search_combat_status()`：处理结算页与战败善后。战败策略由 `Campaign_DefeatWithdraw` 决定：`withdraw_continue`（撤退继续）、`switch_fleet`（切另一队继续，超时退化为撤退）、`withdraw_stop`（连续 3 次战败后终止任务，抛 `ScriptEnd`）。
+- `auto_search_combat_status()`：处理结算页与战败善后。战败策略由 `Campaign_DefeatWithdraw` 决定：`withdraw_continue`（撤退继续）、`switch_fleet`（切另一队继续，超时退化为撤退）、`withdraw_stop`（连续 3 次战败后终止任务，抛 `ScriptEnd`）。与手动结算相同，下一场若已加载则回到 `combat_execute`。
 
 与手动战斗的关键差异：没有 `combat_preparation`（游戏不开准备页），没有血量平衡与手动走位，情绪扣减点从「暂停按钮出现」提前到「战斗加载完成」，战败分支与撤退决策远比手动模式复杂。
 

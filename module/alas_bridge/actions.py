@@ -133,6 +133,39 @@ def battle_report_overlay_active(config, max_age: float = 3.0) -> bool:
     return battle_report_overlay_from_state(state)
 
 
+def next_combat_started_from_state(state: Optional[dict]) -> bool:
+    """True when settlement is over and the next fight is loading or running.
+
+    COMBATLOAD is unambiguous. BATTLE + FIGHT/OPENING/IDLE is the next sortie.
+    LEVEL + BATTLE_IDLE is the campaign map after a fight, not a new combat.
+    BATTLE_REPORT is still settlement.
+    """
+    if not isinstance(state, dict):
+        return False
+    scene = str(state.get('scene_key') or '')
+    if scene == 'COMBATLOAD':
+        return True
+    if scene != 'BATTLE':
+        return False
+    battle = state.get('battle')
+    if not isinstance(battle, dict):
+        return False
+    return str(battle.get('state') or '') in (
+        'BATTLE_IDLE', 'BATTLE_FIGHT', 'BATTLE_OPENING',
+    )
+
+
+def next_combat_started(config, max_age: float = 15.0) -> bool:
+    if not bridge_enabled(config):
+        return False
+    try:
+        gs = GameState.from_config(config)
+        state = gs.read(max_age=max_age)
+    except Exception:
+        return False
+    return next_combat_started_from_state(state)
+
+
 def battle_is_fighting(config, max_age: float = 3.0) -> Optional[bool]:
     """
     True while BATTLE_FIGHT/OPENING, False on REPORT/IDLE.

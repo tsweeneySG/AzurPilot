@@ -583,6 +583,14 @@ class AutoSearchCombat(MapOperation, Combat, CampaignStatus):
                 continue
             if self._bridge_try_result_advance():
                 continue
+            auto = self.config.Fleet_Fleet1Mode if self._auto_search_fleet_index == 1 else self.config.Fleet_Fleet2Mode
+            submarine_mode = 'do_not_use'
+            if self.config.Submarine_Fleet:
+                submarine_mode = self.config.Submarine_Mode
+            if self._resume_if_next_combat_started(auto=auto, submarine=submarine_mode):
+                exp_info = False
+                self._bridge_result_advances = 0
+                continue
             if (not exp_info or self.appear(GET_SHIP)) and self.handle_get_ship():
                 continue
             if not self._withdraw and self.handle_auto_search_map_option():

@@ -183,5 +183,53 @@ class SkipPreparationTests(unittest.TestCase):
                 button.clear_offset()
 
 
+class TestFleetClearAbsent(unittest.TestCase):
+    def test_clear_exits_when_button_missing(self):
+        from module.map.map_fleet_preparation import FleetOperator
+
+        shots = {'n': 0}
+
+        class FakeTimer:
+            def __init__(self, limit, count=0):
+                self.n = 0
+
+            def start(self):
+                return self
+
+            def reset(self):
+                self.n = 0
+                return self
+
+            def reached(self):
+                self.n += 1
+                return self.n > 3
+
+        class Device:
+            def screenshot(self):
+                shots['n'] += 1
+                if shots['n'] > 20:
+                    raise AssertionError('clear() did not exit')
+
+            def click(self, *args, **kwargs):
+                raise AssertionError('should not click when clear is missing')
+
+        class Main:
+            device = Device()
+
+            def handle_popup_confirm(self, *args, **kwargs):
+                return False
+
+        op = FleetOperator.__new__(FleetOperator)
+        op.main = Main()
+        op._choose = 'FLEET_2_CLEAR'
+        op._clear = object()
+        op.allow = lambda: False
+        op.in_use = lambda: True
+        with patch.object(map_fleet_preparation, 'Timer', FakeTimer):
+            op.clear(skip_first_screenshot=False)
+        self.assertGreater(shots['n'], 0)
+        self.assertLessEqual(shots['n'], 6)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -846,13 +846,37 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
 
         return False
 
-    def combat_status(self, drop=None, expected_end=None):
+    def _resume_if_next_combat_started(self, auto='combat_auto', submarine='do_not_use', drop=None):
+        """结算后自律立刻开下一场时，回到战斗执行，避免空等 GameStuck。
+
+        16-4 进图即战斗（1_67 / 4_nyan 2026-10-09）：点完评价后心跳是
+        COMBATLOAD → BATTLE_IDLE，结算环不匹配 IN_MAP，约 60s 重启。
+        """
+        started = False
+        try:
+            from module.alas_bridge.actions import next_combat_started
+            started = bool(next_combat_started(self.config, max_age=15.0))
+        except Exception:
+            started = False
+        if not started and self.is_combat_loading_bar():
+            started = True
+        if not started and self.is_combat_executing():
+            started = True
+        if not started:
+            return False
+        logger.info('[战斗-结算] 下一场战斗已开始，回到战斗执行')
+        self.combat_execute(auto=auto, submarine=submarine, drop=drop)
+        return True
+
+    def combat_status(self, drop=None, expected_end=None, auto='combat_auto', submarine='do_not_use'):
         """战斗结算阶段：处理战斗评价、经验结算、掉落物品、新船获取等，直到回到预期页面。
 
         Args:
             drop (DropImage, optional): 掉落记录对象，用于截图统计。默认为 None。
             expected_end (str | callable, optional): 预期结束状态，可选 'with_searching'、
                 'no_searching'、'in_stage'、'in_ui'，也可传入回调函数。默认为 None。
+            auto (str, optional): 下一场若立刻开战时传给 combat_execute 的模式。
+            submarine (str, optional): 下一场若立刻开战时的潜艇模式。
 
         Pages:
             in: BATTLE_STATUS / GET_ITEMS（战斗结算画面）
@@ -876,6 +900,12 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             if self.handle_retirement() or self.retirement_appear():
                 continue
             if self._bridge_try_result_advance():
+                continue
+            if self._resume_if_next_combat_started(auto=auto, submarine=submarine, drop=drop):
+                battle_status = False
+                exp_info = False
+                self._bridge_result_advances = 0
+                self._bridge_award_open = False
                 continue
             # 新船在 EXP 之前；EXP 点过后只在当前还能看见 GET_SHIP 时再处理
             # （晚到的新船卡）。ALAS 是 `if not exp_info and handle_get_ship`。
@@ -984,7 +1014,8 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             self.combat_execute(
                 auto=auto_mode, submarine=submarine_mode, drop=drop)
             self.combat_status(
-                drop=drop, expected_end=expected_end)
+                drop=drop, expected_end=expected_end,
+                auto=auto_mode, submarine=submarine_mode)
 
         logger.info('[战斗-结束] 战斗结束')
 

@@ -320,7 +320,7 @@ stateDiagram-v2
 - 地图加载缓存以活动目录与关卡文件名共同判断；两个活动都有 `a1` 时必须重新加载各自地图，只有目录和文件名都相同才复用。
 - `stage_entrance` 字典：每次 `_get_stage_name()` 整体重建，不跨截图缓存；`_stage_image` / `_stage_image_gray` 是 `cached_property`，OCR 前后用 `del_cached_property` 显式失效。
 - `_map_battle`（Boss 前战斗数）为 `cached_property`，随每次 `load_campaign` 新建的 campaign 实例自然失效。
-- 用户配置中的持久化状态：`EventDaily_LastStage`（活动日常断点续刷）、`WarArchives_DailyRunCountRemain/Record`（档案每日额度，跨天按服务器刷新时间重置）、`Emotion.Fleet1Value` 等心情记录、`Dashboard.*`（`LogRes` 写入的油/金币/PT 快照）。
+- 用户配置中的持久化状态：`EventDaily_LastStage`（活动日常断点续刷；须与桥接 `event_daily.today_defeat` 一致，否则忽略断点）、`WarArchives_DailyRunCountRemain/Record`（档案每日额度，跨天按服务器刷新时间重置）、`Emotion.Fleet1Value` 等心情记录、`Dashboard.*`（`LogRes` 写入的油/金币/PT 快照）。
 - `@Config.when` 装饰器把方法变体登记在类级 `func_list`，实例化时不重复解析；`POOR_MAP_DATA` 等开关在运行中变化不会重新绑定，需要重载配置才能生效（依赖此语义的代码在 `map_get_info` 等处有注释说明）。
 
 ## 14. 生命周期

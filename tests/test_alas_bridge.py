@@ -1695,6 +1695,28 @@ class TestCombatIdleSkip(unittest.TestCase):
         }))
         self.assertFalse(battle_report_overlay_from_state(None))
 
+    def test_next_combat_started_from_state(self):
+        from module.alas_bridge.actions import next_combat_started_from_state
+
+        self.assertTrue(next_combat_started_from_state({'scene_key': 'COMBATLOAD'}))
+        self.assertTrue(next_combat_started_from_state({
+            'scene_key': 'BATTLE',
+            'battle': {'state': 'BATTLE_IDLE'},
+        }))
+        self.assertTrue(next_combat_started_from_state({
+            'scene_key': 'BATTLE',
+            'battle': {'state': 'BATTLE_FIGHT'},
+        }))
+        self.assertFalse(next_combat_started_from_state({
+            'scene_key': 'BATTLE',
+            'battle': {'state': 'BATTLE_REPORT'},
+        }))
+        self.assertFalse(next_combat_started_from_state({
+            'scene_key': 'LEVEL',
+            'battle': {'state': 'BATTLE_IDLE'},
+        }))
+        self.assertFalse(next_combat_started_from_state(None))
+
     def test_event_pt_from_heartbeat(self):
         from module.alas_bridge.actions import event_pt_from_bridge
 

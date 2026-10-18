@@ -116,7 +116,7 @@ module/ui/
 | 控件 | 识别原理 | 关键行为 |
 | --- | --- | --- |
 | `Switch` | 逐状态模板匹配 `check_button` | `is_selector` 决定点击语义：选择器点目标状态，开关点当前状态完成翻转；`unknown` 状态采用「两次容忍」策略——首次只警告不点击（可能是切换动画），警告再次出现后才直接点目标状态（可能是未登记的新状态），保证在已知状态间仍可切换。`handle_additional()` 钩子供子类清理遮挡（如 `FleetLockSwitch`） |
-| `Scroll` | 在滚动条区域内按颜色逐行列生成掩码，用「掩码均值位置 − 半长」归一化位置 | `set()` 拖拽循环带 `drag_interval` 防连击、滚动条消失 5 秒后假定完成；`drag_page`/`next_page` 按可视长度换算翻页拖拽量；贴边时扩大随机偏移避免过界 |
+| `Scroll` | 在滚动条区域内按颜色逐行列生成掩码，用「掩码均值位置 − 半长」归一化位置 | `set()` 拖拽循环带 `drag_interval` 防连击、滚动条消失 5 秒后假定完成；`drag_page`/`next_page` 按可视长度换算翻页拖拽量；贴边时扩大随机偏移避免过界。剩余行程不足 10px 时视为列表过短，`at_top` 与 `at_bottom` 同时成立，避免空滑被连击计数打到重启 |
 | `AdaptiveScroll` | 扩背景后灰度化，`scipy.find_peaks` 找峰值行作为滚动条位置 | 适配大世界商店这类背景色不定、滚动条长短变化的场景，`OS_SHOP_SCROLL` 即其实例 |
 | `Navbar` | 对 `ButtonGrid` 每个标签做激活色/非激活色像素计数 | `get_info()` 返回（激活索引、可见最左、最右）；`set()` 支持 left/right/upper/bottom 四个方向（从 1 计数），商店内的导航栏会先处理 `GET_SHIP`/`GET_ITEMS` 遮挡 |
 | `Setting` | 每个选项按钮按两种主题色判断激活 | `reset_first` 默认先空跑一次恢复默认再设目标值，规避「游戏记住上次选择」的干扰；`need_deselect` 支持非互斥多选 |

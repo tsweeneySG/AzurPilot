@@ -145,11 +145,14 @@ class Scroll:
 
         AdaptiveScroll 在直布罗陀等短列表上报 length≈total（甚至略大），
         位置被夹成 0.00，at_bottom 永远为假，pre_scroll 会当成拖动失败。
+        峰值少几个像素时位置又会被夹成 1.00，at_top 为假，set_top 只打出
+        短于 10px 的空滑。空滑会被丢弃，但仍计入连击直到重启。
+        剩余行程不足一次有效滑动（10px）时视为已经占满。
 
         Returns:
             bool: 滑块已占满轨道。
         """
-        return self.length >= max(self.total - 2, 1)
+        return self.length >= max(self.total - 10, 1)
 
     def at_top(self, main):
         """判断滚动条是否处于顶部（或最左端）。

@@ -19,6 +19,53 @@ from module.exception import ScriptEnd
 from module.logger import logger
 
 
+def event_daily_today_defeat(remains, stage):
+    """从 get_task_remains.event_daily 读取某关今日击败次数。
+
+    Args:
+        remains (dict | None): `get_task_remains` 结果。
+        stage (str): 关卡名，如 `a3`。
+
+    Returns:
+        int | None: 今日击败次数；快照缺失时返回 None。
+    """
+    if not isinstance(remains, dict):
+        return None
+    rows = remains.get('event_daily')
+    if not isinstance(rows, dict):
+        return None
+    row = rows.get(str(stage).lower())
+    if not isinstance(row, dict):
+        return None
+    try:
+        return max(0, int(row.get('today_defeat') or 0))
+    except (TypeError, ValueError):
+        return None
+
+
+def event_daily_letter_cleared(remains, stages):
+    """过滤器内任一关今日击败次数 > 0 则视为该字母日常已打。
+
+    Args:
+        remains (dict | None): `get_task_remains` 结果。
+        stages (list[str]): 过滤后的关卡名。
+
+    Returns:
+        bool | None: True/False 表示已打/未打；无法判断时返回 None。
+    """
+    known = False
+    for stage in stages:
+        n = event_daily_today_defeat(remains, stage)
+        if n is None:
+            continue
+        known = True
+        if n > 0:
+            return True
+    if not known:
+        return None
+    return False
+
+
 class CampaignABCD(EventBase):
     """活动日常关卡（ABCD 等非 SP 关卡）的执行器。
 
@@ -44,12 +91,17 @@ class CampaignABCD(EventBase):
         self.convert_stages(STAGE_FILTER)
         stages = [str(stage) for stage in STAGE_FILTER.apply(stages)]
         logger.attr('过滤排序', ' > '.join(stages))
+        planned_stages = list(stages)
 
         # 过滤后无可用关卡，禁用调度器并停止任务
         if not stages:
             logger.warning('无关卡满足当前筛选')
             self.config.Scheduler_Enable = False
             self.config.task_stop()
+
+        remains = self._task_remains()
+        if isinstance(remains, dict) and remains.get('day_caught_up'):
+            logger.info('[Sweeney] 客户端错过日切，已补跑 DayCall')
 
         # 从上次执行到的关卡继续，避免重复刷已完成的关卡
         logger.info(f'[活动-关卡] 上次关卡 {self.config.EventDaily_LastStage}，记录于 {self.config.Scheduler_NextRun}')
@@ -60,9 +112,15 @@ class CampaignABCD(EventBase):
             last = str(self.config.EventDaily_LastStage).lower()
             last = self.convert_stages(last)
             if last in stages:
-                # 跳到上次关卡之后的下一个关卡
-                stages = stages[stages.index(last) + 1:]
-                logger.attr('过滤排序', ' > '.join(stages))
+                defeat = event_daily_today_defeat(remains, last)
+                if defeat == 0:
+                    logger.warning(
+                        f'[活动-关卡] LastStage={last} 但今日击败次数为 0，忽略断点重打')
+                    self.config.EventDaily_LastStage = 0
+                else:
+                    # 跳到上次关卡之后的下一个关卡
+                    stages = stages[stages.index(last) + 1:]
+                    logger.attr('过滤排序', ' > '.join(stages))
             else:
                 logger.info('从头开始')
 
@@ -96,5 +154,25 @@ class CampaignABCD(EventBase):
             if self.config.task_switched():
                 self.config.task_stop()
 
+        # LastStage 半延迟本身不会重打已记完的关；用桥接今日击败次数确认，否则 30 分钟后重试
+        remains = self._task_remains()
+        cleared = event_daily_letter_cleared(remains, planned_stages)
+        if cleared is False:
+            logger.warning('[活动-关卡] 过滤器内关卡今日击败次数仍为 0，30 分钟后重试')
+            with self.config.multi_set():
+                self.config.EventDaily_LastStage = 0
+                self.config.task_delay(minute=30)
+            return
+
         # 前半段半延迟补跑，避免漏打活动日常后等到次日
         self.config.task_delay(server_update=True, half=True)
+
+    def _task_remains(self):
+        """读取桥接每日余量（顺带补跑错过的日切）。"""
+        try:
+            from module.alas_bridge.actions import bridge_enabled, get_task_remains
+            if bridge_enabled(self.config):
+                return get_task_remains(self.config)
+        except Exception as e:
+            logger.info(f'Sweeney event_daily remain miss: {e}')
+        return None
