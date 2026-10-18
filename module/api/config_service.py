@@ -17,7 +17,10 @@ import yaml
 
 from deploy.atomic import atomic_write
 from module.api.protocol import ApiError
+from module.combat.emotion_state import EmotionRecoveryState
 from module.config.deep import deep_get
+from module.config.redirect_utils.utils import meta_assist_limit_redirect
+from module.config.time_source import now as current_time
 from module.config.transaction import config_transaction
 from module.webui.common_editor import (
     MIXED_SENTINEL,
@@ -110,6 +113,8 @@ class ConfigService:
         """
         self.root = root
         self.directory = root / 'config'
+        from module.persistence.database import get_database
+        self.database = get_database(self.directory)
         # 导入源单独一个目录：config/ 下的 *.json 都算实例，导入源不能与实例列表混在一起。
         self.import_directory = self.directory / 'import'
         self.lock = threading.RLock()
@@ -290,6 +295,11 @@ class ConfigService:
                             if 'KeepCommonCV' not in fields and isinstance(legacy, bool):
                                 merged[task][group]['KeepCommonCV'] = legacy
                             merged[task][group].pop('SkipSingleCommonCV', None)
+                        if task == 'OpsiAshBeacon' and group == 'OpsiAshBeacon':
+                            if 'AssistRequestLimit' not in fields and 'OneHitMode' in fields:
+                                merged[task][group]['AssistRequestLimit'] = meta_assist_limit_redirect(
+                                    fields['OneHitMode'])
+                            merged[task][group].pop('OneHitMode', None)
         from module.config.redirect_utils.shop import migrate_shop_options
 
         merged, shop_warnings = migrate_shop_options(data, merged)
@@ -338,7 +348,7 @@ class ConfigService:
         data, _ = self.read(name)
         from module.runtime.game_data import INSTANCE_FIELD
         data.pop(INSTANCE_FIELD, None)
-        store = ProgramStore(self.directory)
+        store = ProgramStore(self.directory, store=self.database)
         if store.exists(name):
             data['_schedulerProgram'] = store.export(name)
         return data
@@ -371,7 +381,7 @@ class ConfigService:
             # 空占位表示新实例，首次使用时登记 UUID，禁止把复制的仪表盘当迁移来源。
             data[INSTANCE_FIELD] = None
             from module.scheduler.store import ProgramStore
-            store = ProgramStore(self.directory)
+            store = ProgramStore(self.directory, store=self.database)
             if bundle is not None:
                 try:
                     bundle = store.import_bundle(bundle)
@@ -483,6 +493,7 @@ class ConfigService:
         """把一批修改写进一份内存配置，并做与单实例保存相同的字段规则校验。"""
         seen = set()
         affected_shop_tasks = set()
+        edited_groups = {}
         for change in changes:
             task, group, arg = self.validate(change.path, change.value)
             if change.path in seen:
@@ -491,9 +502,35 @@ class ConfigService:
             data.setdefault(task, {}).setdefault(group, {})[arg] = change.value
             if change.path in OPSI_EXPLORE_PROGRESS:
                 self._reset_opsi_explore_progress(data, change.path)
-            self._sync_record_time(data[task][group], arg)
+            edited_groups.setdefault((task, group), set()).add(arg)
             if group == 'ShopAdvanced':
                 affected_shop_tasks.add(task)
+        # 按最终配置校准；同一批先改心情再改恢复条件，也使用最终条件。
+        now = current_time() if any(
+            group in ('Emotion', 'PublicEmotion') and any(arg.endswith('Value') for arg in args)
+            for (_, group), args in edited_groups.items()) else None
+        for (task, group), args in edited_groups.items():
+            fields = data[task][group]
+            for arg in args:
+                self._sync_record_time(fields, arg, now if group in ('Emotion', 'PublicEmotion') else None)
+            if group in ('Emotion', 'PublicEmotion'):
+                prefixes = ('Fleet1', 'Fleet2') if group == 'Emotion' else ('Fleet',)
+                for prefix in prefixes:
+                    if prefix + 'Value' in args:
+                        try:
+                            fields[prefix + 'RecoveryState'] = EmotionRecoveryState.calibrate(
+                                fields[prefix + 'Value'], now, fields[prefix + 'Recover'],
+                                fields[prefix + 'Oath'], fields[prefix + 'Onsen']).export()
+                        except KeyError as exc:
+                            raise ApiError(
+                                'INVALID_PARAMS', f'{task}.{group}.{exc.args[0]}: 缺少心情恢复配置'
+                            ) from None
+                        except ValueError as exc:
+                            raise ApiError(
+                                'INVALID_PARAMS', f'{task}.{group}.{prefix}Value: {exc}'
+                            ) from None
+                    elif any(prefix + suffix in args for suffix in ('Recover', 'Oath', 'Onsen')):
+                        fields[prefix + 'RecoveryState'] = None
         self.validate_shop_advanced_groups(data, affected_shop_tasks)
 
     @staticmethod
@@ -670,7 +707,7 @@ class ConfigService:
                 storage.pop('SmartExplore', None)
 
     @staticmethod
-    def _sync_record_time(fields, arg):
+    def _sync_record_time(fields, arg, now=None):
         """把 Value 参数对应的时间戳重置为当前时间。
 
         情绪等参数由“值 + 记录时间”两个字段推算实时状态，改值不刷新时间戳时，
@@ -679,12 +716,14 @@ class ConfigService:
         Args:
             fields (dict): 当前分组配置字典。
             arg (str): 当前修改的参数名。
+            now (datetime, optional): 心情校准使用的统一精确时间，其他成对字段沿用原格式。
         """
         if not arg.endswith('Value'):
             return
         record = arg[:-len('Value')] + 'Record'
         if record in fields:
-            fields[record] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            fields[record] = (datetime.now().strftime('%Y-%m-%d %H:%M:%S') if now is None
+                              else now.isoformat(sep=' ', timespec='microseconds'))
 
     def delete(self, name, revision):
         """删除指定实例并自动创建备份。
@@ -706,7 +745,9 @@ class ConfigService:
             backup = self.directory / 'backup'
             backup.mkdir(exist_ok=True)
             target = backup / f'{name}-{datetime.now():%Y%m%d-%H%M%S-%f}.json'
-            self.path(name).replace(target)
+            import shutil
+            shutil.copy2(self.path(name), target)
             from module.scheduler.store import ProgramStore
-            ProgramStore(self.directory).archive(name, backup / target.stem)
+            ProgramStore(self.directory, store=self.database).archive(name, backup / target.stem)
+            self.path(name).unlink()
             return {'deleted': name}

@@ -25,13 +25,14 @@ import time
 import numpy as np
 
 from module.base.timer import Timer
+from module.base.decorator import cached_property
 from module.base.utils import color_similar, get_color, lower_template_match_similarity
-from module.base.api_client import ApiClient
 from module.combat.assets import *
 from module.combat.combat_auto import CombatAuto
 from module.combat.combat_manual import CombatManual
 from module.combat.hp_balancer import HPBalancer
 from module.combat.level import Level
+from module.combat.result import CombatResult
 from module.combat.submarine import SubmarineCall
 from module.combat_ui.assets import *
 from module.handler.auto_search import AutoSearchHandler
@@ -56,7 +57,72 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         battle_status_click_interval (int): 战斗状态点击间隔。
     """
     _automation_set_timer = Timer(1)
-    battle_status_click_interval = 0
+    battle_status_click_interval = 2
+    combat_shipwreck_emotion = True
+
+    @cached_property
+    def combat_result(self):
+        """单场上下文按实例创建，直接调用结算处理器时默认不管理心情。"""
+        return CombatResult()
+
+    def combat_result_reset(self, emotion_reduce=False, fleet_index=1):
+        """在战斗入口重置结果；基础心情仍在确认进入战斗后扣减。"""
+        self.combat_result = CombatResult(fleet_index=fleet_index, emotion_reduce=emotion_reduce)
+
+    def combat_result_record(self, rank=None, defeated=False, fleet_unavailable=False):
+        """记录正向识别结果，同一场非 S 或战败最多额外扣减一次。"""
+        result = self.combat_result
+        if rank is not None:
+            result.rank = rank
+        if fleet_unavailable and not result.fleet_unavailable:
+            logger.info('[战斗-结算] 战败舰队已无法成型，等待游戏自动换队')
+        result.fleet_unavailable |= fleet_unavailable
+        defeated |= fleet_unavailable
+        first_defeat = defeated and not result.defeated
+        result.defeated |= defeated
+        if result.emotion_reduce and self.combat_shipwreck_emotion \
+                and result.needs_shipwreck_penalty and not result.shipwreck_reduced:
+            self.emotion.reduce(result.fleet_index, shipwreck=True)
+            result.shipwreck_reduced = True
+        if first_defeat:
+            logger.warning('[战斗-结算] 已确认战败结算')
+            self.combat_defeat_recovery()
+
+    def combat_defeat_recovery(self):
+        """任务按自身流程恢复；普通战斗只记录结果并推进结算。"""
+
+    def handle_combat_defeat(self, drop=None):
+        """识别 C/D 共用的 DEFEAT 画面，先记录战败再点击关闭。
+
+        Pages:
+            in: OPTS_INFO_D
+            out: 后续结算画面或地图
+        """
+        if not self.appear(OPTS_INFO_D, offset=(30, 30)):
+            return False
+        self.combat_result_record(defeated=True)
+        if self.appear(OPTS_INFO_D, offset=(30, 30), interval=2):
+            if drop:
+                drop.handle_add(self)
+            self.device.click(OPTS_INFO_D)
+            return True
+        return False
+
+    def combat_result_observe(self):
+        """只观察当前结果，不点击；C/D 字母的过渡帧不作为战败证据。"""
+        if self.appear(OPTS_INFO_D, offset=(30, 30)):
+            self.combat_result_record(defeated=True)
+            return True
+        for rank, battle, exp in (
+                ('S', BATTLE_STATUS_S, EXP_INFO_S),
+                ('A', BATTLE_STATUS_A, EXP_INFO_A),
+                ('B', BATTLE_STATUS_B, EXP_INFO_B)):
+            if self.appear(battle) or self.appear(exp):
+                self.combat_result_record(rank=rank)
+                return True
+        # 这里只把 C/D 字母当作进入结算的信号，后续 DEFEAT 才确认失败。
+        return any(self.appear(button) for button in (
+            BATTLE_STATUS_C, BATTLE_STATUS_D, EXP_INFO_C, EXP_INFO_D))
 
     def combat_appear(self):
         """检测是否进入战斗画面。
@@ -563,6 +629,9 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
                 if self.handle_combat_automation_confirm():
                     continue
 
+            if self.handle_combat_defeat(drop=drop):
+                break
+
             if self.handle_story_skip():
                 continue
             if self.handle_combat_auto(auto):
@@ -683,48 +752,26 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             return False
         if self._get_ship_blocks_settlement():
             return False
-        if self.appear(BATTLE_STATUS_S, interval=self.battle_status_click_interval):
-            if drop:
-                drop.handle_add(self)
-            else:
-                self.device.sleep((0.25, 0.5))
-            self.device.click(BATTLE_STATUS_S)
+        if self.handle_combat_defeat(drop=drop):
             return True
-        if self.appear(BATTLE_STATUS_A, interval=self.battle_status_click_interval):
-            logger.warning('[战斗-结算] 战斗评价 A')
-            if drop:
-                drop.handle_add(self)
-            else:
-                self.device.sleep((0.25, 0.5))
-            self.device.click(BATTLE_STATUS_A)
-            return True
-        if self.appear(BATTLE_STATUS_B, interval=self.battle_status_click_interval):
-            logger.warning('[战斗-结算] 战斗评价 B')
-            if drop:
-                drop.handle_add(self)
-            else:
-                self.device.sleep((0.25, 0.5))
-            self.device.click(BATTLE_STATUS_B)
-            return True
-        if self.appear(BATTLE_STATUS_C, interval=self.battle_status_click_interval):
-            logger.warning('[战斗-结算] 战斗评价 C')
-            if drop:
-                drop.handle_add(self)
-            else:
-                self.device.sleep((0.25, 0.5))
-            self.device.click(BATTLE_STATUS_C)
-            return True
-        if self.appear(BATTLE_STATUS_D, interval=self.battle_status_click_interval):
-            logger.warning('[战斗-结算] 战斗评价 D')
-            if drop:
-                drop.handle_add(self)
-            else:
-                self.device.sleep((0.25, 0.5))
-            self.device.click(BATTLE_STATUS_D)
-            return True
+        for rank, button in (
+                ('S', BATTLE_STATUS_S), ('A', BATTLE_STATUS_A), ('B', BATTLE_STATUS_B),
+                ('C', BATTLE_STATUS_C), ('D', BATTLE_STATUS_D)):
+            if not self.appear(button):
+                continue
+            # 字母 C/D 的灰色区域会误匹配转场，失败只由 DEFEAT 正向确认。
+            if rank in ('S', 'A', 'B'):
+                self.combat_result_record(rank=rank)
+            if self.appear(button, interval=self.battle_status_click_interval):
+                if rank != 'S':
+                    logger.warning(f'[战斗-结算] 战斗评价 {rank}')
+                if drop:
+                    drop.handle_add(self)
+                self.device.click(button)
+                return True
+            return False
         if self._bridge_battle_is_report():
             return self._click_bridge_battle_report(drop=drop)
-
         return False
 
     def handle_get_items(self, drop=None):
@@ -779,23 +826,16 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             return False
         if self._get_ship_blocks_settlement():
             return False
-        # 保留点击兜底，给自律结算动画留出自动跳转时间，避免短时间连击。
-        if self.appear_then_click(EXP_INFO_S, interval=2):
-            self.device.sleep((0.25, 0.5))
+        if self.handle_combat_defeat():
             return True
-        if self.appear_then_click(EXP_INFO_A, interval=2):
-            self.device.sleep((0.25, 0.5))
-            return True
-        if self.appear_then_click(EXP_INFO_B, interval=2):
-            self.device.sleep((0.25, 0.5))
-            return True
-        if self.appear_then_click(EXP_INFO_C, interval=2):
-            self.device.sleep((0.25, 0.5))
-            return True
-        if self.appear_then_click(EXP_INFO_D, interval=2):
-            self.device.sleep((0.25, 0.5))
-            return True
-
+        for rank, button in (
+                ('S', EXP_INFO_S), ('A', EXP_INFO_A), ('B', EXP_INFO_B),
+                ('C', EXP_INFO_C), ('D', EXP_INFO_D)):
+            if not self.appear(button):
+                continue
+            if rank in ('S', 'A', 'B'):
+                self.combat_result_record(rank=rank)
+            return self.appear_then_click(button, interval=2)
         return False
 
     def handle_get_ship(self, drop=None):
@@ -858,7 +898,9 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
             started = bool(next_combat_started(self.config, max_age=15.0))
         except Exception:
             started = False
-        if not started and self.is_combat_loading_bar():
+        image = getattr(getattr(self, 'device', None), 'image', None)
+        # 截图回放用按钮集合代替像素图，加载条模板匹配只对真实画面做。
+        if not started and isinstance(getattr(image, 'shape', None), tuple) and self.is_combat_loading_bar():
             started = True
         if not started and self.is_combat_executing():
             started = True
@@ -892,6 +934,8 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         self._bridge_result_advances = 0
         self._bridge_award_open = False
         for _ in self.loop():
+            if self.handle_combat_defeat(drop=drop):
+                continue
             if self.handle_story_skip(drop=drop):
                 continue
             # 船坞已满盖在 GET_SHIP/EXP 上。不处理会连点结算直到 GameStuck
@@ -994,6 +1038,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         """
         balance_hp = balance_hp if balance_hp is not None else self.config.HpControl_UseHpBalance
         emotion_reduce = emotion_reduce if emotion_reduce is not None else self.emotion.is_calculate
+        self.combat_result_reset(emotion_reduce=emotion_reduce, fleet_index=fleet_index)
         if auto_mode is None:
             auto_mode = self.config.Fleet_Fleet1Mode if fleet_index == 1 else self.config.Fleet_Fleet2Mode
         if submarine_mode is None:
@@ -1026,3 +1071,7 @@ class Combat(Level, HPBalancer, Retirement, SubmarineCall, CombatAuto, CombatMan
         """
         if save_get_items:
             self.battle_status_click_interval = 7
+        elif type(self) is Combat:
+            # 子类（META 等）保留自己的间隔。普通战斗不记掉落时仍用 0，
+            # 避免把结算确认拖成 2 秒。
+            self.battle_status_click_interval = 0

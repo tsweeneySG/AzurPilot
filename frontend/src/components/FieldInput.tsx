@@ -14,13 +14,13 @@ const YamlEditor = lazy(() => import('./YamlEditor').then(module => ({default: m
 interface Props {
   id: string; value: Value; onChange: (value: Value) => void; type?: string
   options?: Value[]; disabled?: boolean; label: string; mode?: string; translateOption?: (value: Value) => string
-  preserveText?: boolean; invalid?: boolean
+  preserveText?: boolean; invalid?: boolean; resubmitOnEdit?: boolean
   /** 各配置取值不一致。提交只发生在用户给出具体值之后。 */
   mixed?: boolean
   /** 多选里只出现在部分配置中的选项。 */
   mixedOptions?: Value[]
 }
-export function FieldInput({id, value, onChange, type, options, disabled, label, mode, translateOption, preserveText, invalid, mixed, mixedOptions}: Props) {
+export function FieldInput({id, value, onChange, type, options, disabled, label, mode, translateOption, preserveText, invalid, resubmitOnEdit, mixed, mixedOptions}: Props) {
   const {ui} = useApp()
   const accessibility = {'aria-label': label, 'aria-invalid': invalid || undefined, 'aria-describedby': invalid ? `${id}-status` : undefined}
   // 只读时间沿用旧界面的原始文本，保留秒、小数秒和历史格式。
@@ -58,7 +58,7 @@ export function FieldInput({id, value, onChange, type, options, disabled, label,
   const draft = useDraftInput(display, next => {
     if (concreteTextDraft(Boolean(mixed), display, next) === undefined) return
     onChange(preserveText ? next : type === 'datetime' ? (next.length === 16 ? `${next.replace('T', ' ')}:00` : next.replace('T', ' ')) : isNumber && next !== '' ? Number(next) : next)
-  })
+  }, resubmitOnEdit)
   return <Input {...accessibility} id={id} disabled={disabled} placeholder={mixed ? ui('common.mixed') : undefined}
     inputMode={isNumber ? 'decimal' : undefined}
     type={type === 'password' ? 'password' : type === 'datetime' && !preserveText ? 'datetime-local' : isNumber && !preserveText ? 'number' : 'text'}

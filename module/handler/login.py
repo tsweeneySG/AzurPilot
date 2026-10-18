@@ -191,7 +191,7 @@ class LoginHandler(UI):
             # 主界面弹窗。登录键还在时 GET_SHIP 是误匹配，点下去会让本函数
             # 提前返回，下一个任务又在同一画面上连点 LOGIN_CHECK
             # （Booty OpsiDaily / 6ix7even OpsiMeowfficerFarming，2026-09-25 03:17）。
-            # 弹窗点掉后继续等到主界面，不要在这里结束登录。
+            # 关闭弹窗只表示已操作；下一帧仍需确认确实回到了主界面。
             ship_popup = login_success and not self.appear(LOGIN_CHECK, offset=(30, 30))
             if self.ui_page_main_popups(get_ship=ship_popup):
                 continue
