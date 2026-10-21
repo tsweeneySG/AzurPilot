@@ -19,7 +19,7 @@ from deploy.atomic import atomic_write
 from module.api.protocol import ApiError
 from module.combat.emotion_state import EmotionRecoveryState
 from module.config.deep import deep_get
-from module.config.redirect_utils.utils import meta_assist_limit_redirect
+from module.config.redirect_utils.utils import meta_assist_limit_redirect, sea_miles_interval_redirect
 from module.config.time_source import now as current_time
 from module.config.transaction import config_transaction
 from module.webui.common_editor import (
@@ -300,6 +300,10 @@ class ConfigService:
                                 merged[task][group]['AssistRequestLimit'] = meta_assist_limit_redirect(
                                     fields['OneHitMode'])
                             merged[task][group].pop('OneHitMode', None)
+                        if task == 'OpsiHazard1Leveling' and group == 'OpsiHazard1Leveling':
+                            if 'RecordSeaMiles' in fields:
+                                merged[task][group]['RecordSeaMiles'] = sea_miles_interval_redirect(
+                                    fields['RecordSeaMiles'])
         from module.config.redirect_utils.shop import migrate_shop_options
 
         merged, shop_warnings = migrate_shop_options(data, merged)

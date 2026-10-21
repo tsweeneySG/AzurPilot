@@ -4,6 +4,7 @@
 
 import type {Catalog, ProgramSaved, ProgramSimulation, ProgramValidation, RuntimeProgramState} from '../scheduler/types'
 import type {MindCalculation, MindCatalog, MindReport, MindShip} from '../mind/types'
+import type {Catalog as FleetTechCatalog, Report as FleetTechReport} from '../fleet-tech/types'
 
 export type Scalar = string | number | boolean | null
 export type Value = Scalar | Value[] | {[key: string]: Value}
@@ -123,6 +124,8 @@ export interface MeowfficerScoreReport { instance: string; generatedAt: string; 
 interface DeployField { key: string; type: string; label: string; help: string; value: Value; options: Value[] }
 interface RemoteAccessStatus { enabled: boolean; state: string; address: string; error: string }
 export interface Settings { groups: {key: string; label: string; fields: DeployField[]}[]; notice: string; demo: boolean; remote?: RemoteAccessStatus }
+export interface RemotePairing { id: string; client_id: string; code: string; particle_secret: string; expires_at: number }
+export interface RemoteClient { id: string; created_at: number }
 export interface ApiEvent { v: 1; type: 'event'; topic: string; seq: number; data: unknown }
 export interface ApiResponse { v: 1; type: 'response'; id: string; ok: boolean; result?: unknown; error?: {code: string; message: string; details?: unknown} }
 export interface Announcement {
@@ -143,6 +146,10 @@ export interface BackgroundGalleryEntry {
 
 export interface Results {
   'mind.catalog': MindCatalog
+  'fleetTech.catalog': FleetTechCatalog
+  'fleetTech.report': FleetTechReport
+  'fleetTech.patch': FleetTechReport
+  'fleetTech.syncMind': FleetTechReport
   'mind.report': MindReport
   'mind.calculate': MindCalculation
   'mind.save': MindReport
@@ -206,6 +213,10 @@ export interface Results {
   'meowfficer.scoreReport': MeowfficerScoreReport
   'meowfficer.clearReport': {cleared: boolean; removed: string[]}
   'settings.get': Settings
+    'remote.pair.create': RemotePairing
+    'remote.pair.status': {state: 'pending' | 'claimed' | 'expired'}
+    'remote.clients': RemoteClient[]
+    'remote.revoke': {revoked: boolean}
   'settings.patch': {updated: string[]}
   'startup.get': {enabled: boolean; remember: boolean}
   'startup.set': {enabled: boolean; remember: boolean}
