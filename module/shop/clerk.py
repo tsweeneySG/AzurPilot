@@ -254,9 +254,13 @@ class ShopClerk(ShopBase, Retirement):
         """
         index_offset = (40, 20)
 
-        # 使用船坞 OCR 技巧精确定位数量输入区域
-        self.appear(AMOUNT_MINUS, offset=index_offset)
-        self.appear(AMOUNT_PLUS, offset=index_offset)
+        # 加减按钮可能错位。等它们都出现后再用船坞 OCR 技巧定位数量区域。
+        for _ in self.loop(timeout=1):
+            if self.appear(AMOUNT_MINUS, offset=index_offset) and self.appear(AMOUNT_PLUS, offset=index_offset):
+                break
+        else:
+            logger.warning('Wait AMOUNT_MINUS and AMOUNT_PLUS timeout, continue anyway')
+
         area = OCR_SHOP_AMOUNT.buttons[0]
         OCR_SHOP_AMOUNT.buttons = [(AMOUNT_MINUS.button[2] + 3, area[1], AMOUNT_PLUS.button[0] - 3, area[3])]
 

@@ -72,9 +72,10 @@ class CampaignTaskRecoveryTests(unittest.TestCase):
     def test_daily_recovery_finishes_original_stage_then_records_remaining_stages(self):
         for task in ('EventA', 'EventB', 'EventC', 'EventD'):
             with self.subTest(task=task):
-                # 当前唯一开放活动会把过期活动号刷掉，B 关别名对应 T4–T6。
-                config = make_config(task, Campaign={'Event': 'event_20261022_cn', 'ContinueAfterRestart': True})
-                config.override(EventDaily_StageFilter='T4 > T5 > T6', EventDaily_LastStage=0,
+                config = make_config(task, Campaign={'Event': 'event_20240912_cn', 'ContinueAfterRestart': True})
+                # 固定夹具活动，避免旧活动刷新后把 B 关别名转换为当前活动的 T 关。
+                config.override(Campaign_Event='event_20240912_cn',
+                                EventDaily_StageFilter='B1 > B2 > B3', EventDaily_LastStage=0,
                                 Scheduler_NextRun=datetime(2026, 10, 21, 12))
                 # LastStage 必须允许正常赋值，不用 override 固定住进度。
                 config.overridden.pop('EventDaily_LastStage')
@@ -97,7 +98,7 @@ class CampaignTaskRecoveryTests(unittest.TestCase):
                     trace.append((name, resume, total))
                     if not resume:
                         self.checkpoint(runner, name, folder)
-                    if name == 't5' and not failed:
+                    if name == 'b2' and not failed:
                         failed = True
                         raise GameNotRunningError('offline')
                     runner.run_count += 1
@@ -105,22 +106,22 @@ class CampaignTaskRecoveryTests(unittest.TestCase):
                 runner._run = Mock(side_effect=execute)
                 script = self.owner(runner)
                 script.__dict__[task.lower().replace('event', 'event_')] = Mock()
-                with patch('module.event.campaign_abcd.os.listdir', return_value=['t4.py', 't5.py', 't6.py']), \
+                with patch('module.event.campaign_abcd.os.listdir', return_value=['b1.py', 'b2.py', 'b3.py']), \
                         patch('module.event.campaign_abcd.get_server_last_update',
                               return_value=datetime(2026, 10, 21)) as refresh, campaign_recovery_scope(script):
                     with self.assertRaises(GameNotRunningError):
                         runner.run()
-                    self.assertEqual('t4', config.EventDaily_LastStage)
+                    self.assertEqual('b1', config.EventDaily_LastStage)
                     recovery = script._campaign_recovery
-                    self.assertEqual('t5', recovery.run_kwargs['name'])
+                    self.assertEqual('b2', recovery.run_kwargs['name'])
                     # 模拟重启跨过日更，仍应先完成保留图，不从第一关重复进入。
                     refresh.return_value = datetime(2026, 10, 22)
                     recovery.ready = True
                     recovery.prepare = Mock(return_value=True)
                     self.assertTrue(script._run(task.lower().replace('event', 'event_')))
-                self.assertEqual([('t4', False, 1), ('t5', False, 1),
-                                  ('t5', True, 1), ('t6', False, 1)], trace)
-                self.assertEqual('t6', config.EventDaily_LastStage)
+                self.assertEqual([('b1', False, 1), ('b2', False, 1),
+                                  ('b2', True, 1), ('b3', False, 1)], trace)
+                self.assertEqual('b3', config.EventDaily_LastStage)
                 config.task_delay.assert_called_with(server_update=True, half=True)
 
     def test_sp_recovery_keeps_once_per_day_scheduling(self):

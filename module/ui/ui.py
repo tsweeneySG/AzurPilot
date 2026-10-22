@@ -48,7 +48,7 @@ from module.ui.assets import *
 from module.ui.page import (Page, page_academy, page_archives, page_campaign, page_campaign_menu,
                             page_daily, page_dormmenu, page_event, page_exercise, page_in_map,
                             page_main, page_main_white, page_munitions, page_os, page_settings,
-                            page_shop, page_sp)
+                            page_shop, page_sp, page_tactical)
 from module.ui_white.assets import *
 
 
@@ -93,13 +93,22 @@ class UI(InfoHandler):
             bool: 页面是否出现。
         """
         if page == page_main:
-            return self.appear(page_main.check_button, offset=(5, 5), interval=interval)
+            if self.appear(page_main_white.check_button, offset=offset, interval=interval):
+                return True
+            if self.appear(page_main.check_button, offset=(5, 5), interval=interval):
+                return True
+            return False
         if page == page_munitions:
             return self._is_munitions_page(offset=offset, interval=interval)
-        # 英文本地化导致学院标题字体宽度变化，需要额外检查其他按钮
-        if self.config.SERVER == 'en' and page == page_academy:
-            if self.appear(ACADEMY_GOTO_MUNITIONS, offset=offset, interval=interval):
-                return True
+        # shitty EN localization changing font width of ACADEMY title,
+        # check other buttons also
+        if self.config.SERVER == 'en':
+            if page == page_academy:
+                if self.appear(ACADEMY_GOTO_MUNITIONS, offset=offset, interval=interval):
+                    return True
+            if page == page_tactical:
+                if self.appear(TACTICAL_CHECK_2, offset=offset, interval=interval):
+                    return True
         return self.appear(page.check_button, offset=offset, interval=interval)
 
     def _ui_pages_equivalent(self, a, b):
@@ -1559,6 +1568,11 @@ class UI(InfoHandler):
         else:
             self._ui_login_check_clicks = 0
         if self.appear_then_click(MAINTENANCE_ANNOUNCE, offset=(30, 30), interval=3):
+            return True
+        # rerun event select page
+        if self.appear(RERUN_SELECT_CHECK, offset=(30, 30), interval=3):
+            logger.info(f'UI additional: {RERUN_SELECT_CHECK} -> {SHOP_BACK_ARROW}')
+            self.device.click(SHOP_BACK_ARROW)
             return True
 
         # 误点击

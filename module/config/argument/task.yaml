@@ -294,6 +294,7 @@ DailyMission:
     Exercise:
       - Scheduler
       - Exercise
+      - Equipment
     ShopFrequent:
       - Scheduler
       - GeneralShop
@@ -333,9 +334,11 @@ Opsi:
     OpsiAshBeacon:
       - Scheduler
       - OpsiAshBeacon
+      - Equipment
     OpsiAshAssist:
       - Scheduler
       - OpsiAshAssist
+      - Equipment
     OpsiExplore:
       - Scheduler
       - OpsiExplore
