@@ -353,6 +353,7 @@ lifespan 关闭（顺序有讲究，测试固化）：
 - **`config.patch` 的 revision 只是兼容参数**：字段赋值合并到锁内最新快照，不因旧 revision 拒绝写入；但 `delete` 仍校验 revision 防误删。改这块要同时看 `module/config/transaction.py` 与运行器的待写字段机制。
 - **`config.consensus` / `config.patchCommon` 编辑全部普通配置**：共识按 `module/webui/common_editor.py` 收集 `get_config_mod == "alas"` 的配置，跳过 `template`、名为 `All` 的配置以及 MAA/FPY。返回 `{instances, values, mixed, locked, partial}`；取值一致的字段给出该值，不一致的路径列入 `mixed`，多选的交集放在 `values`、只出现在部分配置中的选项放在 `partial`。身份路径和 `storage` / `lock` / `state` / `stored` 列入 `locked`。`patchCommon` 不接收实例名，拒绝锁定路径和混合哨兵 `__ALAS_MIXED__`；changes 里没有的字段保持各配置原值。前端入口是 `/all/task/:task`，不要做成名为 All 的实例路由。
 - **读操作不得触发配置写回**：`ConfigService.read` 若发现磁盘配置与模板合并后有差异，只在内存补齐，不落盘——迁移写回是核心运行器的职责。
+- **活动候选按实例隔离**：读取与运行器共用 `refresh_campaign_events()` 刷新旧活动；`config.get/patch` 在 `options` 中按字段路径返回包名所属地区的候选。任务页面优先使用此映射，保存时以同批最终包名拒绝跨服选择，不修改共享 schema 或全局服务器。详见 [配置系统](../config.md) 的活动候选说明。
 - META 的 `OneHitMode → AssistRequestLimit` 在只读合并时复用核心纯转换函数，旧 `true/false` 显示为 `0/-1`，已有新值优先。读取不改磁盘；用户之后保存新字段时才由配置事务落盘。求援断点 `AssistRequestState` 隐藏且不可通过 API 编辑。
 - **实例名规则与上游一致**：`config/` 下除 `template` 外任何含 `Alas` 段的 `*.json` 都算实例；收紧 `validate_name` 会让上游认可的名字在 WebUI 里消失。
 - **`preview.capture` 与 `preview` topic 都只读 hub**：任何「顺手截一张」的改动都会让浏览器流量变成设备负载，破坏 7×24 运行假设。

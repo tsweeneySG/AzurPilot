@@ -41,7 +41,7 @@ export interface Schema {
   args: Record<string, Record<string, Record<string, Field>>>
   translations: Record<string, unknown>
 }
-export interface Config { instance: string; revision: string; values: Values }
+export interface Config { instance: string; revision: string; values: Values; options?: Record<string, Value[]> }
 /** 全部普通配置的共识。mixed 是取值不一致的路径，partial 是多选里只出现在部分配置中的选项。 */
 export interface Consensus {
   instances: string[]

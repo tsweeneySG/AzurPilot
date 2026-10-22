@@ -106,7 +106,7 @@ class TestCampaignNameErrorDelay(unittest.TestCase):
 
         from module.campaign import run
 
-        src = inspect.getsource(run.CampaignRun.run)
+        src = inspect.getsource(run.CampaignRun._run)
         self.assertIn('_handle_campaign_script_end', src)
         self.assertIn('except CampaignEnd as e', src)
         helper = inspect.getsource(run.CampaignRun._handle_campaign_script_end)
@@ -139,7 +139,7 @@ class TestCampaignNameErrorDelay(unittest.TestCase):
 
         import alas as alas_mod
 
-        src = inspect.getsource(alas_mod.AzurLaneAutoScript.run)
+        src = inspect.getsource(alas_mod.AzurLaneAutoScript._run)
         self.assertIn('except CampaignEnd', src)
         self.assertIn('return True', src)
 

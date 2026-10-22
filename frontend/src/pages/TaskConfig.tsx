@@ -225,8 +225,9 @@ export function TaskConfig() {
       {group === 'ShopAdvanced' && (
         <ShopStrategyHelp task={task} language={language}/>
       )}
-      {visible.map(([arg, field]) => {
+      {visible.map(([arg, definition]) => {
         const path = `${task}.${group}.${arg}`
+        const field = {...definition, option: config?.options?.[path] ?? definition.option}
         const edit = edits[path]
         const stored = formValues[task]?.[group]?.[arg] ?? field.value
         const fieldMixed = allMode && !edit && mixedPaths.has(path)
