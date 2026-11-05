@@ -429,6 +429,49 @@ class CampaignRun(CampaignEvent, ShopStatus):
             self.config.task_delay(server_update=True, half=True)
             self.config.task_stop('No remaining chapter tries')
 
+    def _enter_campaign_ui(self, mode, resume_map):
+        """进图前整理战役界面。图上残留模组自律时等待，而不是立刻撤退。
+
+        Returns:
+            bool: 已处理 ScriptEnd，调用方应结束本轮战役循环。
+        """
+        try:
+            if resume_map:
+                logger.info('[战役续接] 跳过选关与入场，恢复原战役状态循环')
+            elif self.campaign.is_in_map():
+                from module.alas_bridge.sitback import wait_leftover_autofight
+                leftover = wait_leftover_autofight(
+                    self.config, self.device, handler=self.campaign)
+                if leftover == 'timeout':
+                    logger.warning(
+                        '[战役] 图上仍有未结束的模组自律寻敌，推迟而不是撤退'
+                    )
+                    self.config.task_delay(minute=10)
+                    self.config.task_stop('Campaign: waiting leftover AutoFight')
+                if leftover == 'ended':
+                    logger.info('[战役] 残留自律寻敌已结束，继续战役界面')
+                    self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
+                else:
+                    logger.info('[战役] 已在地图中，执行撤退。')
+                    try:
+                        self.campaign.withdraw()
+                    except CampaignEnd:
+                        pass
+                    self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
+            elif self.campaign.is_in_auto_search_menu():
+                if self.can_use_auto_search_continue():
+                    logger.info('[战役] 在自动搜索菜单中，跳过 ensure_campaign_ui。')
+                else:
+                    logger.info('[战役] 在自动搜索菜单中，关闭。')
+                    # 因为 event_20240725 任务均衡器删除了 self.campaign.ensure_auto_search_exit()
+                    self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
+            else:
+                self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
+        except ScriptEnd as e:
+            self._handle_campaign_script_end(e)
+            return True
+        return False
+
     def run(self, name, folder='campaign_main', mode='normal', total=0, resume=False):
         """完成战役调用后，在同一任务归因范围内核对末轮资源。"""
         from module.campaign.recovery import CAMPAIGN_RESTART_ERRORS, capture_campaign_recovery
@@ -488,40 +531,10 @@ class CampaignRun(CampaignEvent, ShopStatus):
             if not self.device.has_cached_image:
                 self.device.screenshot()
             self.campaign.device.image = self.device.image
-            try:
-                if resume_map:
-                    logger.info('[战役续接] 跳过选关与入场，恢复原战役状态循环')
-                elif self.campaign.is_in_map():
-                    from module.alas_bridge.sitback import wait_leftover_autofight
-                    leftover = wait_leftover_autofight(
-                        self.config, self.device, handler=self.campaign)
-                    if leftover == 'timeout':
-                        logger.warning(
-                            '[战役] 图上仍有未结束的模组自律寻敌，推迟而不是撤退'
-                        )
-                        self.config.task_delay(minute=10)
-                        self.config.task_stop('Campaign: waiting leftover AutoFight')
-                    if leftover == 'ended':
-                        logger.info('[战役] 残留自律寻敌已结束，继续战役界面')
-                        self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
-                    else:
-                        logger.info('[战役] 已在地图中，执行撤退。')
-                        try:
-                            self.campaign.withdraw()
-                        except CampaignEnd:
-                            pass
-                        self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
-                elif self.campaign.is_in_auto_search_menu():
-                    if self.can_use_auto_search_continue():
-                        logger.info('[战役] 在自动搜索菜单中，跳过 ensure_campaign_ui。')
-                    else:
-                        logger.info('[战役] 在自动搜索菜单中，关闭。')
-                        # 因为 event_20240725 任务均衡器删除了 self.campaign.ensure_auto_search_exit()
-                        self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
-                else:
-                    self.campaign.ensure_campaign_ui(name=self.stage, mode=mode)
-            except ScriptEnd as e:
-                self._handle_campaign_script_end(e)
+            if not resume_map:
+                from module.campaign.fleet_training import recover_reading
+                recover_reading(self, mode)
+            if self._enter_campaign_ui(mode, resume_map):
                 break
             self.config.override(Campaign_Mode=self.campaign.config.Campaign_Mode)
             if not resume_map:
@@ -553,6 +566,10 @@ class CampaignRun(CampaignEvent, ShopStatus):
             self.device.click_record_clear()
             try:
                 self.campaign._resume_after_restart = resume_map
+                from module.campaign.fleet_rotation import preflight_rotation
+                self.campaign._fleet_rotation_preflight = lambda battle: preflight_rotation(self, battle, mode)
+                from module.campaign.fleet_training import after_battle_due
+                self.campaign._fleet_training_after_battle = lambda: after_battle_due(self, mode)
                 resume_map = False
                 self.campaign.run()
             except ScriptEnd as e:

@@ -1,6 +1,6 @@
-"""私人休息室任务模块。
+"""宿舍计划任务模块。
 
-自动化私人休息室的日常任务，包括商店购买和舰娘互动。
+自动化宿舍计划的日常任务，包括商店购买和舰娘互动。
 
 主要功能：
     - 购买每周商店物品（玫瑰需要金币，蛋糕需要钻石）
@@ -28,7 +28,7 @@
     - TW 服务器不支持商店功能
 
 Pages:
-    私人宿舍页面：page_private_quarters
+    宿舍计划页面：page_private_quarters
     宿舍菜单页面：page_dormmenu
 """
 
@@ -48,13 +48,13 @@ _PQ_STALE_STAMINA_RETRY_MIN = 45
 
 
 class PrivateQuarters(PQInteract, PQShop):
-    """私人休息室任务处理器。
+    """宿舍计划任务处理器。
 
-    管理私人休息室的日常任务流程，组合了舰娘互动（PQInteract）
+    管理宿舍计划的日常任务流程，组合了舰娘互动（PQInteract）
     和商店购买（PQShop）两种能力。
 
     核心流程：
-        1. 从任意页面导航至宿舍菜单，再进入私人休息室。
+        1. 从任意页面导航至宿舍菜单，再进入宿舍计划。
         2. 如配置了每周商品购买，进入商店购买玫瑰或蛋糕。
         3. 如配置了舰娘互动，检查每日剩余次数后进入目标房间互动。
 
@@ -90,7 +90,7 @@ class PrivateQuarters(PQInteract, PQShop):
             int: 剩余互动次数，0 表示已耗尽
 
         Pages:
-            in: 私人宿舍主页
+            in: 宿舍计划主页
         """
         count = self.status_get_daily_count()
         get_timer = Timer(1.5, count=3).start()
@@ -113,11 +113,11 @@ class PrivateQuarters(PQInteract, PQShop):
 
     def _pq_shop_enter(self):
         """
-        进入私人宿舍商店并导航到天狼星礼物标签页。
+        进入宿舍计划商店并导航到天狼星礼物标签页。
 
         Pages:
-            in: 私人宿舍主页
-            out: 私人宿舍商店 - 天狼星 - 礼物
+            in: 宿舍计划主页
+            out: 宿舍计划商店 - 天狼星 - 礼物
         """
         # 进入商店
         self.ui_click(
@@ -136,11 +136,11 @@ class PrivateQuarters(PQInteract, PQShop):
 
     def _pq_shop_exit(self):
         """
-        退出私人宿舍商店，返回私人宿舍主页。
+        退出宿舍计划商店，返回宿舍计划主页。
 
         Pages:
-            in: 私人宿舍商店
-            out: 私人宿舍主页
+            in: 宿舍计划商店
+            out: 宿舍计划主页
         """
         self.ui_click(
             click_button=PRIVATE_QUARTERS_SHOP_BACK,
@@ -158,10 +158,10 @@ class PrivateQuarters(PQInteract, PQShop):
         余额不足时跳过等待次日。
 
         Pages:
-            in: 私人宿舍主页
-            out: 私人宿舍主页
+            in: 宿舍计划主页
+            out: 宿舍计划主页
         """
-        logger.hr(f'[私人休息室] 获取每周物品', level=2)
+        logger.hr(f'[宿舍计划] 获取每周物品', level=2)
 
         # 进入商店
         self._pq_shop_enter()
@@ -182,13 +182,13 @@ class PrivateQuarters(PQInteract, PQShop):
             target_ship (str): 目标舰娘名称（小写，如 'sirius'）
 
         Pages:
-            in: 私人宿舍主页
-            out: 私人宿舍主页
+            in: 宿舍计划主页
+            out: 宿舍计划主页
         """
         # 校验目标是否可选
         target_title = target_ship.title().replace('_', ' ')
         if target_ship not in self.available_targets:
-            logger.error(f'[私人休息室] 不支持的目标舰娘: {target_title}，无法继续子任务')
+            logger.error(f'[宿舍计划] 不支持的目标舰娘: {target_title}，无法继续子任务')
             return
 
         # 进入目标房间，最多重试 3 次
@@ -214,12 +214,12 @@ class PrivateQuarters(PQInteract, PQShop):
             do_interact (bool): 是否走截图互动路径。
 
         Pages:
-            in: 私人宿舍主页
-            out: 私人宿舍主页
+            in: 宿舍计划主页
+            out: 宿舍计划主页
         """
-        logger.hr(f'私人休息室运行', level=1)
+        logger.hr(f'宿舍计划运行', level=1)
         target_title = target_ship.title().replace('_', ' ')
-        logger.info(f'[私人休息室] 任务配置: 买玫瑰={buy_roses}, '
+        logger.info(f'[宿舍计划] 任务配置: 买玫瑰={buy_roses}, '
                     f'买蛋糕={buy_cake}, '
                     f'舰娘互动={target_interact}, '
                     f'目标舰娘={target_title}')
@@ -229,14 +229,14 @@ class PrivateQuarters(PQInteract, PQShop):
             if server.server not in ['tw']:
                 self.pq_shop_weekly_items()
             else:
-                logger.info(f'[私人休息室] {server.server} 服务器不支持商店功能')
+                logger.info(f'[宿舍计划] {server.server} 服务器不支持商店功能')
 
         # 执行舰娘互动
         if do_interact and target_interact:
             # 确认目标舰娘在当前服务器是否受支持
             # 更新 not_supported_filter 可启用新舰娘支持
             if target_ship in self.not_supported_filter[server.server]:
-                logger.info(f'[私人休息室] 目标舰娘 {target_ship} 在 {server.server} 服务器不可用')
+                logger.info(f'[宿舍计划] 目标舰娘 {target_ship} 在 {server.server} 服务器不可用')
                 return
 
             # 获取每日剩余次数，为 0 则退出
@@ -356,7 +356,7 @@ class PrivateQuarters(PQInteract, PQShop):
 
     def run(self):
         """
-        私人宿舍任务入口。
+        宿舍计划任务入口。
 
         桥接可用时先 RPC 完成商店与体力，不进入宿舍 UI。
         仅当桥接缺子任务时才导航到私人宿舍走截图路径。

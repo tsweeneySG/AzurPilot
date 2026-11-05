@@ -17,7 +17,7 @@ import { useAnnouncement } from './announcement'
 import { ErrorBox, Loading, Modal } from '../components/ui'
 import { GlassMaterial } from '../components/GlassMaterial'
 import { MaterialInspector } from '../components/MaterialInspector'
-import { FLEET_TECHNOLOGY, MIND_CALCULATOR, SCHEDULER_EDITOR, taskLabel } from '../components/taskNavItems'
+import { FLEET_ANALYSIS, FLEET_SWITCH, FLEET_TRAINING, FLEET_LEVEL_TRAINING, FLEET_AFFINITY_TRAINING, FLEET_EQUIPMENT, FLEET_ROTATION, SCHEDULER_EDITOR, taskLabel } from '../components/taskNavItems'
 import { getMaterialInspector, subscribeMaterialInspector } from './materialInspectorState'
 import { InstanceSwitcher } from '../components/InstanceSwitcher'
 import { InstanceTabs } from '../components/InstanceTabs'
@@ -25,7 +25,6 @@ import { RightRail } from '../components/RightRail'
 import { CompactScrollbars } from '../components/CompactScrollbars'
 import { TaskNav } from '../components/TaskNav'
 import { SidebarTransition } from '../components/SidebarTransition'
-import {StockExchangeFallback} from '../stock/OverviewLink'
 
 import { useIsDesktop } from '../components/TaskNav'
 import { TaskSwitcher } from '../components/TaskSwitcher'
@@ -129,6 +128,15 @@ export function NavigationMark() {
   return <img src={`${import.meta.env.BASE_URL}azurpilot.svg`} alt="AzurPilot" width="28" height="28" className="brand-logo"/>
 }
 
+/** 这些任务页自己占满内容区，右栏让位。新舰队页加在这里，外壳只留一行判断。 */
+function hidesRightRailForPage(currentTask: string | null, pathname: string, search: string): boolean {
+  if (currentTask === FLEET_ANALYSIS || currentTask === FLEET_SWITCH || currentTask === FLEET_TRAINING
+      || currentTask === FLEET_LEVEL_TRAINING || currentTask === FLEET_AFFINITY_TRAINING
+      || currentTask === FLEET_EQUIPMENT || currentTask === FLEET_ROTATION) return true
+  if (pathname.endsWith('/resources') || pathname.endsWith('/task/FleetInfo')) return true
+  return pathname.endsWith('/statistics') && new URLSearchParams(search).get('view') === 'management'
+}
+
 export function App() {
   const connection = useConnection()
   const {instancesLoaded, instances, schema, t, ui, notify, previewEnabled, devMode, setDevMode, theme, compactRailSide} = useApp()
@@ -159,7 +167,7 @@ export function App() {
   const schedulerEditor = currentTask === SCHEDULER_EDITOR
   const stockExchange = !allMode && location.pathname.endsWith('/stock-exchange')
   const currentTaskLabel = currentTask ? taskLabel(currentTask, ui, t) : ''
-  const activeSection = location.pathname.includes('/task/') ? ui('nav.taskConfig') : location.pathname.endsWith('/mind-calculator') ? ui('mind.title') : location.pathname.endsWith('/resources') ? ui('nav.resources') : location.pathname.endsWith('/statistics') ? ui('nav.statistics') : location.pathname.endsWith('/announcement') ? ui('nav.announcement') : location.pathname.endsWith('/settings') ? ui('nav.settings') : location.pathname.endsWith('/interface') ? ui('nav.interface') : location.pathname.endsWith('/remote') ? ui('nav.remote') : location.pathname.endsWith('/updater') ? ui('nav.updater') : location.pathname.endsWith('/configs') ? ui('nav.configs') : location.pathname.endsWith('/dev') ? ui('nav.developer') : instance ? instance : ui('nav.home')
+  const activeSection = location.pathname.includes('/task/') ? ui('nav.taskConfig') : location.pathname.endsWith('/resources') ? ui('nav.resources') : location.pathname.endsWith('/statistics') ? ui('nav.statistics') : location.pathname.endsWith('/announcement') ? ui('nav.announcement') : location.pathname.endsWith('/settings') ? ui('nav.settings') : location.pathname.endsWith('/interface') ? ui('nav.interface') : location.pathname.endsWith('/remote') ? ui('nav.remote') : location.pathname.endsWith('/updater') ? ui('nav.updater') : location.pathname.endsWith('/configs') ? ui('nav.configs') : location.pathname.endsWith('/dev') ? ui('nav.developer') : instance ? instance : ui('nav.home')
   function handleBrandLogoClick(event: MouseEvent<HTMLImageElement>) {
     if (devMode || !recordDevLogoClick()) return
     event.preventDefault()
@@ -200,14 +208,15 @@ export function App() {
   useEffect(() => {
     if (connection !== 'ready') return
     /* notifications 与当前实例无关：任何工作区都要订，任务出错时才能弹系统通知。 */
-    void api.request('events.subscribe', {instance: instance ?? null, topics: instance ? stockExchange ? ['notifications', 'instances', 'stock'] : previewEnabled ? ['notifications', 'instances', 'overview', 'logs', 'preview'] : ['notifications', 'instances', 'overview', 'logs'] : ['notifications', 'instances']}).catch(error => notify(error.message, true))
+    const launcherTopics = ['127.0.0.1', 'localhost', '[::1]'].includes(window.location.hostname) ? ['launcher'] as const : []
+    void api.request('events.subscribe', {instance: instance ?? null, topics: instance ? stockExchange ? ['notifications', 'instances', ...launcherTopics, 'stock'] : previewEnabled ? ['notifications', 'instances', ...launcherTopics, 'overview', 'logs', 'preview'] : ['notifications', 'instances', ...launcherTopics, 'overview', 'logs'] : ['notifications', 'instances', ...launcherTopics]}).catch(error => notify(error.message, true))
   }, [instance, connection, notify, previewEnabled, stockExchange])
   // 旧版主题下点进实例后，外壳回到「顶栏跨全宽 + 单列侧栏」；主页视图一律沿用新版外壳。
   const legacyShell = usesLegacyShell(theme, allMode ? 'all' : instance)
   /* 主页与五个二级菜单也走旧版外壳：它们没有实例内容，顶栏只写居中的页名。 */
   const legacyHomeShell = (location.pathname === '/' || PRIMARY_NAV_PATHS.includes(location.pathname)) && usesLegacyLayout(theme) && instancesLoaded
   // 旧版把调度器与任务计划放进实例页左列，右栏整体让位，否则同一块内容会出现两处。
-  const showRail = !allMode && showsRightRail(theme, instance) && !schedulerEditor && currentTask !== MIND_CALCULATOR && currentTask !== FLEET_TECHNOLOGY && !stockExchange && !location.pathname.endsWith('/resources') && !location.pathname.endsWith('/task/FleetInfo') && !location.pathname.endsWith('/mind-calculator') && !(location.pathname.endsWith('/statistics') && new URLSearchParams(location.search).get('view') === 'management')
+  const showRail = !allMode && showsRightRail(theme, instance) && !schedulerEditor && !stockExchange && !hidesRightRailForPage(currentTask, location.pathname, location.search)
   /* 紧凑主题可把调度与任务计划栏换到内容区左侧。换位走 DOM 顺序而不是 CSS order，
      键盘 Tab 的顺序才会跟看到的顺序一致；列宽与顶栏跨栏方向由 compact.css 按同一偏好调整。 */
   const railFirst = theme === 'extreme' && compactRailSide === 'left'
@@ -223,7 +232,7 @@ export function App() {
   const brand = <><Link to="/" className="brand-title" aria-label={`AzurPilot ${ui('nav.home')}`}><img src={`${import.meta.env.BASE_URL}azurpilot.svg`} alt="" className="brand-logo" onClick={handleBrandLogoClick}/><span>AzurPilot</span></Link>{updateAvailable && <Link className="update-notice sidebar-update-notice" to="/updater" aria-label={ui('nav.newVersion')} title={ui('nav.newVersion')}><span>{ui('nav.newBadge')}</span></Link>}</>
   // 旧版顶栏的第三列是居中的页面名：实例页写任务名，无实例时写导航项名。
   const pageTitle = instance || allMode
-    ? currentTask ? currentTaskLabel : location.pathname.endsWith('/mind-calculator') ? ui('mind.title') : location.pathname.endsWith('/resources') ? ui('nav.resources') : location.pathname.endsWith('/statistics') ? ui('nav.statistics') : allMode ? ui('nav.all') : ui('nav.overview')
+    ? currentTask ? currentTaskLabel : location.pathname.endsWith('/resources') ? ui('nav.resources') : location.pathname.endsWith('/statistics') ? ui('nav.statistics') : allMode ? ui('nav.all') : ui('nav.overview')
     : activeSection
   /* 分页模式把所有实例铺在顶栏一行；原模式仍把实例收在下拉里。两种模式共用这一个开关。 */
   const tabsMode = topbarMode === 'tabs' && instances.length > 0
@@ -298,8 +307,6 @@ export function App() {
   /* 登录页要在所有 Hook 调用之后返回：否则同一次会话里的 Hook 数量会随连接状态变化，
      隧道远程访问首帧就走 auth，React 会直接抛 #300 崩掉整页。 */
   if (connection === 'auth') return <Login/>
-  // 交易终端独占窗口，离开后恢复实例原有的导航与布局偏好。
-  if (stockExchange) return <div className="stock-exchange-shell"><div id="main-content" role="main" tabIndex={-1}>{!schema || !instancesLoaded || !current ? <StockExchangeFallback/> : <Outlet context={update} key={instance}/>}</div></div>
   const hasDockedInspector = inspector.open && inspector.docked && !inspector.minimized
   return <div className={`app-shell ${layout.sidebarCollapsed ? 'nav-collapsed' : ''} ${hasDockedInspector ? 'has-docked-inspector' : ''} ${showRail ? 'with-rail' : ''} ${currentTask ? 'task-config-shell' : ''} ${legacyShell ? 'legacy-shell' : ''} ${legacyHomeShell ? 'legacy-shell legacy-home-shell' : ''} ${mobileOpen ? 'mobile-open' : ''} ${railOpen ? 'rail-open' : ''}`}>
     <a className="skip-link" href="#main-content" onClick={event => {event.preventDefault(); document.getElementById('main-content')?.focus()}}>{ui('nav.skipContent')}</a>

@@ -154,6 +154,8 @@ class LoginHandler(UI):
                 continue
             # 登录处理。点过「进入」仍不在主界面时停手，交给调度器推迟队列，
             # 而不是连点到点击上限再把游戏杀掉（Asami/Margaret 2026-09-24）。
+            if self.handle_bilibili_login_record():
+                continue
             if self.match_template_color(LOGIN_CHECK, offset=(30, 30), interval=5):
                 if login_success:
                     login_taps += 1
