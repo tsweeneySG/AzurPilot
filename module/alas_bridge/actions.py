@@ -391,6 +391,32 @@ def island_order(config) -> Optional[dict]:
     return send_verb(config, 'island_order', timeout=20.0)
 
 
+def island_manage(config) -> Optional[dict]:
+    """Start the island maintenance sequencer. Returns when the timer is armed, not when it finishes."""
+    return send_verb(config, 'island_manage', timeout=15.0)
+
+
+def island_exit(config) -> Optional[dict]:
+    """Press the island home button (GAME.ISLAND_ON_HOME). Returns once the exit is sent."""
+    return send_verb(config, 'island_exit', timeout=15.0)
+
+
+def island_mega_from_heartbeat(config, max_age: float = 8.0) -> Optional[dict]:
+    """Heartbeat island.mega: running, phase, seq, error, nextIdleAt."""
+    try:
+        gs = GameState.from_config(config)
+        state = gs.read(max_age=max_age)
+    except Exception:
+        return None
+    if not isinstance(state, dict):
+        return None
+    island = state.get('island')
+    if not isinstance(island, dict):
+        return None
+    mega = island.get('mega')
+    return mega if isinstance(mega, dict) else None
+
+
 def get_task_remains(config, timeout: float = 10.0) -> Optional[dict]:
     return send_verb(config, 'get_task_remains', timeout=timeout)
 
@@ -902,6 +928,23 @@ def wa_goto(config, chapter_id: int, remaster_id=None, timeout: float = 20.0) ->
     if remaster_id is not None:
         args['remaster_id'] = int(remaster_id)
     return send_verb(config, 'wa_goto', args, timeout=timeout)
+
+
+def set_quick_retire(config, keep=None, timeout: float = 8.0) -> Optional[dict]:
+    """把一键退役偏好写入 PlayerPrefs，避免点稀有度单选。
+
+    Args:
+        keep: ``keep_limit_break`` / ``all``。None 表示不改未满破保留项。
+    """
+    if not bridge_enabled(config):
+        return None
+    args = {}
+    if keep is not None:
+        args['keep'] = keep
+    result = send_verb(config, 'set_quick_retire', args, timeout=timeout)
+    if not isinstance(result, dict) or not result.get('set'):
+        return None
+    return result
 
 
 def set_mod_flags(

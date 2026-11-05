@@ -752,6 +752,13 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
             mode = 'one_click_retire'
 
         if mode == 'one_click_retire':
+            # 桥写入 PlayerPrefs（R/E/N）。成功后不再打开设置面板点单选。
+            bridge_prefs = False
+            if self.server_support_quick_retire_setting_fallback():
+                keep = 'keep_limit_break'
+                if self.config.OneClickRetire_KeepLimitBreak == 'do_not_keep':
+                    keep = 'all'
+                bridge_prefs = self._apply_quick_retire_via_bridge(keep)
             total = self.retire_ships_one_click()
             if not total:
                 logger.warning(
@@ -759,8 +766,8 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
                 self.dock_favourite_set(False, wait_loading=False)
                 self.dock_filter_set()
                 total = self.retire_ships_one_click()
-            if self.server_support_quick_retire_setting_fallback():
-                # 部分用户可能已设置 filter_5='all'，先尝试保留该设置
+            if self.server_support_quick_retire_setting_fallback() and not bridge_prefs:
+                # 桥没写上偏好时才打开设置面板。部分用户可能已设置 filter_5='all'。
                 if not total:
                     logger.warning('[退役-船坞] 未退役舰船，尝试重置前4个快速退役设置')
                     self.quick_retire_setting_set(filter_5=None)
@@ -791,6 +798,30 @@ class Retirement(Enhancement, QuickRetireSettingHandler):
         self.config.DOCK_FULL_TRIGGERED = True
 
         return total
+
+    def _apply_quick_retire_via_bridge(self, keep):
+        """通过桥写入快速退役偏好。失败时调用方继续走设置面板。
+
+        Args:
+            keep (str): ``keep_limit_break`` 或 ``all``。
+
+        Returns:
+            bool: 桥确认写入返回 True。
+        """
+        try:
+            from module.alas_bridge.actions import bridge_enabled, set_quick_retire
+        except Exception:
+            return False
+        if not bridge_enabled(self.config):
+            return False
+        result = set_quick_retire(self.config, keep=keep)
+        if not isinstance(result, dict):
+            logger.info('[退役-船坞] 桥未写入快速退役设置，回退设置面板')
+            return False
+        logger.info(
+            '[退役-船坞] 桥写入快速退役 R/E/N keep=%s closed=%s previous=%s',
+            keep, result.get('settings_closed'), result.get('previous'))
+        return True
 
     def _retire_select_one(self, button, skip_first_screenshot=True):
         """在退役确认界面中选择一艘舰船（取消其退役）。

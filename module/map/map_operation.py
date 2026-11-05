@@ -305,6 +305,8 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         self._auto_search_continue_timer = None
         # chapter_track 已发出但海图/自律一直不出现时，不要空等到 GameStuck 重启。
         self._track_enter_timer = None
+        # chapter_track 已按配置舰队发出 TRACKING 后，不要再点舰队准备页。
+        self._chapter_track_owns_enter = False
         self.stage_entrance = button
         self.map_clear_percentage_prev = -1
         self.map_clear_percentage_timer.reset()
@@ -379,21 +381,46 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                         if self._track_enter_timer is None:
                             self._track_enter_timer = Timer(45).start()
                         continue
-                    if self._level_prep_from_bridge() == 'fleet':
+                    fleet_page = (
+                        self._level_prep_from_bridge() == 'fleet'
+                        or (self._bridge_enabled()
+                            and self.appear(FLEET_PREPARATION, offset=(20, 50)))
+                    )
+                    if not fleet_page:
+                        self.device.click(prep_button)
+                        map_click += 1
                         map_timer.reset()
+                        campaign_timer.reset()
+                        # always clear self.map_fleet_checked after MAP_PREPARATION
+                        # we will enter FLEET_PREPARATION very soon,
+                        # fleets get reset when leaving FLEET_PREPARATION, it only get stored after entering stage,
+                        self.map_fleet_checked = False
                         continue
-                    self.device.click(prep_button)
-                    map_click += 1
+                    # 舰队页的出击按钮会命中准备页模板。点下去确认的是 6 和 5。
+                    # 落到下面的舰队页分支，由 chapter_track 出击。
                     map_timer.reset()
-                    campaign_timer.reset()
-                    # always clear self.map_fleet_checked after MAP_PREPARATION
-                    # we will enter FLEET_PREPARATION very soon,
-                    # fleets get reset when leaving FLEET_PREPARATION, it only get stored after entering stage,
-                    self.map_fleet_checked = False
-                    continue
 
                 # 舰队准备
                 if fleet_timer.reached() and self.appear(FLEET_PREPARATION, offset=(20, 50)):
+                    if getattr(self, '_chapter_track_owns_enter', False):
+                        # 出击已经带上 Fleet1/Fleet2（16-4 是 1 和 2）。舰队页仍停在
+                        # 上一张图的 lastFleetIndex，活动 T6 和战档把这里留成 6 和 5。
+                        # 再点下拉或出击会按屏幕上的选择再发一次 TRACKING。
+                        continue
+                    if self._bridge_enabled():
+                        # 心跳没报舰队页时，出击按钮模板仍会命中。点下去会按
+                        # 屏幕上的 6 和 5 再发 TRACKING。改由 chapter_track 出击。
+                        if self._bridge_try_chapter_track():
+                            fleet_timer.reset()
+                            if self._track_enter_timer is None:
+                                self._track_enter_timer = Timer(45).start()
+                            continue
+                        logger.warning('[地图-操作] 不点舰队页出击，屏幕选择可能是 6 和 5')
+                        self._fleet_confirm_refused = getattr(self, '_fleet_confirm_refused', 0) + 1
+                        fleet_timer.reset()
+                        if self._fleet_confirm_refused > 3:
+                            raise ScriptEnd('fleet page would confirm last fleets')
+                        continue
                     if mode == 'normal' or mode == 'hard':
                         self.handle_2x_book_setting(mode='prep')
                         self.fleet_preparation()
@@ -479,6 +506,7 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
                 if self.map_is_auto_search:
                     if self.is_auto_search_running():
                         logger.info('[地图-操作] 自动搜索运行中出现')
+                        self._log_chapter_dock_fleets()
                         break
                     if self._enter_map_combat_loading_means_entered():
                         logger.warning('[地图-操作] 进入地图时战斗加载画面出现')
@@ -752,6 +780,62 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         except Exception:
             return None
 
+    def _bridge_enabled(self):
+        try:
+            from module.alas_bridge.actions import bridge_enabled
+            return bool(bridge_enabled(self.config))
+        except Exception:
+            return False
+
+    def _warn_chapter_dock_fleets(self, fleets):
+        """章节里的船坞 id 不是配置的 Fleet1/Fleet2 时打警告。"""
+        if not isinstance(fleets, list) or not fleets:
+            return
+        dock = []
+        for fleet in fleets:
+            if not isinstance(fleet, dict):
+                continue
+            fid = fleet.get('fleet_id')
+            try:
+                dock.append(int(fid))
+            except (TypeError, ValueError):
+                continue
+        if not dock:
+            return
+        try:
+            from module.alas_bridge.actions import fleet_ids_for_chapter_track
+            expected = [n for n in fleet_ids_for_chapter_track(self.config) if n < 11]
+        except Exception:
+            return
+        missing = [n for n in expected if n not in dock]
+        if missing:
+            logger.warning(
+                f'[地图-编队] 章节船坞舰队 {dock}，配置水面舰队 {expected}'
+            )
+
+    def _log_chapter_dock_fleets(self):
+        """进图后把心跳里的船坞舰队 id 和名字打出来。"""
+        try:
+            from module.alas_bridge.actions import chapter_from_heartbeat
+            chapter = chapter_from_heartbeat(self.config, max_age=8)
+        except Exception:
+            return
+        if not isinstance(chapter, dict) or not chapter.get('active'):
+            logger.info('[地图-编队] 进图后心跳还没有章节舰队')
+            return
+        self._warn_chapter_dock_fleets(chapter.get('fleets'))
+        parts = []
+        for fleet in chapter.get('fleets') or []:
+            if not isinstance(fleet, dict):
+                continue
+            parts.append(
+                f"{fleet.get('name') or '?'} id={fleet.get('id')} dock={fleet.get('fleet_id')}"
+            )
+        if parts:
+            logger.info('[地图-编队] 进图舰队: ' + ', '.join(parts))
+        else:
+            logger.info('[地图-编队] 进图章节没有舰队列表')
+
     def _bridge_try_chapter_track(self):
         """
         通过 Sweeney 桥发送 GAME.TRACKING，替代点击出击。
@@ -769,9 +853,8 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
         loop = bool(getattr(self, 'map_is_clear_mode', False)
                     or self.config.Campaign_UseClearMode)
         open_fleet = not auto_fight
-        # 舰队准备页 info view 已关；再发 TRACKING 会 not_in_prep，然后误点 MAP_PREPARATION。
-        if self._level_prep_from_bridge() == 'fleet':
-            return False
+        # 舰队页打开时也发 TRACKING。该页的出击按钮会按屏幕上的选择再发一次，
+        # 上一张图的 lastFleetIndex 常是 6 和 5。Lua 从舰队页取章节并改选中项。
         result = chapter_track(
             self.config,
             auto_fight=auto_fight,
@@ -779,8 +862,10 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
             open_fleet=open_fleet,
         )
         if not isinstance(result, dict):
+            logger.warning('Sweeney chapter_track 没有返回，不把这次当成已出击')
             return False
         logger.info(f'Sweeney chapter_track: {result}')
+        self._warn_chapter_dock_fleets(result.get('fleets'))
         if result.get('reason') == 'no_tries':
             logger.info('Sweeney chapter_track no remaining tries')
             raise ScriptEnd('No remaining chapter tries')
@@ -794,6 +879,8 @@ class MapOperation(MysteryHandler, FleetPreparation, Retirement, FastForwardHand
             return False
         if not (result.get('sent') or result.get('already_active') or result.get('opened_fleet')):
             return False
+        if result.get('sent') or result.get('already_active'):
+            self._chapter_track_owns_enter = True
         if auto_fight:
             self.map_is_auto_search = True
         return True

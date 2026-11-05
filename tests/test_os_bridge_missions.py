@@ -444,5 +444,19 @@ class TestOsGlobeGoto(unittest.TestCase):
             om.os_zone_maps = orig_maps
 
 
+class TestOsCombatStatusSignature(unittest.TestCase):
+    def test_accepts_auto_and_submarine_from_parent_combat(self):
+        import inspect
+
+        from module.os_combat.combat import Combat as OSCombat
+
+        params = inspect.signature(OSCombat.combat_status).parameters
+        self.assertIn('auto', params)
+        self.assertIn('submarine', params)
+        src = inspect.getsource(OSCombat.combat_status)
+        self.assertIn('auto=auto', src)
+        self.assertIn('submarine=submarine', src)
+
+
 if __name__ == '__main__':
     unittest.main()

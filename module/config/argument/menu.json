@@ -115,6 +115,7 @@
     "menu": "collapse",
     "page": "setting",
     "tasks": [
+      "IslandManagement",
       "IslandPlan",
       "IslandBusiness",
       "IslandFarm",

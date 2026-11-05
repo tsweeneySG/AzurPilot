@@ -122,6 +122,8 @@ def main():
         extra = {'kind': args.scene or 'oil'}
     elif args.verb == 'echo':
         extra = {'ping': 1}
+    elif args.verb == 'set_quick_retire':
+        extra = {'keep': args.scene or 'keep_limit_break'}
     ack = BridgeRpc(gs).send(args.verb, extra, timeout=12.0)
     print('ack =')
     print(json.dumps(ack, indent=2, ensure_ascii=False))

@@ -864,7 +864,12 @@ class OpsiAshBeacon(Meta):
             timer = self.get_interval_timer('COMMISSION_DRAWER_DISMISS', interval=2, renew=True)
             if timer.reached():
                 logger.info('[META作战] 点击空白处关闭委托侧栏')
-                self.device.click((1050, 360))
+                # device.click 只接受 Button。传入坐标元组会在放弃入口时抛
+                # AttributeError，30 分钟延迟到不了，任务会立刻重试并重启
+                # （3_asami 2026-10-31 11:07，月切后 meta_boss 隐藏）。
+                self.device.click(Button(
+                    area=(), color=(), button=(1030, 340, 1070, 380),
+                    name='COMMISSION_DRAWER_DISMISS'))
                 timer.reset()
 
     def run(self):
@@ -1012,6 +1017,9 @@ class AshBeaconAssist(Meta):
             out: in_meta_assist
         """
         logger.info('[META支援] 确保进入信标支援页面')
+        # 大世界未开启时 meta_boss 隐藏。没有放弃条件会一直截图直到卡死重启
+        # （3_asami 2026-10-31 11:26，月切后入口不在委托侧栏）。
+        timeout = Timer(8, count=12).start()
         while 1:
             if skip_first_screenshot:
                 skip_first_screenshot = False
@@ -1024,16 +1032,23 @@ class AshBeaconAssist(Meta):
             if self.handle_map_event():
                 continue
             if self.appear_then_click(META_ENTRANCE, offset=(20, 300), interval=2):
+                timeout.reset()
                 continue
             if self.appear(ASH_SHOWDOWN, offset=(20, 20), interval=2):
                 self.device.click(META_MAIN_BEACON_ENTRANCE)
                 logger.info('[META支援] 已在 META 主页面')
+                timeout.reset()
                 continue
             if self.appear_then_click(BEACON_LIST, offset=(300, 20), interval=2):
+                timeout.reset()
                 continue
             if self.appear_then_click(DOSSIER_LIST, offset=(20, 20), interval=2):
                 logger.info('[META支援] 已在 META 档案页面')
+                timeout.reset()
                 continue
+            if timeout.reached():
+                logger.info('[META支援] 委托侧栏没有 META 入口，放弃以免卡死重启')
+                return False
 
     def _begin_meta_assist(self):
         """开始信标协助流程，确保进入协助页面后执行攻击。
@@ -1042,7 +1057,8 @@ class AshBeaconAssist(Meta):
             bool: 是否成功找到并攻击信标。
         """
         logger.hr('META支援')
-        self._ensure_meta_assist_page()
+        if not self._ensure_meta_assist_page():
+            return False
         result = self._attack_meta(skip_first_screenshot=False)
         self.handle_ash_equipment_after()
         return result
@@ -1052,7 +1068,7 @@ class AshBeaconAssist(Meta):
         执行信标协助任务主流程。
 
         成功协助后领取奖励并延迟到下次服务器更新；
-        未找到可协助的信标则延迟 10-20 分钟后重试。
+        未找到可协助的信标，或委托侧栏没有入口，则关掉侧栏并延迟 10-20 分钟后重试。
         """
         self.ui_ensure(page_reward)
 
@@ -1063,4 +1079,7 @@ class AshBeaconAssist(Meta):
             # 否则下一个任务启动时游戏仍在 META 页面导致页面识别失败而卡死
             self.ui_goto_main()
         else:
+            logger.info('[META支援] 未进入信标页面，稍后重试')
+            self._dismiss_commission_drawer()
             self.config.task_delay(minute=(10, 20))
+            self.ui_goto_main()

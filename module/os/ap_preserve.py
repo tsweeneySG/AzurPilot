@@ -116,6 +116,12 @@ def should_hold_ap_for_loggers(config, now=None, next_reset=None):
     reset, and not known-empty (storage flag False). Missing flag is treated
     as "might still have content" so a just-enabled task is not starved.
 
+    A storage flag that is already True also holds when that task's scheduler
+    is off. Month-start rotation and a manual disable do not remove loggers
+    or coordinates that are still in storage; Meowfficer Farming must not
+    treat those as spent. An enabled task whose NextRun is already past the
+    reset does not hold, including a stale True flag.
+
     Args:
         config:
         now (datetime):
@@ -131,12 +137,14 @@ def should_hold_ap_for_loggers(config, now=None, next_reset=None):
     reasons = []
     for task, flag_key, label in HIGH_AP_HOLD_TASKS:
         enabled = bool(config.cross_get(f'{task}.Scheduler.Enable', default=False))
+        has = config.cross_get(flag_key, default=None)
         if not enabled:
+            if has is True:
+                reasons.append(label)
             continue
         next_run = _as_datetime(config.cross_get(f'{task}.Scheduler.NextRun', default=DEFAULT_TIME))
         if next_run >= next_reset:
             continue
-        has = config.cross_get(flag_key, default=None)
         if has is False:
             continue
         reasons.append(label)

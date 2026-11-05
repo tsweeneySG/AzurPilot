@@ -409,6 +409,8 @@ Island:
   menu: 'collapse'
   page: 'setting'
   tasks:
+    IslandManagement:
+      - Scheduler
     IslandPlan:
       - Scheduler
       - IslandPlan

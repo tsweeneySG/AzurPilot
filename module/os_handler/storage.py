@@ -159,12 +159,16 @@ class StorageHandler(GlobeOperation, ZoneManager):
 
         Pages:
             in: STORAGE_CHECK
-            out: STORAGE_CHECK，滚动到最下方
+            out: STORAGE_CHECK，已从顶部逐页查完
         """
         logger.hr('使用所有记录仪')
+        # 坐标记录仪 sort_priority=1，排在仓库顶部；行动力箱是 6，排在下方。
+        # 只看底部时，箱子会把记录仪顶出画面，数量被记成 0，随后把 HasCoordinate 清掉。
+        scanned_top = False
         for _ in self.loop():
-            if SCROLL_STORAGE.appear(main=self):
-                SCROLL_STORAGE.set_bottom(main=self, skip_first_screenshot=True)
+            if not scanned_top and SCROLL_STORAGE.appear(main=self):
+                SCROLL_STORAGE.set_top(main=self, skip_first_screenshot=True)
+            scanned_top = True
 
             image = rgb2gray(self.device.image)
             items = TEMPLATE_STORAGE_LOGGER.match_multi(image, similarity=0.5)
@@ -173,10 +177,14 @@ class StorageHandler(GlobeOperation, ZoneManager):
 
             if len(items):
                 self._storage_item_use(items[0])
+                scanned_top = False
                 continue
-            else:
-                logger.info('[大世界-仓库] 仓库中所有记录仪已使用')
-                break
+
+            if SCROLL_STORAGE.appear(main=self) and not SCROLL_STORAGE.at_bottom(self):
+                if SCROLL_STORAGE.next_page(self, skip_first_screenshot=True):
+                    continue
+            logger.info('[大世界-仓库] 仓库中所有记录仪已使用')
+            break
 
     def logger_use(self):
         """进入仓库使用全部记录仪后退出。"""

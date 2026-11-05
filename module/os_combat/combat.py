@@ -290,7 +290,7 @@ class Combat(Combat_, MapEventHandler):
 
     __os_combat_drop = None
 
-    def combat_status(self, drop=None, expected_end=None):
+    def combat_status(self, drop=None, expected_end=None, auto='combat_auto', submarine='do_not_use'):
         """
         大世界战斗状态处理。
 
@@ -305,6 +305,8 @@ class Combat(Combat_, MapEventHandler):
         Args:
             drop (DropImage): 掉落图像对象。
             expected_end (callable): 自定义战斗结束判断函数，默认为 _os_combat_expected_end。
+            auto (str): 战斗自动化模式，转交给父类结算。
+            submarine (str): 潜艇模式，转交给父类结算。
         """
         self.__os_combat_drop = drop
         if expected_end is None:
@@ -312,7 +314,8 @@ class Combat(Combat_, MapEventHandler):
         # 禁用 handle_get_items，仅使用 handle_map_get_items
         self._disable_handle_get_items = True
         try:
-            super().combat_status(drop=drop, expected_end=expected_end)
+            super().combat_status(
+                drop=drop, expected_end=expected_end, auto=auto, submarine=submarine)
         finally:
             self._disable_handle_get_items = False
 

@@ -147,12 +147,9 @@ class FleetBarDetector:
         cv2.morphologyEx(gray, cv2.MORPH_OPEN, kernel, dst=gray)
         non_selected = self._find_option(gray)
 
-        # re-index
         for button in selected:
             button.selected = True
-        options = self._merge_options(selected + non_selected)
-        for index, button in enumerate(options, start=1):
-            button.index = index
+        options = self._assign_fleet_indexes(self._merge_options(selected + non_selected))
 
         logger.info('FleetOption: ' + ''.join([button.pretty() for button in options]))
         # validate
@@ -189,3 +186,67 @@ class FleetBarDetector:
             pass
         options = {button.index: button for button in options}
         return options, '\n'.join(error)
+
+    def _assign_fleet_indexes(self, options):
+        """Number rows by where they sit in a 6-fleet dropdown.
+
+        A menu that is still opening often shows only the lower rows. Counting
+        those boxes from 1 made fleet 5/6 look like fleets 1 and 2 (nyan 16-4,
+        2026-10-24 09:30, click y=549). A short bar (submarine) stays sequential
+        from the top, because those rows really are the first slots.
+        """
+        height = self.area[3] - self.area[1]
+        tall = height >= self.option_shape[1] * 5
+        if not tall:
+            for index, button in enumerate(options, start=1):
+                button.index = index
+            return options
+
+        by_index = {}
+        for button in options:
+            index = fleet_row_index(button.area, self.area)
+            if index is None:
+                continue
+            button.index = index
+            prev = by_index.get(index)
+            if prev is None or (button.selected and not prev.selected):
+                by_index[index] = button
+        return [by_index[key] for key in sorted(by_index)]
+
+
+def fleet_row_index(area, bar_area, limit=6):
+    """Dock-fleet slot from a dropdown row's vertical center.
+
+    Args:
+        area (tuple): Detected option box, (left, top, right, bottom).
+        bar_area (tuple): Full dropdown search area, tall enough for `limit` rows.
+        limit (int): Surface fleets in the menu.
+
+    Returns:
+        int | None: 1-based slot, or None when the box is outside the menu.
+    """
+    height = bar_area[3] - bar_area[1]
+    if height <= 0 or limit <= 0:
+        return None
+    center = (area[1] + area[3]) / 2.0
+    stride = height / float(limit)
+    index = int(round((center - bar_area[1]) / stride + 0.5))
+    if index < 1 or index > limit:
+        return None
+    return index
+
+
+def dropdown_ready(options, target):
+    """Whether the dropdown can be clicked without guessing a fleet number.
+
+    Ready when the requested slot is visible, the menu has all 6 rows, or the
+    only rows are fleets 1 and 2 (an account that has just those two). Two
+    lower rows are not a finished menu.
+    """
+    if not options:
+        return False
+    if target in options:
+        return True
+    if len(options) >= 6:
+        return True
+    return set(options) == {1, 2}

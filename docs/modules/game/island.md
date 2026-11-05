@@ -46,12 +46,13 @@ module/island/                  # 全部逻辑所在的主包
 ├── island_business.py          # 商区经营（最大的单文件，含按钮状态机与批次逻辑）
 ├── island_daily_gather.py / island_daily_interact.py / island_daily_order.py
 ├── island_air_drop.py / island_pearl_sell.py / island_cargo_preparation.py
+├── island_management.py        # 一键维护：桥 RPC、心跳等待、按岗位结束时间预约
 └── island_shop_base.py 所在的生产链各店无独立 run 以外的入口
 
 module/island_farm/ 等 16 个目录  # 薄壳：仅 button_extract 生成的 assets.py
 ```
 
-**薄壳目录设计**（本模块最容易误解的结构）：`dev_tools/button_extract.py` 扫描 `assets/{cn,en,jp,tw}/` 下所有子目录，为每个目录机械生成同名 `module/<目录>/assets.py`。岛屿团队把按钮截图按子玩法拆到了 `assets/cn/island_farm/`、`assets/cn/island_restaurant/` 等 16 个目录（每个玩法几十到上百个 `POST_XXX`/`SELECT_XXX`/`TEMPLATE_XXX` 资源），生成器便机械地产出了 16 个只含 `assets.py` 的「薄壳」目录。这些薄壳**不承载任何逻辑，也没有被 alas.py 导入**——`alas.py` 的 17 个 `island_*` 任务方法全部 `from module.island.island_xxx import Xxx`（主包），薄壳只作为资源文件被主包逻辑 `from module.island_farm.assets import *` 反向引用。其真实价值是**资源隔离**：单一 `island/` 资产目录已超百个文件，按玩法拆分让模板/按钮按玩法成组维护，跨玩法复用（如牧场复用农田的作物模板、渔场复用牧场的按钮）直接 import 对方薄壳即可。`island_fishery.py` 中「重新导入鱼苗商店专用按钮（覆盖 island.assets 中的同名旧定义）」的注释佐证了资源在逐步从 `island/` 迁出到玩法目录，旧同名定义靠后置 import 覆盖。
+**薄壳目录设计**（本模块最容易误解的结构）：`dev_tools/button_extract.py` 扫描 `assets/{cn,en,jp,tw}/` 下所有子目录，为每个目录机械生成同名 `module/<目录>/assets.py`。岛屿团队把按钮截图按子玩法拆到了 `assets/cn/island_farm/`、`assets/cn/island_restaurant/` 等 16 个目录（每个玩法几十到上百个 `POST_XXX`/`SELECT_XXX`/`TEMPLATE_XXX` 资源），生成器便机械地产出了 16 个只含 `assets.py` 的「薄壳」目录。这些薄壳**不承载任何逻辑，也没有被 alas.py 导入**——`alas.py` 的 `island_*` 任务方法全部 `from module.island.island_xxx import Xxx`（主包），薄壳只作为资源文件被主包逻辑 `from module.island_farm.assets import *` 反向引用。其真实价值是**资源隔离**：单一 `island/` 资产目录已超百个文件，按玩法拆分让模板/按钮按玩法成组维护，跨玩法复用（如牧场复用农田的作物模板、渔场复用牧场的按钮）直接 import 对方薄壳即可。`island_fishery.py` 中「重新导入鱼苗商店专用按钮（覆盖 island.assets 中的同名旧定义）」的注释佐证了资源在逐步从 `island/` 迁出到玩法目录，旧同名定义靠后置 import 覆盖。
 
 ## 4. 核心入口
 
@@ -90,8 +91,21 @@ module/island_farm/ 等 16 个目录  # 薄壳：仅 button_extract 生成的 as
 | `IslandBusiness` | Island | 商区经营 |
 | `IslandDailyGather/Interact/Order/AirDrop/PearlSell` | Island | 每日每周玩法 |
 | `IslandCargoPreparation` | IslandUI | 货运委托 |
+| `IslandManagement` | 组合 `Island` 导航 | 一键维护：进岛屿场景、Sweeney `island_manage`、回家离开、按岗位结束时间预约 |
 
 ## 6. 工作流程
+
+### 离岛维护总任务（IslandManagement）
+
+`IslandManagement.run()` 用 Sweeney 桥代替农田、牧场（含渔场）、矿山林场、制造业、五家餐饮生产、商区经营、每日订单、货物筹备和每日采集的界面点击。空投、每日互动、珍珠和全局配置仍走各自的任务。
+
+1. `Optimization.SweeneyBridge` 未开启时不进岛，`task_delay(minute=30)`。
+2. `ui_goto(page_island)` 进入岛屿，再等心跳 `island.sceneReady`（`IslandCore.STATE_INIT_FINISH`）并且右上角岛屿 HUD 已经出现。`island.loaded` 只表示代理里有数据，过场期间就会是 true。这段等待不点击。右上角 Manage 现在打开岛屿规划器，不再是管理页；岗位收取和派遣不需要那一页。mod 在 headless / 仅收取时忽略 `_MOD_ISLAND_MGMT_UI_ACTIVE`。
+3. RPC `island_manage` 立刻返回 `{started, seq}`。Ctrl+Keypad5 是同一条序列：任务（两次空轮询才停）、按拍收取、订单（两次 `none` 才停）、货运、鱼肉、商区开店、岗位派遣。诊断文件 `island_management_mega_debug.txt`。
+4. 截图循环读取心跳 `island.mega`，直到 `phase=done` 且 `seq` 对上，或约 12 分钟。
+5. 场景就绪后 RPC `island_exit`（`GAME.ISLAND_ON_HOME`）。场景未就绪时动词直接失败，不用 `goto_scene MAINUI`，也不在过场里 `ui_goto(page_main)`。离开后要等主界面出击/编队按钮稳定出现，桥上报的 `page_main` 不算到达。`nextIdleAt` 是最早一名生产岗位或正在营业的店铺的结束 unix 时间；早于 2 分钟则抬到 2 分钟后，缺失时 30 分钟后再跑。
+
+启用本任务后应关掉它替代的那些调度项，否则两套会一起跑。本任务默认 `Scheduler.Enable` 为 false，不改账号配置。
 
 ### 生产派遣的公共骨架
 
@@ -153,7 +167,7 @@ flowchart TD
 
 | 模块 | 关系 |
 | --- | --- |
-| `alas.py` | 17 个 `island_*` 任务方法的唯一调度入口，惰性导入各任务类 |
+| `alas.py` | `island_*` 任务方法的唯一调度入口，惰性导入各任务类 |
 | `IslandRancher.run()` | 运行结束后直接实例化 `IslandFishery` 并传入牧场计时器 |
 | `IslandBusiness` | 通过 `config.task_delay(task=...)` 调度 `IslandRestaurant` 等生产任务（SHOP_REFILL_TASK_MAP） |
 

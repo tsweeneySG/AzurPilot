@@ -52,7 +52,7 @@ module/
 │   ├── camera.py               # Camera：滑动、扫描、边缘定位、坐标转换
 │   ├── map_operation.py        # MapOperation：进图/撤退/模式切换
 │   ├── map_fleet_preparation.py# 舰队准备界面（检测式选队、困难校验、推荐配队）
-│   ├── fleet_bar.py            # FleetBarDetector：舰队下拉菜单选项检测（轮廓 + 颜色掩膜）
+│   ├── fleet_bar.py            # FleetBarDetector：下拉选项按 6 行位置编号，未展开完的下半菜单不会被重编号成 1..n。桥接开启时不点舰队页出击（上一张图常留下 6 和 5）
 │   ├── submarine.py            # 潜艇高级出击规划
 │   ├── utils.py                # 坐标转换、相机位计算、移动敌人匹配
 │   └── assets.py               # 进图/编队界面按钮（生成产物）

@@ -49,10 +49,57 @@ class AshDigitCounter(DigitCounter):
 
     def pre_process(self, image):
         image = super().pre_process(image)
-        # 地图上的数字与斜杠互不相连；短小的抗锯齿噪点不算完整字符。
-        _, _, stats, _ = cv2.connectedComponentsWithStats((image < 120).astype('uint8'), connectivity=8)
-        self._glyph_count = int((stats[1:, cv2.CC_STAT_HEIGHT] >= image.shape[0] / 2).sum())
+        self._glyph_count = self._count_glyphs(image)
         return image
+
+    @staticmethod
+    def _count_glyphs(image):
+        """统计完整字符数。
+
+        数字高度至少达到字图一半。JP 地图字体把斜杠画成几段矮笔画，
+        这些碎片落在两组数字之间的最大空隙时，补记为一个斜杠。
+        没有这道补记时，`180/200` 的字形数永远比文字少 1，持有量会被整段丢掉。
+
+        Args:
+            image (np.ndarray): extract_letters 之后的灰度字图。
+
+        Returns:
+            int: 计入斜杠后的字形数。
+        """
+        _, _, stats, _ = cv2.connectedComponentsWithStats((image < 120).astype('uint8'), connectivity=8)
+        min_height = image.shape[0] / 2
+        tall = []
+        short = []
+        for comp in stats[1:]:
+            x, _, width, height, area = (int(v) for v in comp)
+            if height >= min_height:
+                tall.append((x, x + width))
+            else:
+                short.append((x, x + width, area))
+        count = len(tall)
+        if AshDigitCounter._slash_is_fragmented(tall, short):
+            count += 1
+        return count
+
+    @staticmethod
+    def _slash_is_fragmented(tall, short):
+        """最大空隙里有成段矮笔画时，斜杠被拆碎而不是多出一个数字。"""
+        if len(tall) < 2 or not short:
+            return False
+        tall = sorted(tall)
+        gap_left, gap_right, gap_width = max(
+            ((right, nxt_left, nxt_left - right) for (_, right), (nxt_left, _) in zip(tall, tall[1:])),
+            key=lambda gap: gap[2],
+        )
+        # 相邻数字的间距只有一两个像素；斜杠留下的空隙明显更宽。
+        if gap_width < 4:
+            return False
+        ink = 0
+        for left, right, area in short:
+            center = (left + right) / 2
+            if gap_left <= center <= gap_right:
+                ink += area
+        return ink >= 4
 
     def after_process(self, result):
         result = super().after_process(result)
@@ -183,7 +230,7 @@ class OSAsh(UI, MapEventHandler):
     负责信标收集状态检测和信标攻击任务的自动调度。
 
     工作流程：
-    1. 通过 OCR 读取信标收集进度，并核对原生字形数量（AshDigitCounter）
+    1. 通过 OCR 读取信标收集进度，并核对原生字形数量（AshDigitCounter，JP 断开的斜杠补记为 1）
     2. 判断收集状态：可收集 / 未收集满 / 已达上限 / 被遮挡
     3. 当收集进度 >= 100 且信标任务可调度时，触发 OpsiAshBeacon 任务（只打档案时除外）
     4. 检查信标任务的下次执行时间，距今超过 30 分钟才允许调用

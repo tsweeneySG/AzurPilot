@@ -125,8 +125,15 @@ class TestHoldApForLoggers(unittest.TestCase):
         hold, reason = should_hold_ap_for_loggers(cfg, next_reset=NEXT_RESET)
         self.assertTrue(hold)
 
-    def test_disabled_task_does_not_hold(self):
+    def test_disabled_task_with_known_content_holds(self):
         cfg = _config(obscure=True, obscure_enable=False, abyssal=False, stronghold=False,
+                      abyssal_enable=False, stronghold_enable=False)
+        hold, reason = should_hold_ap_for_loggers(cfg, next_reset=NEXT_RESET)
+        self.assertTrue(hold)
+        self.assertIn('Obscure', reason)
+
+    def test_disabled_task_known_empty_does_not_hold(self):
+        cfg = _config(obscure=False, obscure_enable=False, abyssal=False, stronghold=False,
                       abyssal_enable=False, stronghold_enable=False)
         hold, reason = should_hold_ap_for_loggers(cfg, next_reset=NEXT_RESET)
         self.assertFalse(hold)

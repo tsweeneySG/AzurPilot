@@ -28,7 +28,7 @@ from module.handler.assets import AUTO_SEARCH_SET_MOB, AUTO_SEARCH_SET_BOSS, \
 from module.handler.info_handler import InfoHandler
 from module.logger import logger
 from module.map.assets import *
-from module.map.fleet_bar import FleetBarDetector
+from module.map.fleet_bar import FleetBarDetector, dropdown_ready
 from module.ui_white.assets import POPUP_CONFIRM_WHITE
 
 
@@ -252,7 +252,9 @@ class FleetOperator:
         """
         main = self.main
         click_timer = Timer(3, count=6)
-        infobar_ignore = Timer(1, count=2)
+        # 6 支舰队的菜单展开时经常先露出下面两行。行号按位置算，
+        # 这两行是 5 和 6，不是 1 和 2。没看到目标行之前不要点。
+        menu_wait = Timer(3, count=6)
         while 1:
             if skip_first_screenshot:
                 skip_first_screenshot = False
@@ -267,14 +269,15 @@ class FleetOperator:
                 else:
                     self.open()
 
-            # half loaded infobar may cover one option
-            # mute warnings within infobar_ignore, as infobar animation will end quickly
-            if len(self.options) not in (2, 6):
-                if infobar_ignore.started() and infobar_ignore.reached():
+            if not dropdown_ready(self.options, index):
+                if not menu_wait.started():
+                    menu_wait.start()
+                if menu_wait.reached():
                     logger.warning(self.options_error)
-                else:
-                    infobar_ignore.start()
-                    continue
+                    logger.error(f'[地图-编队] 下拉菜单未展开到舰队 {index}，放弃点击')
+                    self.close()
+                    break
+                continue
 
             button = self.options.get(index)
             if button is None:

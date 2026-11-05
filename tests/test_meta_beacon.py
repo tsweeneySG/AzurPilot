@@ -209,6 +209,46 @@ class MetaBeaconTests(unittest.TestCase):
                 saved = json.loads(path.read_text(encoding='utf-8'))
                 self.assertIsNone(saved['OpsiAshBeacon']['OpsiAshBeacon']['AssistRequestState'])
 
+    def test_missing_entrance_dismisses_drawer_with_a_button(self):
+        runner = OpsiAshBeacon.__new__(OpsiAshBeacon)
+        clicks = []
+        runner.device = SimpleNamespace(screenshot=Mock(), click=lambda button: clicks.append(button))
+        runner._sweeney_bridge_enabled = Mock(return_value=True)
+        runner._try_sweeney_current_page = Mock(return_value='page_reward')
+        seen = {'n': 0}
+
+        def equivalent(bridged, page):
+            seen['n'] += 1
+            return seen['n'] == 1
+
+        runner._ui_pages_equivalent = equivalent
+        runner.get_interval_timer = Mock(return_value=SimpleNamespace(
+            reached=Mock(return_value=True), reset=Mock()))
+        self.assertTrue(runner._dismiss_commission_drawer())
+        self.assertEqual(len(clicks), 1)
+        x1, y1, x2, y2 = clicks[0].button
+        self.assertLessEqual(x1, 1050)
+        self.assertGreaterEqual(x2, 1050)
+        self.assertLessEqual(y1, 360)
+        self.assertGreaterEqual(y2, 360)
+
+    def test_assist_gives_up_when_meta_entrance_is_missing(self):
+        runner = AshBeaconAssist.__new__(AshBeaconAssist)
+        runner.device = SimpleNamespace(screenshot=Mock(), click=Mock())
+        runner._in_meta_assist_page = Mock(return_value=False)
+        runner.handle_map_event = Mock(return_value=False)
+        runner.appear_then_click = Mock(return_value=False)
+        runner.appear = Mock(return_value=False)
+        with patch('module.os_ash.meta.Timer') as timer:
+            timer.return_value.start.return_value.reached.return_value = True
+            self.assertFalse(runner._ensure_meta_assist_page())
+        runner.device.screenshot.assert_not_called()
+        runner._attack_meta = Mock()
+        runner.handle_ash_equipment_after = Mock()
+        runner._ensure_meta_assist_page = Mock(return_value=False)
+        self.assertFalse(runner._begin_meta_assist())
+        runner._attack_meta.assert_not_called()
+
 
 class MetaBeaconMigrationTests(unittest.TestCase):
     def test_legacy_switch_migrates_without_changing_strategy(self):

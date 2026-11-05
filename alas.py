@@ -1839,6 +1839,10 @@ class AzurLaneAutoScript:
         from module.island.island_plan import IslandPlan
         IslandPlan(config=self.config, device=self.device).run()
 
+    def island_management(self):
+        from module.island.island_management import IslandManagement
+        IslandManagement(config=self.config, device=self.device).run()
+
     def island_cargo_preparation(self):
         from module.island.island_cargo_preparation import IslandCargoPreparation
         IslandCargoPreparation(config=self.config, device=self.device).run()

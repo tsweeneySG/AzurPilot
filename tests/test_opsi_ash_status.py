@@ -60,6 +60,17 @@ class AshDigitCounterTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(self.read(text), (0, 0, 0))
 
+    def test_jp_fragmented_slash_is_accepted_and_extra_digit_is_not(self):
+        # 3_asami 2026-11-02 10:17 地图持有量 180/200。斜杠是三段矮笔画，
+        # 旧校验把字形数算成 6，整段读数被丢掉，信标任务排到次日。
+        image = np.zeros((720, 1280, 3), dtype=np.uint8)
+        source = load_image(str(FIXTURES / 'map_180_200_white.png'))
+        x1, y1, x2, y2 = ASH_COLLECT_STATUS.area
+        image[y1:y2, x1:x2] = source
+        self.assertEqual(self.read('180/200', image=image, letter=WHITE), (180, 20, 200))
+        self.assertEqual(self.read('80/200', image=image, letter=WHITE), (0, 0, 0))
+        self.assertEqual(self.read('1180/200', image=image, letter=WHITE), (0, 0, 0))
+
     def test_white_hundred_from_existing_resource_is_accepted(self):
         image = load_image('assets/cn/os_ash/ASH_COLLECT_STATUS.png')
         self.assertEqual(self.read('100/100', image=image, letter=WHITE), (100, 0, 100))
@@ -124,6 +135,19 @@ class AshTaskDispatchTests(unittest.TestCase):
         self.assertFalse(runner.handle_ash_beacon_attack())
         self.assertTrue(runner._ash_fully_collected)
         self.task_call.assert_not_called()
+
+    def test_jp_fragmented_slash_still_dispatches(self):
+        image = np.zeros((720, 1280, 3), dtype=np.uint8)
+        source = load_image(str(FIXTURES / 'map_180_200_white.png'))
+        x1, y1, x2, y2 = ASH_COLLECT_STATUS.area
+        image[y1:y2, x1:x2] = source
+        self.model.atomic_ocr_for_single_lines.side_effect = [
+            model_output('180/200'), model_output('180/200'),
+        ]
+        runner = self.runner()
+        runner.device.image = image
+        self.assertTrue(runner.handle_ash_beacon_attack())
+        self.task_call.assert_called_once_with(task='OpsiAshBeacon')
 
     def test_valid_hundred_still_dispatches(self):
         self.model.atomic_ocr_for_single_lines.side_effect = [
