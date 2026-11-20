@@ -509,8 +509,7 @@ class TestSortieStatus(unittest.TestCase):
             LV_TRIGGERED = False
             Error_OnePushConfig = 'provider: telegram'
 
-        original = ss.fetch_sortie_status
-        ss.fetch_sortie_status = lambda config, timeout=8.0: {
+        capped = {
             'source': 'regular',
             'fleets': [{
                 'id': 1,
@@ -524,6 +523,10 @@ class TestSortieStatus(unittest.TestCase):
                 }],
             }],
         }
+        original_fetch = ss.fetch_sortie_status
+        original_advance = ss.advance_formation_leveling
+        ss.fetch_sortie_status = lambda config, timeout=8.0: capped
+        ss.advance_formation_leveling = lambda config, timeout=25.0: True
         try:
             cfg = Cfg()
             with patch('module.notify.handle_notify', return_value=True) as notify:
@@ -542,7 +545,73 @@ class TestSortieStatus(unittest.TestCase):
                 'AzurPilot <3_asami> level cap reached',
             )
         finally:
-            ss.fetch_sortie_status = original
+            ss.fetch_sortie_status = original_fetch
+            ss.advance_formation_leveling = original_advance
+
+    def test_level_cap_cleared_by_formation_advance(self):
+        from unittest.mock import patch
+
+        from module.alas_bridge import sortie_status as ss
+
+        class Cfg:
+            config_name = '3_asami'
+            Optimization_SweeneyBridge = True
+            StopCondition_LevelCap = True
+            LV_TRIGGERED = True
+            Scheduler_Enable = False
+            Error_OnePushConfig = 'provider: telegram'
+
+        capped = {
+            'source': 'regular',
+            'fleets': [{
+                'id': 1,
+                'ships': [{
+                    'name': 'John Rodgers',
+                    'level': 70,
+                    'max_level': 70,
+                    'hard_cap': True,
+                    'soft_cap': False,
+                    'at_cap': True,
+                }],
+            }],
+        }
+        clear = {
+            'source': 'regular',
+            'fleets': [{
+                'id': 1,
+                'ships': [{
+                    'name': 'Cassiopeia',
+                    'level': 1,
+                    'max_level': 70,
+                    'hard_cap': False,
+                    'soft_cap': False,
+                    'at_cap': False,
+                }],
+            }],
+        }
+        calls = {'n': 0}
+
+        def fetch(config, timeout=8.0):
+            calls['n'] += 1
+            if calls['n'] == 1:
+                return capped
+            return clear
+
+        original_fetch = ss.fetch_sortie_status
+        original_advance = ss.advance_formation_leveling
+        ss.fetch_sortie_status = fetch
+        ss.advance_formation_leveling = lambda config, timeout=25.0: True
+        try:
+            cfg = Cfg()
+            with patch('module.notify.handle_notify', return_value=True) as notify:
+                self.assertFalse(ss.level_cap_triggered(cfg))
+            self.assertFalse(cfg.LV_TRIGGERED)
+            self.assertTrue(cfg.Scheduler_Enable)
+            self.assertEqual(notify.call_count, 0)
+            self.assertGreaterEqual(calls['n'], 2)
+        finally:
+            ss.fetch_sortie_status = original_fetch
+            ss.advance_formation_leveling = original_advance
 
     def test_level_cap_skipped_without_bridge(self):
         from module.alas_bridge.sortie_status import level_cap_triggered

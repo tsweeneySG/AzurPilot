@@ -428,8 +428,39 @@ def notify_level_cap(config, ship: Optional[dict] = None, stage: str = '') -> bo
         return False
 
 
+def advance_formation_leveling(config, timeout: float = 25.0) -> bool:
+    """Run the F7 formation pass. True when the bridge ack is ok."""
+    try:
+        gs = GameState.from_config(config)
+        rpc = BridgeRpc(gs)
+        ack = rpc.send('advance_formation_leveling', {}, timeout=timeout)
+    except Exception as e:
+        _log(f'Sweeney formation advance failed: {e}', warning=True)
+        return False
+    if not isinstance(ack, dict) or not ack.get('ok'):
+        err = ack.get('error') if isinstance(ack, dict) else ack
+        _log(f'Sweeney formation advance failed: {err}', warning=True)
+        return False
+    return True
+
+
+def _commit_level_cap(config, ship: dict) -> bool:
+    _log(f'Level cap reached: {level_cap_ship_line(ship)}')
+    try:
+        config.LV_TRIGGERED = True
+    except Exception:
+        pass
+    notify_level_cap(config, ship)
+    return True
+
+
 def level_cap_triggered(config) -> bool:
-    """True when SweeneyBridge + StopCondition.LevelCap and a sortie ship is at cap."""
+    """True when a sortie ship is still at cap after the F7 pass.
+
+    On a live cap, run ``advance_formation_leveling`` and read the roster
+    again. A clear roster leaves the task enabled and does not notify.
+    RPC failure or a ship that is still at cap commits the stop.
+    """
     if not getattr(config, 'Optimization_SweeneyBridge', False):
         return False
     if not getattr(config, 'StopCondition_LevelCap', False):
@@ -438,10 +469,22 @@ def level_cap_triggered(config) -> bool:
     ship = any_at_cap(status)
     if ship is None:
         return False
-    _log(f'Level cap reached: {level_cap_ship_line(ship)}')
-    try:
-        config.LV_TRIGGERED = True
-    except Exception:
-        pass
-    notify_level_cap(config, ship)
-    return True
+    _log(f'Level cap reached: {level_cap_ship_line(ship)}; trying F7')
+    if not advance_formation_leveling(config):
+        return _commit_level_cap(config, ship)
+    status2 = fetch_sortie_status(config)
+    if status2 is None:
+        return _commit_level_cap(config, ship)
+    ship2 = any_at_cap(status2)
+    if ship2 is None:
+        _log('Level cap cleared by F7, continuing')
+        try:
+            config.LV_TRIGGERED = False
+        except Exception:
+            pass
+        try:
+            config.Scheduler_Enable = True
+        except Exception:
+            pass
+        return False
+    return _commit_level_cap(config, ship2)

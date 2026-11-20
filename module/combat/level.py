@@ -73,15 +73,12 @@ class Level(ModuleBase):
         if not getattr(self.config, 'StopCondition_LevelCap', False):
             return False
         if after_battle:
-            from module.alas_bridge.sortie_status import any_at_cap, fetch_sortie_status
+            from module.alas_bridge.sortie_status import any_at_cap, fetch_sortie_status, level_cap_ship_line
             status = fetch_sortie_status(self.config)
             ship = any_at_cap(status)
             if ship is not None:
-                from module.alas_bridge.sortie_status import level_cap_ship_line, notify_level_cap
+                # 只记录。停止、F7 换船和 Telegram 都在 level_cap_triggered 里决定。
                 logger.info(f'[等级-上限] {level_cap_ship_line(ship)}')
-                self.config.LV_TRIGGERED = True
-                # 战役循环退出前就会看到上限。在这里推送，避免退出被打断时 Telegram 收不到。
-                notify_level_cap(self.config, ship)
         return True
 
     @Config.when(SERVER='en')

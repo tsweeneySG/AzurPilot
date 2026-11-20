@@ -191,6 +191,17 @@ class MailWhite(UI):
             return True
         return False
 
+    def _mail_confirmation_confirm(self):
+        """点击邮件确认窗的 Confirm。
+
+        2026-11 客户端的批量领取/删除走 MailConfirmationWindow，
+        不是 MsgboxMgr，白字 Confirm 对不上 POPUP_CONFIRM_WHITE。
+
+        Returns:
+            bool: 是否点到确认按钮。
+        """
+        return self.appear_then_click(MAIL_CONFIRMATION_CONFIRM, offset=(20, 20), interval=2)
+
     def _mail_claim_execute(self, skip_first_screenshot=True):
         """
         执行邮件批量领取。
@@ -205,6 +216,7 @@ class MailWhite(UI):
         self.handle_info_bar()
         self.interval_clear([
             MAIL_BATCH_CLAIM,
+            MAIL_CONFIRMATION_CONFIRM,
             GET_ITEMS_1,
             GET_ITEMS_2,
         ])
@@ -220,6 +232,10 @@ class MailWhite(UI):
             # End
             if claimed and self.appear(MAIL_BATCH_CLAIM, offset=(30, 30)):
                 break
+            # MailConfirmationWindow 盖住领取按钮，先点确认，避免反复点到底下的 Claim Rewards
+            if self._mail_confirmation_confirm():
+                claimed = True
+                continue
             # Click
             if not claimed and self.appear_then_click(MAIL_BATCH_CLAIM, offset=(30, 30), interval=3):
                 continue
@@ -244,7 +260,8 @@ class MailWhite(UI):
         """
         self.handle_info_bar()
         self.interval_clear([
-            MAIL_BATCH_DELETE
+            MAIL_BATCH_DELETE,
+            MAIL_CONFIRMATION_CONFIRM,
         ])
         self.popup_interval_clear()
 
@@ -258,6 +275,9 @@ class MailWhite(UI):
             # End
             if deleted and self.appear(MAIL_BATCH_DELETE, offset=(30, 30)):
                 break
+            if self._mail_confirmation_confirm():
+                deleted = True
+                continue
             # Click
             if not deleted and self.appear_then_click(MAIL_BATCH_DELETE, offset=(30, 30), interval=3):
                 continue

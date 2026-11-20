@@ -168,7 +168,7 @@ module/
 
 - **BattlePass**：`page_reward` 红点进入，循环领取（含 META 舰船锁定确认弹窗）。
 - **DataKey**：在作战档案页收集数据钥匙，背包满时除非 `DataKey_ForceCollect` 否则跳过。
-- **MailWhite**：必须在白色主题主页进入邮件，按 `Mail_ClaimMerit/ClaimMaintenance/ClaimTradeLicense` 分三轮领取并按 `Mail_DeleteCollected` 清理。
+- **MailWhite**：必须在白色主题主页进入邮件，按 `Mail_ClaimMerit/ClaimMaintenance/ClaimTradeLicense` 分三轮领取并按 `Mail_DeleteCollected` 清理。批量领取/删除会弹出 `MailConfirmationWindow`（不是 `MsgboxMgr`），确认钮是 `MAIL_CONFIRMATION_CONFIRM`。
 - **SupplyPack**：石油低于 21000 时按 `SupplyPack_DayOfWeek` 在指定服务器日购买免费周补给包。
 
 ### 小游戏（module/minigame）
