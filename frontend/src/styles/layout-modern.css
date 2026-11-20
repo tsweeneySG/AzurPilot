@@ -99,7 +99,8 @@
 :root[data-theme='modern-dark'] {--instance-tab-divider-color: rgba(255, 255, 255, .26)}
 
 /* 「主页」链接：与标签同高、同一条基准线；纵向内边距归零，选中框因此不会探出栏外 */
-.modern-page-nav .breadcrumb .topbar-actions > a {
+.modern-page-nav .breadcrumb .topbar-actions > a,
+.modern-page-nav .breadcrumb .topbar-actions > .topbar-bulk-toggle {
   padding-top: 0;
   padding-bottom: 0;
   height: var(--instance-tab-height);

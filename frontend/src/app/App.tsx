@@ -295,6 +295,7 @@ function ModernShell({children, instance, pageTitle, onCreate, updateAvailable, 
     if (failed === 0) notify(ui(bulk === 'start' ? 'scheduler.started' : 'scheduler.stoppedNotice'))
     setBulkBusy(false)
   }
+  /* 一键启停必须是顶栏的直接子项。放进 topbar-actions-buttons 会被宽度 0 的悬停条裁掉。 */
   const bulkToggle = !allowBulkToggle ? null : <button
     type="button"
     className="topbar-bulk-toggle icon-button"
@@ -306,7 +307,7 @@ function ModernShell({children, instance, pageTitle, onCreate, updateAvailable, 
   >{bulkBusy ? <LoaderCircle size={17}/> : bulk === 'start' ? <CirclePlay size={17}/> : <CirclePause size={17}/>}</button>
   const tabNav = <>
     <span className="topbar-actions">
-      {bulkToggle && <><span className="topbar-actions-hover"/><span className="topbar-actions-buttons">{bulkToggle}</span></>}
+      {bulkToggle}
       <Link to="/settings" aria-label={ui('nav.settings')} title={ui('nav.settings')}><Settings2 size={16}/></Link>
     </span>
     <InstanceTabs onCreate={onCreate}/>
