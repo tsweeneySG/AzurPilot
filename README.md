@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="doc/logo.webp" alt="AzurPilot Logo" width="400">
+  <img src="docs/images/logo.webp" alt="AzurPilot Logo" width="400">
 </p>
 
 <p align="center">
@@ -63,7 +63,7 @@ AzurPilot 是基于 AzurLaneAutoScript 修改而来的碧蓝航线自动化辅�
 ## GUI 预览
 
 <div align="center">
-  <img src="doc/GUI.png" alt="GUI Preview" width="800">
+  <img src="docs/images/GUI.png" alt="GUI Preview" width="800">
 </div>
 
 ## 快速开始
@@ -86,6 +86,8 @@ uv run python gui.py
 ```
 
 启动后浏览器访问 `http://127.0.0.1:25548` 进入 WebUI。
+
+开发调试可用 `uv run python gui.py -r`：监听项目内 `.py` 变更，稳定后自动重建 WebUI（会中断当前运行的实例，请勿在挂机时使用）。详见 [WebUI 启动器文档](docs/modules/entry/gui.md)。
 
 ## 重要说明
 
@@ -153,10 +155,13 @@ MCP 复用 WebUI 的密码（`--key` / `config/deploy.yaml` 的 `Password`），
 
 ### 本地连接配置
 
+本服务是远程 HTTP 服务（SSE 传输），不是本地启动的 stdio 命令，因此配置里填 `url` 而不是 `command` / `args`；`mcpServers` 下的键名可自定义。部分客户端会默认优先尝试 HTTP 传输，此时需显式加上 `"type": "sse"`。
+
 ```json
 {
   "mcpServers": {
-    "alas": {
+    "azurpilot": {
+      "type": "sse",
       "url": "http://127.0.0.1:25548/mcp/sse",
       "headers": {
         "Authorization": "Bearer <WebUI 密码>"
@@ -171,7 +176,8 @@ MCP 复用 WebUI 的密码（`--key` / `config/deploy.yaml` 的 `Password`），
 ```json
 {
   "mcpServers": {
-    "alas": {
+    "azurpilot": {
+      "type": "sse",
       "url": "http://[IP_ADDRESS]:25548/mcp/sse",
       "headers": {
         "Authorization": "Bearer <WebUI 密码>"
@@ -189,45 +195,49 @@ MCP 复用 WebUI 的密码（`--key` / `config/deploy.yaml` 的 `Password`），
 
 ### MCP 工具列表
 
-当前可用 MCP 工具共 18 个。
+默认端点提供 25 个 `azurpilot_` 工具；旧工具名只在显式创建的兼容端点中保留。
 
 | 类别 | 工具名称 | 功能 |
 | --- | --- | --- |
-| 实例管理 | `list_instances` | 列出所有实例 |
-| | `get_status` | 获取实例状态 |
-| | `start_instance` | 启动实例 |
-| | `stop_instance` | 停止实例 |
-| 任务管理 | `list_tasks` | 列出所有任务 |
-| | `get_task_help` | 获取任务帮助 |
-| | `trigger_task` | 触发任务 |
-| | `get_scheduler_queue` | 获取调度队列 |
-| | `clear_scheduler_queue` | 清空调度队列 |
-| 监控与信息 | `get_current_running_task` | 获取当前运行任务 |
-| | `get_resources` | 获取资源状态 |
-| | `get_config` | 获取实例配置 |
-| | `get_recent_logs` | 获取最近日志 |
-| | `get_screenshot` | 获取截图 |
-| 配置管理 | `update_config` | 更新配置 |
-| 维护工具 | `restart_emulator` | 重启模拟器 |
-| | `restart_adb` | 重启 ADB |
-| | `update_alas` | 更新 AzurPilot |
+| 实例管理 | `azurpilot_list_instances` | 列出实例及进程状态、当前任务 |
+| | `azurpilot_get_context` | 一次获取状态、当前任务、调度/资源摘要、最近错误与设备能力 |
+| | `azurpilot_start_instance` / `azurpilot_stop_instance` | 启动 / 停止实例工作进程 |
+| 任务发现 | `azurpilot_search_tasks` | 按任务标识、中文名、参数文案查找任务；支持常见口语别名 |
+| | `azurpilot_get_task_schema` | 读取参数定义、默认值、可选值与可写性 |
+| 配置与调度 | `azurpilot_get_config` | 按任务或路径读取配置，返回 revision |
+| | `azurpilot_patch_config` | 原子批量修改，校验 revision，支持 dry_run |
+| | `azurpilot_set_task_schedule` | 设置任务启用与下次执行时间（只表示已安排） |
+| 日志与观测 | `azurpilot_get_logs` | 按游标、级别、关键词读取有限日志 |
+| 统计数据 | `azurpilot_get_statistics` | 读取统计页与概览页的指标、时间线与表格；覆盖概览资源、资源趋势、大世界、委托、舰船经验、掉落、科研、仓库与资源流向 |
+| | `azurpilot_get_statistics_schema` | 统计字段目录：分类、指标键、单位、说明与筛选参数 |
+| | `azurpilot_observe_device` | 采集截图与帧尺寸、方向、时间等元数据 |
+| 设备控制 | `azurpilot_acquire_device_control` / `azurpilot_release_device_control` | 调度器停止后接管设备，取得/释放 `lease_id`（默认 30 分钟，调用续期） |
+| | `azurpilot_click` / `azurpilot_swipe` / `azurpilot_long_press` | 坐标点击、滑动、长按；需 `lease_id`，分别回报命令下发与画面变化 |
+| | `azurpilot_input_text` / `azurpilot_press_key` | 输入文本（不自动回车）、发送按键；需 `lease_id` |
+| | `azurpilot_adb_shell` | 执行白名单内的只读 ADB 诊断命令（如 `wm size`、`dumpsys battery`） |
+| 操作确认 | `azurpilot_get_operation` | 按 operation_id 查询写操作终态 |
+| 维护工具 | `azurpilot_restart_emulator` | 重启实例绑定的模拟器 |
+| | `azurpilot_restart_adb` | 重启全局 ADB 服务 |
+| | `azurpilot_update_application` | 请求应用更新（已接受 ≠ 已完成） |
+
+所有工具都带 `inputSchema` / `outputSchema`、结构化结果与稳定错误码；写操作可用 `request_id` 去重，超时后先用 `azurpilot_get_operation` 查询，不要重复提交。详见 [MCP 服务文档](docs/modules/entry/mcp-server.md)。
 
 ## 多平台启动器
 
 > 📥 从 [AzurPilot 官网](https://azurpilot.com/download.html) 下载 Windows / macOS / Linux 启动器
 
 <div align="center">
-  <img src="doc/loading.png" alt="loading" width="500" />
+  <img src="docs/images/loading.png" alt="loading" width="500" />
   <p>启动加载界面</p>
   <table align="center">
     <tr>
-      <td align="center"><img src="doc/GUI.png" alt="新版" width="260"><br>新版</td>
-      <td align="center"><img src="doc/GUI-legacy.webp" alt="旧版" width="260"><br>旧版</td>
-      <td align="center"><img src="doc/GUI-minimal.png" alt="简约" width="260"><br>简约</td>
+      <td align="center"><img src="docs/images/GUI.png" alt="新版" width="260"><br>新版</td>
+      <td align="center"><img src="docs/images/GUI-legacy.webp" alt="旧版" width="260"><br>旧版</td>
+      <td align="center"><img src="docs/images/GUI-minimal.png" alt="简约" width="260"><br>简约</td>
     </tr>
   </table>
   <p>Windows 客户端界面</p>
-  <img src="doc/macGUI.png" alt="macGUI" width="500" />
+  <img src="docs/images/macGUI.png" alt="macGUI" width="500" />
   <p>Mac 客户端界面</p>
 </div>
 
@@ -329,7 +339,7 @@ uv run -m module.config.config_updater
 
 <p align="center">
   <a href="https://afdian.com/a/miaonaa">
-    <img src="doc/afdian.jfif" alt="爱发电" width="200">
+    <img src="docs/images/afdian.jfif" alt="爱发电" width="200">
   </a>
   <br>
   <b>支持本项目（用于支付服务器费用或训练新模型等？）</b>

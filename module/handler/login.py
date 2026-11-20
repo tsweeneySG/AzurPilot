@@ -147,23 +147,15 @@ class LoginHandler(UI):
             else:
                 confirm_timer.reset()
 
-            # 维护公告盖在登录键上。先关公告，避免点到屏幕中部把弹窗留住。
-            if self.appear_then_click(MAINTENANCE_ANNOUNCE, offset=(30, 30), interval=5):
-                continue
-            if self.appear_then_click(LOGIN_GAME_UPDATE, offset=(30, 30), interval=5):
+            # 广告、维护公告和更新都盖在登录键上，先关掉再点登录。
+            if self._dismiss_login_covers():
                 continue
             # 登录处理。点过「进入」仍不在主界面时停手，交给调度器推迟队列，
             # 而不是连点到点击上限再把游戏杀掉（Asami/Margaret 2026-09-24）。
             if self.handle_bilibili_login_record():
                 continue
             if self.match_template_color(LOGIN_CHECK, offset=(30, 30), interval=5):
-                if login_success:
-                    login_taps += 1
-                    if login_taps > 3:
-                        logger.warning('[登录] 多次点击登录键仍未进入主界面')
-                        raise GameTooManyClickError(
-                            '[设备-点击] 按钮点击次数过多: LOGIN_CHECK'
-                        )
+                login_taps = self._count_login_tap(login_success, login_taps)
                 self.device.click(LOGIN_CHECK)
                 if not login_success:
                     logger.info('[登录] 登录成功')
@@ -180,6 +172,9 @@ class LoginHandler(UI):
                 continue
             if self.appear(EVENT_LIST_CHECK, offset=(30, 30), interval=5):
                 self.device.click(BACK_ARROW)
+                continue
+            # 上游在这里插入新的登录遮挡；具体弹窗放在 _dismiss_login_covers。
+            if self._dismiss_login_covers():
                 continue
             if server.server == 'cn' and not login_success:
                 if self.handle_cn_user_agreement():
@@ -213,6 +208,81 @@ class LoginHandler(UI):
     _channel_float_timer = Timer(5, count=3)
 
     _user_agreement_timer = Timer(1, count=2)
+
+    # MuMu 广告右上角 X 按钮的搜索区域
+    EMULATOR_AD_SEARCH_AREA = (880, 30, 1280, 180)
+
+    def _dismiss_login_covers(self):
+        """关掉盖住登录键的模拟器广告、维护公告和游戏更新。
+
+        广告在最上层。这些弹窗的点击点都在屏幕中部，必须在点登录键之前处理。
+        登录循环里留一行调用，新的遮挡加在这里。
+
+        Returns:
+            bool: 本帧是否点掉了一个遮挡。
+        """
+        if self.handle_emulator_ad():
+            return True
+        if self.appear_then_click(MAINTENANCE_ANNOUNCE, offset=(30, 30), interval=5):
+            return True
+        if self.appear_then_click(LOGIN_GAME_UPDATE, offset=(30, 30), interval=5):
+            return True
+        return False
+
+    @staticmethod
+    def _count_login_tap(login_success, login_taps):
+        """点过进入仍停在登录画面时计数，超过 3 次交给调度器推迟，不再把游戏杀掉。
+
+        Args:
+            login_success (bool): 本轮是否已经点过登录键。
+            login_taps (int): 已经重复点击的次数。
+
+        Returns:
+            int: 更新后的重复点击次数。
+
+        Raises:
+            GameTooManyClickError: 重复点击超过 3 次。
+        """
+        if not login_success:
+            return login_taps
+        login_taps += 1
+        if login_taps > 3:
+            logger.warning('[登录] 多次点击登录键仍未进入主界面')
+            raise GameTooManyClickError(
+                '[设备-点击] 按钮点击次数过多: LOGIN_CHECK'
+            )
+        return login_taps
+
+    def handle_emulator_ad(self, interval=3):
+        """关闭 MuMu 模拟器在游戏启动时弹出的全屏广告。
+
+        MuMu（国际版）启动应用时可能盖上一层全屏广告，右上角是 X 关闭按钮，
+        广告内容会变，X 按钮不变。广告挡住更新/维护弹窗时，登录循环识别不到
+        LOGIN_GAME_UPDATE，每次都等待超时后重启游戏，广告又出现，直到它恰好没出现为止
+        （国际服 2026-11-07 卡了约 3.5 小时，10-25、11-03 也出现过）。
+
+        Args:
+            interval (int | float): 两次点击的最短间隔（秒）。
+
+        Returns:
+            bool: 是否点击了关闭。
+        """
+        timer = self.get_interval_timer(TEMPLATE_EMULATOR_AD, interval=interval)
+        if not timer.reached():
+            return False
+        image = self.image_crop(self.EMULATOR_AD_SEARCH_AREA, copy=False)
+        # X 按钮是半透明底，背景不同相似度在 0.85~1.0，其他画面不超过 0.41
+        similarity, button = TEMPLATE_EMULATOR_AD.match_result(image)
+        if similarity < 0.7:
+            return False
+
+        sx, sy = self.EMULATOR_AD_SEARCH_AREA[:2]
+        x1, y1, x2, y2 = button.area
+        area = (x1 + sx, y1 + sy, x2 + sx, y2 + sy)
+        logger.info(f'[登录] 检测到模拟器广告（相似度 {similarity:.2f}），点击关闭')
+        self.device.click(Button(area=area, color=(), button=area, name='EMULATOR_AD_CLOSE'))
+        timer.reset()
+        return True
 
     def handle_cn_user_agreement(self):
         """处理国服用户协议与登录确认弹窗。

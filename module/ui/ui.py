@@ -1477,6 +1477,31 @@ class UI(InfoHandler):
             return True
         return False
 
+    def _handle_ui_login_check(self):
+        """登录键不是普通弹窗。出击中不点；连点三次仍在登录页就交给调度器推迟。
+
+        Returns:
+            bool: 本帧是否点了登录键。
+        """
+        if not self.appear(LOGIN_CHECK, offset=(30, 30)):
+            self._ui_login_check_clicks = 0
+            return False
+        # 出击中主界面模板会误中登录键，点下去会把海图点出来。
+        if self._sortie_chapter_active():
+            logger.info('[UI] 出击中忽略 LOGIN_CHECK，避免把主界面点到海图上')
+            return False
+        # 连点会打满点击上限并重启游戏（Asami Commission / Margaret Research，2026-09-24）。
+        n = getattr(self, '_ui_login_check_clicks', 0)
+        if n >= 3:
+            logger.warning('[UI] 登录键连点仍未离开登录页')
+            raise GameTooManyClickError(
+                '[设备-点击] 按钮点击次数过多: LOGIN_CHECK'
+            )
+        if self.appear_then_click(LOGIN_CHECK, offset=(30, 30), interval=3):
+            self._ui_login_check_clicks = n + 1
+            return True
+        return False
+
     def ui_additional(self, get_ship=True):
         """处理 UI 切换过程中出现的各种弹窗。
 
@@ -1574,26 +1599,10 @@ class UI(InfoHandler):
                 logger.warning("[UI-额外] 撤退按钮已不存在")
                 self.interval_reset(WITHDRAW)
 
-        # 登录画面不是普通弹窗。连点 LOGIN_CHECK 会打满点击上限并重启游戏
-        # （Asami Commission / Margaret Research，2026-09-24）。点几次仍在
-        # 登录页就停，交给调度器推迟已到期任务。
         if self.handle_bilibili_login_record():
             return True
-        if self.appear(LOGIN_CHECK, offset=(30, 30)):
-            if self._sortie_chapter_active():
-                logger.info('[UI] 出击中忽略 LOGIN_CHECK，避免把主界面点到海图上')
-            else:
-                n = getattr(self, '_ui_login_check_clicks', 0)
-                if n >= 3:
-                    logger.warning('[UI] 登录键连点仍未离开登录页')
-                    raise GameTooManyClickError(
-                        '[设备-点击] 按钮点击次数过多: LOGIN_CHECK'
-                    )
-                if self.appear_then_click(LOGIN_CHECK, offset=(30, 30), interval=3):
-                    self._ui_login_check_clicks = n + 1
-                    return True
-        else:
-            self._ui_login_check_clicks = 0
+        if self._handle_ui_login_check():
+            return True
         if self.appear_then_click(MAINTENANCE_ANNOUNCE, offset=(30, 30), interval=3):
             return True
         # rerun event select page

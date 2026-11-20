@@ -1438,7 +1438,7 @@ class Fleet(SubmarineAdvanced, Camera, AmbushHandler):
         logger.attr('距Boss距离', distance_to_boss)
 
         if np.sum(np.abs(np.subtract(self.fleet_submarine_location, boss))) <= distance_to_boss:
-            logger.info('[地图-潜艇] Boss已在狩猎区域内')
+            logger.info('[地图-潜艇] Boss已在狩猎范围内')
             self.find_path_initial()
             return False
         else:
@@ -1479,7 +1479,7 @@ class Fleet(SubmarineAdvanced, Camera, AmbushHandler):
         logger.attr('距Boss距离', distance_to_boss)
 
         if np.sum(np.abs(np.subtract(self.fleet_submarine_location, boss))) <= distance_to_boss:
-            logger.info('[地图-潜艇] Boss已在狩猎区域内')
+            logger.info('[地图-潜艇] Boss已在狩猎范围内')
             self.find_path_initial()
             return False
         else:

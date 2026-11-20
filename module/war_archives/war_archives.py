@@ -181,11 +181,11 @@ class CampaignWarArchives(CampaignRun, CampaignBase):
         if self.appear(WAR_ARCHIVES_CAMPAIGN_CHECK, offset=(20, 20)):
             current, _remain, total = DATA_KEY_CAMPAIGN.ocr(self.device.image)
             logger.info(
-                f'[作战档案] 数据密钥: {current} / {total}, '
+                f'[作战档案] 档案秘钥: {current} / {total}, '
                 f'本图消耗: {LEGACY_REMASTER_TICKET_COST}'
             )
             if data_keys_insufficient(current, LEGACY_REMASTER_TICKET_COST):
-                logger.hr('[作战档案] 数据密钥不足以进入本图')
+                logger.hr('[作战档案] 档案秘钥不足以进入本图')
                 self.config.task_delay(server_update=True)
                 return True
 

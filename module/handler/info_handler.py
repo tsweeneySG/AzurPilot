@@ -29,7 +29,8 @@ from module.logger import logger
 from module.map.assets import MAP_PREPARATION, MAP_PREPARATION_HARD
 from module.os_handler.assets import CLICK_SAFE_AREA as OS_CLICK_SAFE_AREA
 from module.ui.assets import BACK_ARROW
-from module.ui_white.assets import POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE, POPUP_SINGLE_WHITE
+from module.ui_white.assets import (POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE, POPUP_CONFIRM_WHITE_BOLD,
+                                    POPUP_SINGLE_WHITE)
 
 
 def info_letter_preprocess(image):
@@ -169,6 +170,13 @@ class InfoHandler(ModuleBase):
             self.device.click(POPUP_CONFIRM_WHITE)
             POPUP_CONFIRM_WHITE.name = POPUP_CONFIRM_WHITE.name[:-len(name) - 1]
             return True
+        # 国际服新版白色弹窗的「Confirm」为粗体（如邮件「No mail found meeting these conditions.」），
+        # 旧的细体模板认不出；其他服的同名图沿用原确认图
+        if self.appear(POPUP_CONFIRM_WHITE_BOLD, offset=offset, interval=interval):
+            POPUP_CONFIRM_WHITE_BOLD.name = POPUP_CONFIRM_WHITE_BOLD.name + '_' + name
+            self.device.click(POPUP_CONFIRM_WHITE_BOLD)
+            POPUP_CONFIRM_WHITE_BOLD.name = POPUP_CONFIRM_WHITE_BOLD.name[:-len(name) - 1]
+            return True
         return False
 
     def handle_popup_cancel(self, name='', offset=None, interval=2):
@@ -247,7 +255,7 @@ class InfoHandler(ModuleBase):
         """清除常用弹窗按钮的点击冷却间隔。"""
         self.interval_clear([
             POPUP_CANCEL, POPUP_CONFIRM,
-            POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE,
+            POPUP_CANCEL_WHITE, POPUP_CONFIRM_WHITE, POPUP_CONFIRM_WHITE_BOLD,
         ])
 
     _hot_fix_check_wait = Timer(6)
@@ -335,22 +343,11 @@ class InfoHandler(ModuleBase):
             return False
 
         # calculate 模式保底：正常不应出现红脸弹窗
-        # 若出现则可能是ALAS计算错误或用户手动操作，需异常处理
+        # 若出现则可能是AzurPilot计算错误或用户手动操作，需异常处理
         if self.emotion.is_calculate and not self.emotion.is_ignore:
             if self.handle_popup_cancel('IGNORE_LOW_EMOTION'):
                 logger.warning('[心情-保底] 计算模式下出现红脸弹窗，'
-                               '可能是ALAS计算错误或用户手动操作')
-                try:
-                    self.device.screenshot()
-                except Exception:
-                    pass
-                # 测试夹具用 SimpleNamespace 调用本方法，实例上没有这个检查。
-                already_started = getattr(self, '_combat_already_started', None)
-                if already_started is None:
-                    already_started = InfoHandler._combat_already_started.__get__(self)
-                if already_started():
-                    logger.warning('[心情-保底] 出击已开始，继续本场战斗')
-                    return True
+                               '可能是AzurPilot计算错误或用户手动操作')
                 logger.hr('心情异常保底')
                 # 退出关卡（弹窗已取消，阻止战斗）
                 # 捕获 withdraw() 抛出的 CampaignEnd，确保后续心情清零和延时被执行
@@ -797,7 +794,7 @@ class InfoHandler(ModuleBase):
             )
 
             if not siren_research_enabled:
-                logger.info('[Handler] [Story] 塞壬研究装置未启用，选择离开')
+                logger.info('[Handler] [Story] 塞壬信息收集装置未启用，选择离开')
                 self.siren_device_mode = None
                 return options[-1]
 

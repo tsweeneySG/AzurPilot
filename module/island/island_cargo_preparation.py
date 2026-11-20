@@ -83,6 +83,12 @@ def should_replace_unfillable(short, delivered, refresh):
 
 
 # 更换委托列表中每行左侧的序号（01、02……）所在列，以及右侧货物数量所在横向范围
+# 更换委托页（Job List 弹窗）的「取消」按钮：与「确认」左右对称，固定位置点击。
+# 弹窗下方仍露出货运页面，island_in_transport() 会误判已回到货运页，必须先关闭弹窗
+REPLACE_PAGE_CANCEL = Button(
+    area=(480, 596, 630, 632), color=(), button=(480, 596, 630, 632),
+    file={'cn': '', 'en': '', 'jp': '', 'tw': ''}, name='REPLACE_PAGE_CANCEL')
+
 JOB_LIST_AREA = (405, 150, 900, 580)
 JOB_LIST_NUMBER_COLUMN = (412, 450)
 JOB_LIST_COUNT_COLUMN = (488, 900)
@@ -380,6 +386,8 @@ class IslandCargoPreparation(IslandUI):
     EARLY_MORNING_DELAY_HOUR = 3
     REPLACE_REFRESH_TRIALS = 2
     REPLACE_ROUNDS = 3
+    # 刷新确认弹窗的确认按钮相对列表底部确认按钮约右移 46、上移 105 像素
+    REFRESH_POPUP_CONFIRM_OFFSET = (20, -130, 80, -80)
 
     @cached_property
     def blacklist(self):
@@ -395,7 +403,7 @@ class IslandCargoPreparation(IslandUI):
         return blacklist
 
     def run(self):
-        logger.hr('岛屿货物准备运行', level=1)
+        logger.hr('岛屿货物筹备运行', level=1)
 
         self.ui_ensure(page_island)
         self.ui_goto(page_island_phone, get_ship=False)
@@ -437,7 +445,7 @@ class IslandCargoPreparation(IslandUI):
             if self.transport_start(comm):
                 comm.convert_to_running()
 
-        logger.hr('货物准备状态', level=2)
+        logger.hr('货物筹备状态', level=2)
         for comm in commissions:
             logger.attr('货运委托', comm)
 
@@ -451,7 +459,7 @@ class IslandCargoPreparation(IslandUI):
         列表中没有可完成的委托时刷新一次，仍没有就保留原委托，避免为换成
         另一个同样无法完成的委托而白白扣除运输次数。
         """
-        logger.info('货物准备替换委托')
+        logger.info('货物筹备替换委托')
         self.interval_clear([TRANSPORT_REFRESH, CARGO_PREPARATION_REPLACE_CONFIRM])
 
         if not self._open_replace_page(comm):
@@ -486,11 +494,11 @@ class IslandCargoPreparation(IslandUI):
 
     def _transport_detect(self):
         """从当前截图中检测所有货运委托。"""
-        logger.hr('运输委托检测')
+        logger.hr('货运委托检测')
         commissions = []
         for index in range(3):
             comm = CargoPreparationTransport(main=self, index=index, blacklist=self.blacklist)
-            logger.attr('运输委托', comm)
+            logger.attr('货运委托', comm)
             for item in comm.items:
                 logger.attr(item.button, item)
             commissions.append(comm)
@@ -567,7 +575,7 @@ class IslandCargoPreparation(IslandUI):
 
     def transport_start(self, comm):
         """启动指定的货运委托。"""
-        logger.info('[岛屿-货运] 运输委托开始')
+        logger.info('[岛屿-货运] 货运委托开始')
         self.interval_clear([GET_ITEMS_ISLAND, TRANSPORT_START, POPUP_CANCEL_WHITE])
         success = True
         confirm_timer = Timer(1, count=2).start()
@@ -676,9 +684,22 @@ class IslandCargoPreparation(IslandUI):
         return 'failed'
 
     def _wait_replace_refresh(self):
-        """等待更换列表刷新完成。"""
+        """等待更换列表刷新完成。
+
+        点击刷新后会弹出「是否刷新所有显示的委托？」确认框，需点确认才会真正刷新；
+        不处理时弹窗文字会被当成一行委托，列表从未刷新。弹窗确认按钮与列表底部
+        确认按钮文字相同，只在弹窗按钮所在的偏移位置搜索，避免点到列表本身的确认。
+        """
+        self.interval_clear(CARGO_PREPARATION_REPLACE_CONFIRM)
         wait_timer = Timer(5, count=10).start()
-        for _ in self.loop(timeout=6, skip_first=False):
+        for _ in self.loop(timeout=12, skip_first=False):
+            if self.appear_then_click(CARGO_PREPARATION_REPLACE_CONFIRM,
+                                      offset=self.REFRESH_POPUP_CONFIRM_OFFSET, interval=2):
+                wait_timer.reset()
+                continue
+            if self.handle_popup_confirm('CARGO_PREPARATION_REFRESH', offset=(30, 30)):
+                wait_timer.reset()
+                continue
             if wait_timer.reached():
                 break
 
@@ -705,10 +726,24 @@ class IslandCargoPreparation(IslandUI):
         self._back_to_transport()
         return False
 
+    def _close_replace_page(self):
+        """更换委托页（Job List 弹窗）仍打开时点「取消」关闭，不更换委托。
+
+        Returns:
+            bool: 是否点击了取消。
+        """
+        if self.appear(REPLACE_PAGE_CHECK, offset=(20, 20), interval=2):
+            self.device.click(REPLACE_PAGE_CANCEL)
+            return True
+        return False
+
     def _back_to_transport(self):
         """从更换页面返回货运委托页面。"""
         for _ in self.loop(timeout=8):
-            if self.island_in_transport():
+            # 先关弹窗：弹窗下方露出的货运页面会让 island_in_transport() 误判为已返回
+            if self._close_replace_page():
+                continue
+            if self.island_in_transport() and not self.appear(REPLACE_PAGE_CHECK, offset=(20, 20)):
                 return True
             if self.appear_then_click(ISLAND_BACK, interval=2):
                 continue
@@ -770,6 +805,9 @@ class IslandCargoPreparation(IslandUI):
         for _ in self.loop():
             if self.ui_page_appear(page_island_phone):
                 break
+            # 更换委托弹窗仍开着时返回键无效（国际服实机 2026-11-05 23:28 卡住 3 分钟）
+            if self._close_replace_page():
+                continue
             if self.appear_then_click(ISLAND_BACK, interval=2):
                 continue
             if self.ui_additional():

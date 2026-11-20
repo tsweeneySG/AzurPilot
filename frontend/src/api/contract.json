@@ -1,5 +1,14 @@
 {
   "version": 1,
+  "webSocketTransport": {
+    "frameBytes": 65536,
+    "requestBytes": 8388608,
+    "responseBytes": 67108864,
+    "dataTopics": [
+      "logs",
+      "preview"
+    ]
+  },
   "methods": {
     "launcher.status": {
       "mutates": false,
@@ -80,7 +89,8 @@
         },
         "title": "SchemaParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "search.content": {
       "mutates": false,
@@ -115,6 +125,39 @@
     "instances.create": {
       "mutates": true,
       "params": {
+        "$defs": {
+          "CreateEmulatorParams": {
+            "additionalProperties": false,
+            "description": "首次设置随实例一起保存的模拟器参数。",
+            "properties": {
+              "serial": {
+                "maxLength": 256,
+                "minLength": 1,
+                "title": "Serial",
+                "type": "string"
+              },
+              "package_name": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Package Name",
+                "type": "string"
+              },
+              "server_name": {
+                "maxLength": 64,
+                "minLength": 1,
+                "title": "Server Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "serial",
+              "package_name",
+              "server_name"
+            ],
+            "title": "CreateEmulatorParams",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "description": "新建实例请求参数模型。",
         "properties": {
@@ -147,6 +190,17 @@
             ],
             "default": null,
             "title": "Import File"
+          },
+          "emulator": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CreateEmulatorParams"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -236,7 +290,8 @@
         ],
         "title": "InstanceParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "config.export": {
       "mutates": false,
@@ -256,7 +311,8 @@
         ],
         "title": "InstanceParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "config.patch": {
       "mutates": true,
@@ -483,7 +539,8 @@
         ],
         "title": "InstanceParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "dock.importLegacy": {
       "mutates": true,
@@ -707,7 +764,7 @@
         "$defs": {
           "MindShip": {
             "additionalProperties": false,
-            "description": "导入的舰船字段与核对状态。",
+            "description": "导入的舰船字段与核对状态；导出文件可原样导回，底账内部序号除外。",
             "properties": {
               "name": {
                 "maxLength": 100,
@@ -770,6 +827,47 @@
                 "maxLength": 200,
                 "title": "Source",
                 "type": "string"
+              },
+              "group_type": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Group Type"
+              },
+              "full_star": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Full Star"
+              },
+              "form": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "base",
+                      "retrofit"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Form"
               }
             },
             "required": [
@@ -911,7 +1009,8 @@
         ],
         "title": "InstanceParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "fleetTech.catalog": {
       "mutates": false,
@@ -931,7 +1030,8 @@
         ],
         "title": "InstanceParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "fleetTech.report": {
       "mutates": false,
@@ -951,7 +1051,8 @@
         ],
         "title": "InstanceParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "fleetTech.mergeShips": {
       "mutates": true,
@@ -1103,7 +1204,8 @@
         ],
         "title": "CultivationParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "mind.import": {
       "mutates": false,
@@ -1136,7 +1238,8 @@
         ],
         "title": "MindFileParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "mind.recognize": {
       "mutates": false,
@@ -1169,7 +1272,8 @@
         ],
         "title": "MindFileParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "stock.status": {
       "mutates": false,
@@ -1315,7 +1419,8 @@
         ],
         "title": "InstanceParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "scheduler.program.get": {
       "mutates": false,
@@ -1335,7 +1440,8 @@
         ],
         "title": "InstanceParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "scheduler.program.save": {
       "mutates": true,
@@ -2018,7 +2124,8 @@
         ],
         "title": "ProgramValidateParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "scheduler.program.simulate": {
       "mutates": false,
@@ -2388,7 +2495,8 @@
         ],
         "title": "ProgramSimulateParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "scheduler.program.apply": {
       "mutates": true,
@@ -2496,7 +2604,8 @@
         ],
         "title": "LogsParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "opsi.simulator.status": {
       "mutates": false,
@@ -2522,7 +2631,8 @@
         ],
         "title": "LogsParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "opsi.simulator.start": {
       "mutates": true,
@@ -2582,7 +2692,8 @@
         ],
         "title": "InstanceParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "preview.capture": {
       "mutates": false,
@@ -2602,7 +2713,8 @@
         ],
         "title": "InstanceParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "statistics.refreshLoot": {
       "mutates": true,
@@ -2721,7 +2833,8 @@
         ],
         "title": "StatisticsReportParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "statistics.resourceFlows": {
       "mutates": false,
@@ -2826,7 +2939,8 @@
         ],
         "title": "ResourceFlowsParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "meowfficer.scoreReport": {
       "mutates": false,
@@ -2853,7 +2967,8 @@
         ],
         "title": "MeowfficerScoreReportParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "meowfficer.clearReport": {
       "mutates": true,
@@ -2919,7 +3034,8 @@
         ],
         "title": "StatisticsParams",
         "type": "object"
-      }
+      },
+      "channel": "data"
     },
     "settings.get": {
       "mutates": false,
@@ -3251,6 +3367,130 @@
         "type": "object"
       }
     },
+    "plugins.access": {
+      "mutates": false,
+      "params": {
+        "additionalProperties": false,
+        "description": "API 入参基础模型，禁止额外字段并启用严格类型校验。",
+        "properties": {},
+        "title": "Params",
+        "type": "object"
+      }
+    },
+    "plugins.list": {
+      "mutates": false,
+      "params": {
+        "additionalProperties": false,
+        "description": "API 入参基础模型，禁止额外字段并启用严格类型校验。",
+        "properties": {},
+        "title": "Params",
+        "type": "object"
+      }
+    },
+    "plugins.storage.get": {
+      "mutates": false,
+      "params": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "instance": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instance"
+          },
+          "key": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "get",
+              "set",
+              "delete"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "value": {
+            "default": null,
+            "title": "Value"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "action"
+        ],
+        "title": "PluginStorageParams",
+        "type": "object"
+      }
+    },
+    "plugins.storage.write": {
+      "mutates": true,
+      "params": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "instance": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instance"
+          },
+          "key": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "get",
+              "set",
+              "delete"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "value": {
+            "default": null,
+            "title": "Value"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "action"
+        ],
+        "title": "PluginStorageParams",
+        "type": "object"
+      }
+    },
     "background.resolve": {
       "mutates": false,
       "params": {
@@ -3398,11 +3638,12 @@
                 "preview",
                 "stock",
                 "notifications",
-                "launcher"
+                "launcher",
+                "plugins"
               ],
               "type": "string"
             },
-            "maxItems": 7,
+            "maxItems": 8,
             "title": "Topics",
             "type": "array"
           }

@@ -75,6 +75,7 @@
       "ScreenshotMethod": "auto",
       "ControlMethod": "MaaTouch",
       "GameSettings": false,
+      "DisableChannelFloat": false,
       "ScreenshotDedithering": false,
       "AdbRestart": false
     },
@@ -1482,7 +1483,7 @@
     },
     "Campaign": {
       "Name": "D3",
-      "Event": "war_archives_20251023_cn",
+      "Event": "war_archives_20230817_cn",
       "Mode": "normal",
       "UseClearMode": true,
       "UseFleetLock": true,
@@ -3020,7 +3021,10 @@
     },
     "OpsiObscure": {
       "SkipHazard2Obscure": false,
-      "ForceRun": false
+      "ForceRun": false,
+      "FullScan": false,
+      "RadarScan": false,
+      "ResumeState": null
     },
     "OpsiFleet": {
       "Fleet": 1,
@@ -3042,7 +3046,8 @@
       "Sensitive": true
     },
     "OpsiAbyssal": {
-      "ForceRun": false
+      "ForceRun": false,
+      "ContinueAfterRestart": false
     },
     "OpsiFleetFilter": {
       "Filter": "Fleet-4 > CallSubmarine > Fleet-2 > Fleet-3 > Fleet-1"
@@ -3228,6 +3233,7 @@
       "EnableStronghold": false,
       "TaskPriority": "OpsiStronghold > OpsiObscure > OpsiAbyssal > OpsiMeowfficerFarming",
       "ObscureAbyssalCheckDelayDays": 0,
+      "StrongholdCheckDelayDays": 0,
       "MonthEndActionPointCleanupEnable": false,
       "MonthEndActionPointCleanupDays": 0,
       "MonthEndActionPointPreserve": 0,
@@ -3518,17 +3524,26 @@
     },
     "IslandFishery": {
       "Positions": 3,
-      "MinBass": 50,
-      "MinYellowfinTuna": 50,
       "MinShell": 50,
+      "MinCatfish": 0,
+      "MinKoiCarp": 0,
+      "MinCommonCarp": 0,
       "MinShrimp": 50,
       "MinCrayfish": 50,
+      "MinBass": 50,
       "MinCrab": 50,
       "MinSquid": 50,
+      "MinMackerel": 0,
+      "MinTuna": 0,
+      "MinSalmon": 0,
+      "MinRedSeaBream": 0,
+      "MinBlackPorgy": 0,
+      "MinYellowfinTuna": 50,
       "MinSeaCucumber": 50,
       "MinFreshwaterFishMeat": 0,
       "MinSaltwaterFishMeat": 0,
       "PlantYellowfinTuna": 3,
+      "DefaultFish": "yellowfin_tuna",
       "RancherFilter": "WorkerJuu"
     },
     "Storage": {
@@ -3549,6 +3564,7 @@
     "IslandMine": {
       "Positions": 1,
       "MineSilver": 1,
+      "DefaultOre": "Silver",
       "WorkerFilter": "WorkerJuu",
       "MinCopper": 50,
       "MinAluminium": 50,
@@ -3559,6 +3575,7 @@
     "IslandForest": {
       "Positions": 1,
       "CutElegant": 1,
+      "DefaultWood": "Elegant",
       "WorkerFilter": "WorkerJuu",
       "MinElegant": 50,
       "MinPractical": 50,
@@ -3773,16 +3790,20 @@
       "Sensitive": false
     },
     "WoodProcessing": {
-      "Positions": 2
+      "Positions": 2,
+      "Products": ""
     },
     "ElectronicProcessing": {
-      "Positions": 2
+      "Positions": 2,
+      "Products": ""
     },
     "Industrial": {
-      "Positions": 2
+      "Positions": 2,
+      "Products": ""
     },
     "Handmade": {
-      "Positions": 2
+      "Positions": 2,
+      "Products": ""
     },
     "Storage": {
       "Storage": {}
@@ -4128,6 +4149,28 @@
   "IslandProductionPlanner": {
     "IslandProductionPlanner": {
       "ApplySettings": false,
+      "Season": "auto",
+      "Priority": "pt",
+      "FillSparePosts": true,
+      "AutoPositions": true,
+      "UnlockedFish": [
+        "shell",
+        "catfish",
+        "koi_carp",
+        "common_carp",
+        "shrimp",
+        "crayfish",
+        "bass",
+        "crab",
+        "squid",
+        "mackerel",
+        "tuna",
+        "salmon",
+        "red_sea_bream",
+        "black_porgy",
+        "yellowfin_tuna",
+        "sea_cucumber"
+      ],
       "RescanTechnology": true,
       "ScanSeasonTasks": true,
       "SeasonTaskTargets": null,

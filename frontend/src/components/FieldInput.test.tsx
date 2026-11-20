@@ -1,3 +1,5 @@
+/** @fileoverview 配置输入控件的渲染回归：显式类型声明优先于旧配置里的数字值。 */
+
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -27,7 +29,8 @@ describe('配置输入控件', () => {
     expect(switchHtml).toContain('aria-checked="mixed"')
     const selectHtml = wrap(<FieldInput id="stage" label="关卡" type="select" value="12-4" options={['12-4', '7-2']} mixed onChange={onChange}/>)
     expect(selectHtml).toContain('混合')
-    expect(selectHtml).toContain('__ALAS_MIXED__')
+    // 收起的组件库下拉只显示文案；哨兵留在选项值里，不写进触发器。
+    expect(selectHtml).not.toContain('__ALAS_MIXED__')
     const numberHtml = wrap(<FieldInput id="amount" label="数量" type="number" value={12} mixed onChange={onChange}/>)
     expect(numberHtml).toContain('placeholder="混合"')
     expect(numberHtml).toContain('value=""')

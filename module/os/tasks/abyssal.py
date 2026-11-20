@@ -138,56 +138,52 @@ class OpsiAbyssal(CoinTaskMixin, OSMap):
 
     def _handle_abyssal_fleet_exhausted(self):
         """
-        深渊 Boss 打不过时退出地图并推迟任务，不请求人工接管。
+        深渊 Boss 打不过时退出当前坐标并清掉续接断点，不请求人工接管。
 
-        舰队耗尽是已知战斗结果，重启或停机都无法变强。调度器应继续其他任务。
+        退出失败原样抛出，避免断点已被清掉却还停在海里。修理交给调用方，
+        和正常打完一个坐标走同一条路，随后仍能做任务切换。
+        智能调度只标记本轮跳过，不在这里结束整个调度。
         """
-        logger.warning('[大世界-深渊坐标] 无法击败 Boss，舰队已耗尽，退出地图并推迟任务')
-        try:
-            self.map_exit()
-        except Exception as e:
-            logger.warning(f'[大世界-深渊坐标] 退出深渊地图失败: {e}')
-        try:
-            self.handle_fleet_repair_by_config(revert=False)
-        except Exception as e:
-            logger.warning(f'[大世界-深渊坐标] 港口修理失败: {e}')
-
+        logger.warning('[大世界-深渊坐标] 舰队已耗尽，退出当前深渊并继续后续任务')
+        self.map_exit()
+        self._clear_abyssal_resume()
         if self.is_running_smart_scheduling_task():
             logger.info('[大世界-深渊坐标] 智能调度+代理执行中，本轮跳过深渊')
             self._smart_scheduling_no_content_task = 'OpsiAbyssal'
-            return
-
-        self.config.task_delay(success=False)
-        self.config.task_stop()
 
     def clear_abyssal(self):
         """清理一个深渊坐标。
 
         从仓库取出深渊日志仪，攻击深渊 Boss，完成后在港口修理舰队。
-        如果检测到潜艇冷却，会延迟任务执行。
+        如果检测到潜艇冷却，会延迟任务执行。舰队耗尽时退出当前深渊并继续后续流程。
 
         Returns:
             bool: 舰队过滤器是否包含呼叫潜艇。
 
         Raises:
             ActionPointLimit: 行动力不足。
-            TaskEnd: 没有更多深渊日志仪，或无法击败 Boss 已推迟任务。
+            TaskEnd: 没有更多深渊日志仪。
         """
         logger.hr('大世界-深渊坐标', level=1)
-        self.cl1_ap_preserve()
-
         submarine_enabled = self._has_call_submarine('OpsiAbyssal', self.config)
-        if submarine_enabled:
-            is_cooldown, cooldown_end_time = self._check_submarine_cooldown()
-            if is_cooldown:
-                self._delay_until_submarine_cooldown_end(cooldown_end_time)
-                return False
+        resuming = self.abyssal_continue_enabled() and self.is_in_abyssal()
+        if resuming:
+            logger.info('[大世界-深渊续接] 已在深渊中，继续当前坐标')
+        else:
+            if self.abyssal_continue_enabled():
+                self._clear_abyssal_resume()
+            self.cl1_ap_preserve()
+            if submarine_enabled:
+                is_cooldown, cooldown_end_time = self._check_submarine_cooldown()
+                if is_cooldown:
+                    self._delay_until_submarine_cooldown_end(cooldown_end_time)
+                    return False
 
-        with self.config.temporary(STORY_ALLOW_SKIP=False):
-            result = self.storage_get_next_item('ABYSSAL', use_logger=self.config.OpsiGeneral_UseLogger)
-        if not result:
-            if self._handle_coin_task_no_content('深渊坐标', '深渊坐标没有可执行内容'):
-                return False
+            with self.config.temporary(STORY_ALLOW_SKIP=False):
+                result = self.storage_get_next_item('ABYSSAL', use_logger=self.config.OpsiGeneral_UseLogger)
+            if not result:
+                if self._handle_coin_task_no_content('深渊坐标', '深渊坐标没有可执行内容'):
+                    return False
 
         self.config.override(
             OpsiGeneral_DoRandomMapEvent=False,
@@ -198,10 +194,9 @@ class OpsiAbyssal(CoinTaskMixin, OSMap):
 
         logger.info('[大世界-深渊坐标] 进入深渊坐标地图，禁止所有任务切换')
         with self.config.temporary(_disable_task_switch=True):
-            result = self.run_abyssal()
+            result = self.run_abyssal(resume=True) if resuming else self.run_abyssal()
             if not result:
                 self._handle_abyssal_fleet_exhausted()
-                return False
 
             self.handle_fleet_repair_by_config(revert=False)
 

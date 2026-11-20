@@ -331,11 +331,11 @@ class MissionHandler(GlobeOperation, ZoneManager):
             # 结束
             if self.is_zone_pinned():
                 if self.get_zone_pinned_name() == 'ARCHIVE':
-                    logger.info('[大世界处理-任务] 固定在档案区域')
+                    logger.info('[大世界处理-任务] 固定在档案海域')
                     self.globe_enter(zone=self.name_to_zone(72))
                     return 'pinned_at_archive_zone'
                 else:
-                    logger.info('[大世界处理-任务] 固定在任务区域')
+                    logger.info('[大世界处理-任务] 固定在任务海域')
                     if skip_unavailable:
                         # 从当前固定海域定位真实目标，不把历史占位海域 72 当成委托身份。
                         self.globe_update()
@@ -354,7 +354,7 @@ class MissionHandler(GlobeOperation, ZoneManager):
                     self.globe_enter(zone=self.name_to_zone(72))
                     return 'pinned_at_mission_zone'
             if self.is_in_map() and self.info_bar_count():
-                logger.info('[大世界处理-任务] 已在任务区域')
+                logger.info('[大世界处理-任务] 已在任务海域')
                 return 'already_at_mission_zone'
             # 接取后任务列表已关：信息条可能一闪而过；EN 常落到星图而非海域。
             # 只等 is_in_map 会空等 60s（stuck_record 里全是 ZONE_*）。

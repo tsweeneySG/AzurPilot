@@ -306,6 +306,10 @@ DeploySetting:
   RemoteAccessMode:
   RemoteAccessModeHelp:
   CloudflareRegistry:
+  RemoteAccessPort:
+  RemoteAccessPortHelp:
+  RemoteAccessPublicPort:
+  RemoteAccessPublicPortHelp:
   CloudflareRegistryHelp:
   SSHUser:
   SSHUserHelp:

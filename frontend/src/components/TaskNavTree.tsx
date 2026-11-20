@@ -1,5 +1,5 @@
 /**
- * @fileoverview 旧版侧边栏树状展开任务列表组件。
+ * @fileoverview 现代侧边栏树状展开任务列表组件。
  */
 
 import { useState } from 'react'
@@ -7,9 +7,10 @@ import { MarqueeText } from './MarqueeText'
 import { NavLink, useLocation, useParams } from 'react-router-dom'
 import { Anchor, CalendarDays, ChevronDown, Compass, Gift, Palmtree, Search, Settings2, Ship, Sparkles, Swords, Wrench, type LucideIcon } from 'lucide-react'
 import { useApp } from '../app/context'
-import { taskNavItems, taskLabel } from './taskNavItems'
-import { taskConfigBase } from '../app/allRoute'
+import { SCHEDULER_EDITOR, taskNavItems, taskLabel } from './taskNavItems'
+import { isAllPath, taskConfigBase } from '../app/allRoute'
 import { SearchHits } from './SearchHits'
+import { Input } from './ui/input'
 
 const groupIcons: Record<string, LucideIcon> = {
   Alas: Settings2, Farm: Swords, Event: Sparkles, EventDaily: CalendarDays,
@@ -26,10 +27,10 @@ export function TaskNavTree({ defaultOpenKey, onNavigate }: { defaultOpenKey?: s
   const { schema, t, ui } = useApp()
   const { instance } = useParams()
   const location = useLocation()
+  const allMode = isAllPath(location.pathname)
   const base = taskConfigBase(location.pathname, instance)
 
   const [search, setSearch] = useState('')
-  const [searchOpen, setSearchOpen] = useState(false)
   const [openKeys, setOpenKeys] = useState<string[]>(() => (defaultOpenKey ? [defaultOpenKey] : []))
   // 手动收起的大类，记录收起时所在的页面路径。
   const [collapsed, setCollapsed] = useState<{key: string; from: string}>()
@@ -52,24 +53,25 @@ export function TaskNavTree({ defaultOpenKey, onNavigate }: { defaultOpenKey?: s
 
   return (
     <div className="task-nav-container">
-      <div className="sidebar-label task-nav-heading">{ui('nav.taskConfig')}<button className="icon-button" aria-label={searchOpen ? ui('nav.taskSearchCollapse') : ui('nav.taskSearchExpand')} aria-expanded={searchOpen} aria-controls="task-search" onClick={() => {setSearchOpen(!searchOpen); setSearch('')}}><Search size={15}/></button></div>
-      {searchOpen && <div className="nav-search" id="task-search">
-        <Search size={14} />
-        <input
-          autoFocus
+      <div className="sidebar-label task-nav-heading">{ui('nav.taskConfig')}</div>
+      <div className="relative" id="task-search">
+        <Search size={14} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground"/>
+        <Input
+          className="pl-9"
           aria-label={ui('nav.searchTask')}
           value={search}
           onChange={event => setSearch(event.target.value)}
           placeholder={ui('nav.searchTaskPlaceholder')}
         />
-      </div>}
+      </div>
 
       <SearchHits search={search} onNavigate={onNavigate}/>
 
       <nav className="task-nav">
         {schema &&
           Object.entries(schema.menu).map(([key, group]) => {
-            const items = taskNavItems(key, group.tasks)
+            if (allMode && group.page === 'tool') return null
+            const items = taskNavItems(key, group.tasks).filter(task => !(allMode && task === SCHEDULER_EDITOR))
             const tasks = keyword ? items.filter(matches) : items
             if (!tasks.length) return null
 
@@ -101,7 +103,7 @@ export function TaskNavTree({ defaultOpenKey, onNavigate }: { defaultOpenKey?: s
                 </button>
                 <div className={'task-submenu-list' + (isExpanded ? ' expanded' : '')} id={`task-group-${key}`}>
                   <div className="task-submenu-inner">
-                    {tasks.map(task => (
+                    {isExpanded && tasks.map(task => (
                       <NavLink
                         key={task}
                         to={`${base}/task/${task}`}
